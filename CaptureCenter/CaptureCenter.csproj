@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>CaptureCenter</AssemblyName>
+    <RootNamespace>CaptureCenter</RootNamespace>
+    <!-- No third-party packages: the OBS link is a hand-rolled obs-websocket
+         v5 client over System.Net.WebSockets, so this builds offline. -->
+  </PropertyGroup>
+
+</Project>
