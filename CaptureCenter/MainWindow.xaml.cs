@@ -4,6 +4,7 @@ using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Threading;
 using CaptureCenter.Interop;
@@ -13,13 +14,21 @@ namespace CaptureCenter;
 
 public partial class MainWindow : Window
 {
-    private readonly ObsService _obs = new("ws://127.0.0.1:4455", password: null);
+    private readonly ObsService _obs;
+    private readonly bool _serverEnabledAtStartup;
     private readonly DispatcherTimer _pollTimer;
     private GlobalHotkey? _hotkey;
 
     public MainWindow()
     {
         InitializeComponent();
+
+        // Read obs-websocket's own config so the user never has to copy/paste
+        // the password OBS generated for itself. We do NOT enable the server
+        // ourselves if it's off -- that's a security setting the user flips in
+        // OBS's own Tools > WebSocket Server Settings.
+        (_serverEnabledAtStartup, string? password) = ObsConfigReader.ReadLocalConfig();
+        _obs = new ObsService("ws://127.0.0.1:4455", password);
 
         _pollTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
         _pollTimer.Tick += async (_, _) => await RefreshStatusAsync();
@@ -30,6 +39,9 @@ public partial class MainWindow : Window
         // Top-center of the primary screen, same placement as the design mockup.
         Left = (SystemParameters.PrimaryScreenWidth - Width) / 2;
         Top = 40;
+
+        IntPtr hwnd = new WindowInteropHelper(this).Handle;
+        Acrylic.TryEnableBlurBehind(hwnd, 14, 15, 17, 190); // matches --panel-bg from the design mockup
 
         try
         {
@@ -62,11 +74,15 @@ public partial class MainWindow : Window
         if (!_obs.IsConnected)
         {
             ConnDot.Fill = (Brush)FindResource("Rec");
-            ConnDot.ToolTip = _obs.LastError is null ? "Not connected to OBS" : $"OBS: {_obs.LastError}";
+            ConnDot.ToolTip = !_serverEnabledAtStartup
+                ? "OBS's WebSocket server is disabled -- enable it in OBS: Tools > WebSocket Server Settings"
+                : _obs.LastError is null ? "Not connected to OBS" : $"OBS: {_obs.LastError}";
             RecordLabel.Text = "Start Recording";
             RecordStatusText.Text = "OBS offline";
             RecordDot.Fill = (Brush)FindResource("Text1");
             ReplayStatus.Text = " ";
+            RecBadge.Visibility = Visibility.Collapsed;
+            ReplayBadge.Visibility = Visibility.Collapsed;
             return;
         }
 
@@ -79,10 +95,12 @@ public partial class MainWindow : Window
             RecordLabel.Text = recStatus.Active ? "Stop Recording" : "Start Recording";
             RecordDot.Fill = (Brush)FindResource(recStatus.Active ? "Rec" : "Text1");
             RecordStatusText.Text = recStatus.Active ? FormatDuration(recStatus.DurationMs) : " ";
+            RecBadge.Visibility = recStatus.Active ? Visibility.Visible : Visibility.Collapsed;
 
             bool replayActive = await _obs.GetReplayBufferActiveAsync();
             ReplayStatus.Text = replayActive ? "On" : "Off";
             ReplayStatus.Foreground = (Brush)FindResource(replayActive ? "Green" : "Text2");
+            ReplayBadge.Visibility = replayActive ? Visibility.Visible : Visibility.Collapsed;
         }
         catch
         {
@@ -122,12 +140,26 @@ public partial class MainWindow : Window
 
     private void GalleryTile_Click(object sender, RoutedEventArgs e)
     {
-        // Gallery/Player/Settings aren't built yet -- see the design mockup for
-        // what they're meant to look like once the clip-library work lands.
+        ShowNotBuilt("Gallery", "Not built yet. Needs a clip-file watcher and ffmpeg thumbnailing -- see the design mockup for what this screen is meant to look like.");
     }
 
     private void SettingsButton_Click(object sender, RoutedEventArgs e)
     {
+        ShowNotBuilt("Settings", "Not built yet -- see the design mockup for what this screen is meant to look like.");
+    }
+
+    private void ShowNotBuilt(string title, string message)
+    {
+        NotBuiltTitle.Text = title;
+        NotBuiltMessage.Text = message;
+        IdlePanel.Visibility = Visibility.Collapsed;
+        NotBuiltPanel.Visibility = Visibility.Visible;
+    }
+
+    private void BackFromNotBuilt_Click(object sender, MouseButtonEventArgs e)
+    {
+        NotBuiltPanel.Visibility = Visibility.Collapsed;
+        IdlePanel.Visibility = Visibility.Visible;
     }
 
     private async Task LoadReplayRowsAsync()
@@ -136,7 +168,9 @@ public partial class MainWindow : Window
 
         if (!_obs.IsConnected)
         {
-            AddInfoLine("Not connected to OBS.");
+            AddInfoLine(!_serverEnabledAtStartup
+                ? "OBS's WebSocket server is disabled -- enable it in OBS: Tools > WebSocket Server Settings."
+                : "Not connected to OBS.");
             return;
         }
 

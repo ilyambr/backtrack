@@ -139,8 +139,8 @@
                             <Rectangle Width="7" Height="7" Fill="{StaticResource Text0}" Margin="0,2,2,0"/>
                             <Rectangle Width="7" Height="7" Fill="{StaticResource Text0}" Margin="2,2,0,0"/>
                         </UniformGrid>
-                        <TextBlock Text="Gallery" Style="{StaticResource TileLabel}"/>
-                        <TextBlock Text="phase 2" Style="{StaticResource TileStatus}"/>
+                        <TextBlock x:Name="GalleryLabel" Text="Gallery" Style="{StaticResource TileLabel}"/>
+                        <TextBlock x:Name="GalleryStatus" Text="not built yet" Style="{StaticResource TileStatus}"/>
                     </StackPanel>
                 </Button>
             </Grid>
@@ -154,6 +154,29 @@
                 </StackPanel>
                 <StackPanel x:Name="BufRowsPanel"/>
             </DockPanel>
+
+            <!-- Placeholder for anything not actually built yet (Gallery, Settings) -->
+            <DockPanel x:Name="NotBuiltPanel" Visibility="Collapsed" Margin="14,12,14,14">
+                <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,10">
+                    <TextBlock Text="&#8249;" Foreground="{StaticResource Text2}" FontWeight="Bold" FontSize="14"
+                               Margin="0,0,10,0" Cursor="Hand" MouseLeftButtonUp="BackFromNotBuilt_Click"/>
+                    <TextBlock x:Name="NotBuiltTitle" Text="Gallery" FontWeight="Bold" FontSize="13" Foreground="{StaticResource Text0}"/>
+                </StackPanel>
+                <TextBlock x:Name="NotBuiltMessage" TextWrapping="Wrap" FontSize="12" Foreground="{StaticResource Text2}"
+                           Text="Not built yet -- see the design mockup for what this screen is meant to do."/>
+            </DockPanel>
+
+            <!-- Always-on status indicator, bottom-right, independent of which screen above is open -->
+            <StackPanel Orientation="Vertical" HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,0,4,4">
+                <Border x:Name="RecBadge" Width="14" Height="14" Background="#CC0A0B0D" BorderBrush="#14FFFFFF" BorderThickness="1"
+                        Visibility="Collapsed" ToolTip="Recording">
+                    <Ellipse Width="7" Height="7" Fill="{StaticResource Rec}" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                </Border>
+                <Border x:Name="ReplayBadge" Width="14" Height="14" Background="#CC0A0B0D" BorderBrush="#14FFFFFF" BorderThickness="1"
+                        Margin="0,1,0,0" Visibility="Collapsed" ToolTip="Replay Buffer Online">
+                    <TextBlock Text="&#8635;" FontSize="8" Foreground="{StaticResource Green}" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                </Border>
+            </StackPanel>
         </Grid>
     </Border>
 </Window>
