@@ -252,6 +252,8 @@ public partial class MainWindow : Window
         else
             Top = 40;
 
+        PlayerOverlayPopup.IsOpen = screen == Screen.Player;
+
         if (screen != Screen.Player)
             StopPlayerPlayback();
 
@@ -856,8 +858,8 @@ public partial class MainWindow : Window
         ShowScreen(Screen.Player);
         PlayerTitle.Text = Path.GetFileNameWithoutExtension(file.Name);
 
-        StatSize.Text = $"Size: {file.Length / 1024.0 / 1024.0:0.#} MB";
-        StatDate.Text = $"Recorded: {file.LastWriteTime:MMM d, yyyy h:mm tt}";
+        StatSize.Text = $"{file.Length / 1024.0 / 1024.0:0.#} MB";
+        StatDate.Text = $"{file.LastWriteTime:MMM d, yyyy h:mm tt}";
         StatResolution.Text = "";
         StatFps.Text = "";
 
@@ -876,10 +878,11 @@ public partial class MainWindow : Window
             PauseIcon.Visibility = Visibility.Visible;
             if (_vlcPlayer.Media is not null)
             {
-                uint w = _vlcPlayer.Media.Tracks.FirstOrDefault(t => t.TrackType == LibVlc.TrackType.Video).Data.Video.Width;
-                uint h = _vlcPlayer.Media.Tracks.FirstOrDefault(t => t.TrackType == LibVlc.TrackType.Video).Data.Video.Height;
-                if (w > 0 && h > 0)
-                    StatResolution.Text = $"Resolution: {w}x{h}";
+                var videoTrack = _vlcPlayer.Media.Tracks.FirstOrDefault(t => t.TrackType == LibVlc.TrackType.Video).Data.Video;
+                if (videoTrack.Width > 0 && videoTrack.Height > 0)
+                    StatResolution.Text = $"{videoTrack.Width} x {videoTrack.Height}";
+                if (videoTrack.FrameRateDen > 0)
+                    StatFps.Text = $"{(double)videoTrack.FrameRateNum / videoTrack.FrameRateDen:0.##} fps";
             }
 
             // Track info isn't known the instant Play() is called -- LibVLC parses the
