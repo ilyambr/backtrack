@@ -13,6 +13,7 @@ using System.Windows.Media;
 using System.Windows.Threading;
 using CaptureCenter.Interop;
 using CaptureCenter.Obs;
+using CaptureCenter.Updates;
 using Microsoft.Win32;
 using LibVlc = LibVLCSharp.Shared;
 
@@ -42,6 +43,8 @@ public partial class MainWindow : Window
     private readonly DisclaimerOverlay _disclaimer;
     private readonly LogoOverlay _logo;
     private readonly AppSettings _settings;
+    private readonly UpdateService _updates = new();
+    private readonly DispatcherTimer _updateTimer;
     private readonly Dictionary<string, string> _rowLabels = new();
     private List<ReplayRow> _lastReplayRows = new();
     private GlobalHotkey? _hotkey;
@@ -138,6 +141,76 @@ public partial class MainWindow : Window
         ShowScreen(Screen.Idle);
         _ = RefreshGalleryCountAsync();
         _ = PrefetchRowLabelsAsync();
+
+        // Runs in the background regardless of whether the HUD is even open --
+        // this app starts hidden and can sit there for hours, so checking only
+        // when the user happens to open Settings would mean updates often just
+        // never get noticed.
+        _updateTimer = new DispatcherTimer { Interval = TimeSpan.FromHours(1) };
+        _updateTimer.Tick += async (_, _) => await CheckForUpdatesAsync();
+        _updateTimer.Start();
+        _ = CheckForUpdatesAsync();
+    }
+
+    /// <summary>
+    /// Checks and silently applies updates for Backtrack itself and for both
+    /// companion OBS plugins -- no confirmation prompt by design. Each check is
+    /// independent and swallows its own failures (no network, repo has no
+    /// releases yet, etc.) so one failing never blocks the others.
+    /// </summary>
+    private async Task CheckForUpdatesAsync()
+    {
+        await CheckAndApplyPluginUpdateAsync("obs-replay-slider", "replay-slider.dll",
+            name => name.Contains("windows", StringComparison.OrdinalIgnoreCase) && name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase));
+
+        await CheckAndApplyPluginUpdateAsync("obs-source-record", "source-record.dll",
+            name => name.Contains("windows-installer", StringComparison.OrdinalIgnoreCase) && name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase));
+
+        await CheckAndApplySelfUpdateAsync();
+    }
+
+    private async Task CheckAndApplyPluginUpdateAsync(string repo, string dllFileName, Func<string, bool> assetPredicate)
+    {
+        try
+        {
+            ReleaseInfo? release = await _updates.GetLatestReleaseAsync("ilyambr", repo, assetPredicate);
+            if (release?.DownloadUrl is null)
+                return;
+
+            Version installed = _updates.GetInstalledPluginVersion(dllFileName);
+            if (!UpdateService.IsNewer(release.Version, installed))
+                return;
+
+            await _updates.InstallPluginUpdateAsync(release.DownloadUrl);
+            _ = Dispatcher.BeginInvoke(() => _toastOverlay.ShowUpdateApplied(repo, release.Version));
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"Update check/apply failed for {repo}: {ex.Message}");
+        }
+    }
+
+    private async Task CheckAndApplySelfUpdateAsync()
+    {
+        try
+        {
+            ReleaseInfo? release = await _updates.GetLatestReleaseAsync("ilyambr", "backtrack",
+                name => name.Contains("windows", StringComparison.OrdinalIgnoreCase) && name.EndsWith(".zip", StringComparison.OrdinalIgnoreCase));
+            if (release?.DownloadUrl is null)
+                return;
+
+            if (!UpdateService.IsNewer(release.Version, UpdateService.CurrentAppVersion))
+                return;
+
+            await _updates.ApplySelfUpdateAsync(release.DownloadUrl);
+            // The helper script above is now waiting for this process to exit --
+            // shut down cleanly so it can finish the swap and relaunch.
+            _ = Dispatcher.BeginInvoke(() => Application.Current.Shutdown());
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"Self-update check/apply failed: {ex.Message}");
+        }
     }
 
     private void RegisterHotkeyFromSettings()

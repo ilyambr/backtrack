@@ -42,6 +42,9 @@ public partial class ToastOverlay : Window
     public void ShowReplaySaved(string label, string resolvedPath) =>
         Show("↻", Green, $"{label} saved", $"Saved at '{resolvedPath}'");
 
+    public void ShowUpdateApplied(string component, string version) =>
+        Show("⬆", Green, $"{component} updated", $"Now on version {version}");
+
     /// <summary>Shows a 5-second countdown toast with a real Undo button; calls onExpire only if it wasn't undone in time.</summary>
     public void ShowDeleteUndo(string clipName, Action onExpire)
     {
