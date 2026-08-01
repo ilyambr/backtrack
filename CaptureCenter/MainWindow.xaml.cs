@@ -32,6 +32,7 @@ public partial class MainWindow : Window
     private readonly ToastOverlay _toastOverlay;
     private readonly AppSettings _settings;
     private readonly Dictionary<string, string> _rowLabels = new();
+    private List<ReplayRow> _lastReplayRows = new();
     private GlobalHotkey? _hotkey;
 
     public MainWindow(StatusOverlay statusOverlay, ToastOverlay toastOverlay)
@@ -264,9 +265,13 @@ public partial class MainWindow : Window
         foreach (ReplayRow row in rows)
             _rowLabels[row.Key] = row.Label;
 
+        _lastReplayRows = rows;
+
         // Online (armed) buffers first -- everything else keeps its original order after them.
         foreach (ReplayRow row in rows.OrderBy(r => r.Status == 1 ? 0 : 1))
             BufRowsPanel.Children.Add(BuildRowButton(row));
+
+        BufRowsPanel.Children.Add(BuildSharedClipLengthControl(rows));
     }
 
     private Button BuildRowButton(ReplayRow row)
@@ -293,50 +298,13 @@ public partial class MainWindow : Window
         hkPanel.Children.Add(dot);
         hkPanel.Children.Add(hotkey);
 
-        var headerGrid = new Grid();
-        headerGrid.ColumnDefinitions.Add(new ColumnDefinition());
-        headerGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        var content = new Grid();
+        content.ColumnDefinitions.Add(new ColumnDefinition());
+        content.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         Grid.SetColumn(name, 0);
         Grid.SetColumn(hkPanel, 1);
-        headerGrid.Children.Add(name);
-        headerGrid.Children.Add(hkPanel);
-
-        var slider = new Slider { Style = (Style)FindResource("RowLengthSlider"), Value = row.LengthSeconds };
-        var lengthText = new TextBlock
-        {
-            Text = FormatDuration(row.LengthSeconds * 1000L),
-            FontSize = 11,
-            FontWeight = FontWeights.Bold,
-            Foreground = (Brush)FindResource("Accent"),
-            VerticalAlignment = VerticalAlignment.Center,
-            Margin = new Thickness(8, 6, 0, 0),
-            MinWidth = 34,
-        };
-        slider.ValueChanged += (_, e) => lengthText.Text = FormatDuration((long)e.NewValue * 1000L);
-        slider.PreviewMouseLeftButtonUp += async (_, e) =>
-        {
-            e.Handled = true;
-            try
-            {
-                await _obs.SetReplayRowLengthAsync(row.Key, (int)slider.Value);
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show(this, $"Could not set clip length: {ex.Message}\n\n(Needs the set-row-length bridge update in obs-replay-slider.)", "Capture Center");
-            }
-        };
-
-        var sliderRow = new Grid();
-        sliderRow.ColumnDefinitions.Add(new ColumnDefinition());
-        sliderRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        Grid.SetColumn(slider, 0);
-        Grid.SetColumn(lengthText, 1);
-        sliderRow.Children.Add(slider);
-        sliderRow.Children.Add(lengthText);
-
-        var content = new StackPanel();
-        content.Children.Add(headerGrid);
-        content.Children.Add(sliderRow);
+        content.Children.Add(name);
+        content.Children.Add(hkPanel);
 
         string styleKey = row.Status == 1 ? "BufRowButton" : "BufRowButtonNoHover";
         var button = new Button { Style = (Style)FindResource(styleKey), Content = content, Tag = row.Key };
@@ -357,6 +325,60 @@ public partial class MainWindow : Window
             }
         };
         return button;
+    }
+
+    /// <summary>
+    /// One slider for every buffer -- simpler than juggling a separate length
+    /// per row, at the cost of them no longer being independently adjustable.
+    /// Applies the same length to every row the plugin currently reports.
+    /// </summary>
+    private Border BuildSharedClipLengthControl(List<ReplayRow> rows)
+    {
+        int initial = rows.Count > 0 ? rows[0].LengthSeconds : 60;
+
+        var label = new TextBlock { Text = "Clip length", FontSize = 12, FontWeight = FontWeights.Bold, Foreground = (Brush)FindResource("Text1"), VerticalAlignment = VerticalAlignment.Center };
+        var slider = new Slider { Style = (Style)FindResource("RowLengthSlider"), Value = initial, Margin = new Thickness(10, 0, 10, 0) };
+        var lengthText = new TextBlock
+        {
+            Text = FormatDuration(initial * 1000L),
+            FontSize = 12,
+            FontWeight = FontWeights.Bold,
+            Foreground = (Brush)FindResource("Accent"),
+            VerticalAlignment = VerticalAlignment.Center,
+            MinWidth = 34,
+            TextAlignment = TextAlignment.Right,
+        };
+        slider.ValueChanged += (_, e) => lengthText.Text = FormatDuration((long)e.NewValue * 1000L);
+        slider.PreviewMouseLeftButtonUp += async (_, e) =>
+        {
+            e.Handled = true;
+            int seconds = (int)slider.Value;
+            foreach (ReplayRow row in _lastReplayRows)
+            {
+                try
+                {
+                    await _obs.SetReplayRowLengthAsync(row.Key, seconds);
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show(this, $"Could not set clip length: {ex.Message}\n\n(Needs the set-row-length bridge update in obs-replay-slider.)", "Capture Center");
+                    break;
+                }
+            }
+        };
+
+        var row2 = new Grid { Margin = new Thickness(2, 12, 2, 0) };
+        row2.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        row2.ColumnDefinitions.Add(new ColumnDefinition());
+        row2.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        Grid.SetColumn(label, 0);
+        Grid.SetColumn(slider, 1);
+        Grid.SetColumn(lengthText, 2);
+        row2.Children.Add(label);
+        row2.Children.Add(slider);
+        row2.Children.Add(lengthText);
+
+        return new Border { BorderBrush = (Brush)FindResource("Hairline"), BorderThickness = new Thickness(0, 1, 0, 0), Padding = new Thickness(0, 8, 0, 0), Margin = new Thickness(0, 6, 0, 0), Child = row2 };
     }
 
     private void AddInfoLine(Panel container, string text)
