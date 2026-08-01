@@ -22,7 +22,9 @@ public partial class StatusOverlay : Window
         {
             Left = SystemParameters.PrimaryScreenWidth - Width - 5;
             Top = 6;
-            ClickThrough.Enable(new WindowInteropHelper(this).Handle);
+            IntPtr hwnd = new WindowInteropHelper(this).Handle;
+            ClickThrough.Enable(hwnd);
+            ToolWindow.Enable(hwnd);
 
             _fadeTimer.Tick += (_, _) => UpdateFadeByProximity();
             _fadeTimer.Start();

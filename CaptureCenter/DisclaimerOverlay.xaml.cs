@@ -1,7 +1,9 @@
 using System.Diagnostics;
 using System.Reflection;
 using System.Windows;
+using System.Windows.Interop;
 using System.Windows.Navigation;
+using CaptureCenter.Interop;
 
 namespace CaptureCenter;
 
@@ -24,6 +26,7 @@ public partial class DisclaimerOverlay : Window
             Left = (SystemParameters.PrimaryScreenWidth - ActualWidth) / 2;
             Top = SystemParameters.PrimaryScreenHeight - ActualHeight - 14;
         };
+        Loaded += (_, _) => ToolWindow.Enable(new WindowInteropHelper(this).Handle);
     }
 
     private void Hyperlink_RequestNavigate(object sender, RequestNavigateEventArgs e)

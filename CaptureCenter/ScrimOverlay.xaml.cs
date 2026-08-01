@@ -1,6 +1,8 @@
 using System;
 using System.Windows;
 using System.Windows.Input;
+using System.Windows.Interop;
+using CaptureCenter.Interop;
 
 namespace CaptureCenter;
 
@@ -15,6 +17,7 @@ public partial class ScrimOverlay : Window
         Top = 0;
         Width = SystemParameters.PrimaryScreenWidth;
         Height = SystemParameters.PrimaryScreenHeight;
+        Loaded += (_, _) => ToolWindow.Enable(new WindowInteropHelper(this).Handle);
     }
 
     private void Scrim_MouseLeftButtonDown(object sender, MouseButtonEventArgs e) => Dismissed?.Invoke();

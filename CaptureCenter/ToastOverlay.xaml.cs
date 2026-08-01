@@ -30,7 +30,9 @@ public partial class ToastOverlay : Window
         {
             Left = 12;
             Top = 58;
-            ClickThrough.Enable(new WindowInteropHelper(this).Handle);
+            IntPtr hwnd = new WindowInteropHelper(this).Handle;
+            ClickThrough.Enable(hwnd);
+            ToolWindow.Enable(hwnd);
         };
     }
 

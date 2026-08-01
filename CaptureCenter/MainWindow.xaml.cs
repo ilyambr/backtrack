@@ -110,6 +110,11 @@ public partial class MainWindow : Window
         Left = (SystemParameters.PrimaryScreenWidth - Width) / 2;
         Top = CompactTop;
         Acrylic.TryEnableBlurBehind(hwnd, 16, 17, 19, 205);
+        // This is a hotkey-summoned HUD, not an independent app window -- it and
+        // every auxiliary overlay window (Status/Toast/Scrim/Disclaimer/Logo) were
+        // showing up as five or six separate Alt+Tab entries for one app, since
+        // ShowInTaskbar="False" alone doesn't affect Alt+Tab, only the taskbar.
+        ToolWindow.Enable(hwnd);
 
         // Vertically centers Gallery/Player once their real height is actually known --
         // SizeToContent="Height" means the window's true height isn't known until after
@@ -1273,6 +1278,14 @@ public partial class MainWindow : Window
         TrimSaveNewButton.IsEnabled = false;
         TrimStatusText.Text = "Trimming...";
 
+        // Stop the preview before exporting, not just before the later file copy:
+        // leaving it running meant two simultaneous LibVLC decode sessions on the
+        // same engine (preview + export, both forced onto software decode), which
+        // was heavy enough that the whole app appeared to freeze during export.
+        // The source file also needs to be free of any open handle before it can
+        // later be overwritten in the replace-original path.
+        StopPlayerPlayback();
+
         try
         {
             await Task.Run(() => ExportTrim(sourceFile.FullName, tempOut, start, end));
@@ -1282,9 +1295,9 @@ public partial class MainWindow : Window
                 if (!ConfirmDialog.Ask(this, "Replace the original clip with this trimmed version? This can't be undone.", "Replace"))
                 {
                     File.Delete(tempOut);
+                    OpenInPlayer(sourceFile);
                     return;
                 }
-                StopPlayerPlayback();
                 File.Copy(tempOut, sourceFile.FullName, overwrite: true);
                 File.Delete(tempOut);
                 _currentPlayerFile = new FileInfo(sourceFile.FullName);
@@ -1303,6 +1316,7 @@ public partial class MainWindow : Window
                 File.Copy(tempOut, destPath, overwrite: false);
                 File.Delete(tempOut);
                 _ = RefreshGalleryCountAsync();
+                OpenInPlayer(sourceFile);
             }
 
             TrimStatusText.Text = "Done.";
@@ -1312,6 +1326,7 @@ public partial class MainWindow : Window
         {
             TrimStatusText.Text = "";
             MessageBox.Show(this, $"Trim failed: {ex.Message}", "Capture Center");
+            OpenInPlayer(sourceFile);
         }
         finally
         {
@@ -1326,7 +1341,6 @@ public partial class MainWindow : Window
             return;
 
         using var media = new LibVlc.Media(_libVlc, new Uri(sourcePath));
-        string sout = $":sout=#std{{access=file,mux=mp4,dst={destPath.Replace("\\", "/")}}}\" :sout-keep";
         media.AddOption($":start-time={start.TotalSeconds.ToString(System.Globalization.CultureInfo.InvariantCulture)}");
         media.AddOption($":stop-time={end.TotalSeconds.ToString(System.Globalization.CultureInfo.InvariantCulture)}");
         media.AddOption($":sout=#std{{access=file,mux=mp4,dst={destPath.Replace("\\", "/")}}}");
