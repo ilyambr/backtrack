@@ -16,6 +16,12 @@ namespace CaptureCenter.Obs;
 /// Identified, then Request/RequestResponse pairs matched by requestId, plus
 /// an Event stream for anything OBS pushes unprompted.
 /// </summary>
+/// <summary>Thrown when there's simply nothing to connect to (OBS closed, or its WebSocket server disabled) -- as opposed to a real protocol/auth error once a connection is actually made.</summary>
+public sealed class ObsUnreachableException : Exception
+{
+    public ObsUnreachableException(string message, Exception inner) : base(message, inner) { }
+}
+
 public sealed class ObsClient : IAsyncDisposable
 {
     private ClientWebSocket? _ws;
@@ -29,7 +35,17 @@ public sealed class ObsClient : IAsyncDisposable
     public async Task ConnectAsync(string url, string? password, CancellationToken ct = default)
     {
         _ws = new ClientWebSocket();
-        await _ws.ConnectAsync(new Uri(url), ct);
+        try
+        {
+            await _ws.ConnectAsync(new Uri(url), ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // Nothing there to connect to at all (OBS closed, or its WebSocket
+            // server disabled) -- distinct from a real protocol/auth failure
+            // below, which only happens once a connection is actually made.
+            throw new ObsUnreachableException("OBS isn't running, or its WebSocket server is off", ex);
+        }
 
         JsonElement hello = await ReceiveOneAsync(ct);
         if (hello.GetProperty("op").GetInt32() != 0)
@@ -42,9 +58,10 @@ public sealed class ObsClient : IAsyncDisposable
         {
             ["rpcVersion"] = rpcVersion,
             // General|Config|Scenes|Inputs|Transitions|Filters|Outputs|SceneItems|MediaInputs|Vendors
-            // ((1<<10)-1) -- was 0 (no events at all) before, which is why nothing ever
-            // fired: RecordStateChanged needs Outputs, our own row_saved needs Vendors.
-            ["eventSubscriptions"] = 1023,
+            // ((1<<10)-1 = 1023) plus InputVolumeMeters (1<<16 = 65536) -- that one's a
+            // separate "high-volume" category not included in the low bits at all,
+            // needed for the mic status badge's live audio-level monitoring.
+            ["eventSubscriptions"] = 1023 | (1 << 16),
         };
 
         if (helloData.TryGetProperty("authentication", out JsonElement auth))

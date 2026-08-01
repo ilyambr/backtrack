@@ -9,6 +9,8 @@ public sealed record ReplayRow(string Key, string Label, string Hotkey, int Stat
 
 public sealed record RecordStatus(bool Active, long DurationMs);
 
+public enum MicStatus { Hidden, Silent, MutedOrQuiet }
+
 /// <summary>
 /// Thin façade over <see cref="ObsClient"/>: owns the connect/retry loop and
 /// exposes the handful of calls the overlay UI actually needs, including the
@@ -28,12 +30,19 @@ public sealed class ObsService
     private bool _running;
     private int _generation;
 
+    // Auto-detected on connect (first WASAPI mic-capture input OBS reports) --
+    // no Settings UI to pick one, since "the" global mic is what's being asked for.
+    private string? _micInputName;
+    private DateTime _micLastAudioUtc = DateTime.UtcNow;
+    private bool _micMuted;
+    private float _micVolumeDb;
+
     public bool IsConnected => _client.IsConnected;
     public string? LastError { get; private set; }
     public event Action? StateChanged;
 
-    /// <summary>Fires the moment OBS's own recording output actually starts/stops -- event-driven, not the 1s poll.</summary>
-    public event Action<bool>? RecordingStateChanged;
+    /// <summary>Fires the moment OBS's own recording output actually starts/stops -- event-driven, not the 1s poll. Path is only populated on stop.</summary>
+    public event Action<bool, string?>? RecordingStateChanged;
 
     /// <summary>Fires when a Replay Slider row's buffer actually finishes saving: (rowKey, path). This is the real "yes, the clip exists now" confirmation.</summary>
     public event Action<string, string>? ReplaySaved;
@@ -47,15 +56,29 @@ public sealed class ObsService
 
     private void HookClientEvents(ObsClient client)
     {
-        client.Disconnected += () => StateChanged?.Invoke();
+        client.Disconnected += () =>
+        {
+            // Can't verify mic state without a connection -- hide the badge
+            // rather than show a stale reading from before the disconnect.
+            _micInputName = null;
+            StateChanged?.Invoke();
+        };
         client.EventReceived += HandleEvent;
     }
 
     private void HandleEvent(string eventType, JsonElement data)
     {
-        if (eventType == "RecordStateChanged" && data.TryGetProperty("outputActive", out JsonElement active))
+        if (eventType == "RecordStateChanged" && data.TryGetProperty("outputState", out JsonElement stateEl))
         {
-            RecordingStateChanged?.Invoke(active.GetBoolean());
+            // obs-websocket fires this twice per transition (STARTING then STARTED,
+            // STOPPING then STOPPED) -- both carry the same outputActive value, so
+            // reacting to outputActive directly fired the toast twice per action.
+            // outputPath is only populated once the state is definitively STOPPED.
+            string? state = stateEl.GetString();
+            if (state == "OBS_WEBSOCKET_OUTPUT_STARTED")
+                RecordingStateChanged?.Invoke(true, null);
+            else if (state == "OBS_WEBSOCKET_OUTPUT_STOPPED")
+                RecordingStateChanged?.Invoke(false, data.TryGetProperty("outputPath", out JsonElement pathEl) ? pathEl.GetString() : null);
         }
         else if (eventType == "VendorEvent" &&
                  data.TryGetProperty("vendorName", out JsonElement vn) && vn.GetString() == "replay-buffer-slider" &&
@@ -65,6 +88,94 @@ public sealed class ObsService
             string key = ed.TryGetProperty("key", out JsonElement k) ? k.GetString() ?? "" : "";
             string path = ed.TryGetProperty("path", out JsonElement p) ? p.GetString() ?? "" : "";
             ReplaySaved?.Invoke(key, path);
+        }
+        else if (_micInputName is not null && eventType == "InputMuteStateChanged" &&
+                 data.TryGetProperty("inputName", out JsonElement muteName) && muteName.GetString() == _micInputName &&
+                 data.TryGetProperty("inputMuted", out JsonElement mutedEl))
+        {
+            _micMuted = mutedEl.GetBoolean();
+        }
+        else if (_micInputName is not null && eventType == "InputVolumeChanged" &&
+                 data.TryGetProperty("inputName", out JsonElement volName) && volName.GetString() == _micInputName &&
+                 data.TryGetProperty("inputVolumeDb", out JsonElement volDbEl))
+        {
+            _micVolumeDb = volDbEl.GetSingle();
+        }
+        else if (_micInputName is not null && eventType == "InputVolumeMeters" &&
+                 data.TryGetProperty("inputs", out JsonElement meterInputs))
+        {
+            foreach (JsonElement inp in meterInputs.EnumerateArray())
+            {
+                if (!inp.TryGetProperty("inputName", out JsonElement nameEl) || nameEl.GetString() != _micInputName)
+                    continue;
+                if (inp.TryGetProperty("inputLevelsMul", out JsonElement levels) && HasSignal(levels))
+                    _micLastAudioUtc = DateTime.UtcNow;
+                break;
+            }
+        }
+    }
+
+    /// <summary>
+    /// inputLevelsMul is an array of per-channel [peak, magnitude, inputPeak]
+    /// linear-multiplier readings -- rather than depend on the exact index
+    /// meaning, "any of these numbers above a near-silence floor" is enough to
+    /// call it "there's signal right now".
+    /// </summary>
+    private static bool HasSignal(JsonElement levelsArray)
+    {
+        const double SilenceFloor = 0.0005;
+        foreach (JsonElement channel in levelsArray.EnumerateArray())
+        {
+            foreach (JsonElement v in channel.EnumerateArray())
+            {
+                if (v.ValueKind == JsonValueKind.Number && v.GetDouble() > SilenceFloor)
+                    return true;
+            }
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// Hidden when no mic is detected or things look fine; MutedOrQuiet takes
+    /// priority over Silent since a deliberately muted/low mic isn't "dead",
+    /// it's configured that way -- distinct icon for that case.
+    /// </summary>
+    public MicStatus GetMicStatus()
+    {
+        if (_micInputName is null)
+            return MicStatus.Hidden;
+        if (_micMuted || _micVolumeDb < -40)
+            return MicStatus.MutedOrQuiet;
+        if (DateTime.UtcNow - _micLastAudioUtc >= TimeSpan.FromSeconds(10))
+            return MicStatus.Silent;
+        return MicStatus.Hidden;
+    }
+
+    private async Task DetectMicInputAsync()
+    {
+        try
+        {
+            JsonElement d = await _client.RequestAsync("GetInputList", new Dictionary<string, object?> { ["inputKind"] = "wasapi_input_capture" });
+            if (d.ValueKind != JsonValueKind.Object || !d.TryGetProperty("inputs", out JsonElement inputs) || inputs.GetArrayLength() == 0)
+            {
+                _micInputName = null;
+                return;
+            }
+
+            string? name = inputs[0].GetProperty("inputName").GetString();
+            _micInputName = name;
+            _micLastAudioUtc = DateTime.UtcNow;
+
+            JsonElement muteData = await _client.RequestAsync("GetInputMute", new Dictionary<string, object?> { ["inputName"] = name });
+            _micMuted = muteData.GetProperty("inputMuted").GetBoolean();
+
+            JsonElement volData = await _client.RequestAsync("GetInputVolume", new Dictionary<string, object?> { ["inputName"] = name });
+            _micVolumeDb = volData.GetProperty("inputVolumeDb").GetSingle();
+        }
+        catch
+        {
+            // No mic input, or a request failed mid-detection -- just hide the badge.
+            _micInputName = null;
         }
     }
 
@@ -105,6 +216,12 @@ public sealed class ObsService
                     await client.ConnectAsync(_url, _password);
                     LastError = null;
                     StateChanged?.Invoke();
+                    _ = DetectMicInputAsync();
+                }
+                catch (ObsUnreachableException)
+                {
+                    // Just not there yet -- expected whenever OBS is closed, not a real error.
+                    LastError = null;
                 }
                 catch (Exception ex)
                 {

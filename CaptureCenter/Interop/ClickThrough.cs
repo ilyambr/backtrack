@@ -21,4 +21,11 @@ public static class ClickThrough
         int style = GetWindowLong(hwnd, GWL_EXSTYLE);
         SetWindowLong(hwnd, GWL_EXSTYLE, style | WS_EX_LAYERED | WS_EX_TRANSPARENT);
     }
+
+    /// <summary>Turns click-through back off -- needed while an Undo toast with a real, clickable button is showing.</summary>
+    public static void Disable(IntPtr hwnd)
+    {
+        int style = GetWindowLong(hwnd, GWL_EXSTYLE);
+        SetWindowLong(hwnd, GWL_EXSTYLE, style & ~WS_EX_TRANSPARENT);
+    }
 }

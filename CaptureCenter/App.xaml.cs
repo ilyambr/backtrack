@@ -9,6 +9,8 @@ public partial class App : Application
     // in particular is never registered as the "main" window (it starts hidden).
     private StatusOverlay? _status;
     private ToastOverlay? _toasts;
+    private ScrimOverlay? _scrim;
+    private DisclaimerOverlay? _disclaimer;
     private MainWindow? _main;
 
     protected override void OnStartup(StartupEventArgs e)
@@ -23,9 +25,18 @@ public partial class App : Application
         _toasts = new ToastOverlay();
         _toasts.Show();
 
+        // Stays hidden until the HUD is summoned -- unlike the two above, this
+        // one is never shown on its own.
+        _scrim = new ScrimOverlay();
+
+        // Also only shown/hidden in lockstep with the HUD (see MainWindow.ToggleVisible),
+        // not an always-on fixture -- unlike Status/Toast, this one only makes
+        // sense while the overlay itself is actually open.
+        _disclaimer = new DisclaimerOverlay();
+
         // MainWindow creates its own HWND immediately (for the global hotkey) but
         // is never Shown until the hotkey is pressed -- it's a summonable overlay,
         // not a normal always-visible window.
-        _main = new MainWindow(_status, _toasts);
+        _main = new MainWindow(_status, _toasts, _scrim, _disclaimer);
     }
 }

@@ -1,0 +1,27 @@
+<Window x:Class="CaptureCenter.DisclaimerOverlay"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Backtrack"
+        SizeToContent="WidthAndHeight"
+        WindowStyle="None"
+        AllowsTransparency="True"
+        Background="Transparent"
+        Topmost="True"
+        ShowInTaskbar="False"
+        ResizeMode="NoResize"
+        Visibility="Hidden">
+    <!--
+      Bottom-center of the screen, but shown/hidden by MainWindow in lockstep
+      with the HUD itself; only visible while the overlay is open, not an
+      always-on fixture like StatusOverlay/ToastOverlay. No background, just
+      centered text; the GitHub link needs real clicks so this isn't click-through.
+    -->
+    <TextBlock TextAlignment="Center" TextWrapping="Wrap" FontSize="10.5" Foreground="#AEB4BD" MaxWidth="520">
+        <Run x:Name="VersionRun" FontWeight="Bold" Foreground="#F5F6F8" Text="Backtrack Alpha"/>
+        <LineBreak/>
+        <Run Text="This software is currently in alpha. Features are experimental and may be unstable, incomplete, or not work as intended. Report issues on GitHub: "/>
+        <Hyperlink NavigateUri="https://github.com/ilyambr/backtrack/issues" RequestNavigate="Hyperlink_RequestNavigate" Foreground="#F5F6F8">
+            <Run Text="https://github.com/ilyambr/backtrack/issues"/>
+        </Hyperlink>
+    </TextBlock>
+</Window>

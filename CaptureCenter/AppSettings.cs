@@ -27,6 +27,13 @@ public sealed class AppSettings
     public int ObsPort { get; set; } = 4455;
     public string ObsRemotePassword { get; set; } = "";
 
+    // Stored as raw values (not the GlobalHotkey.Modifiers enum) so this class
+    // doesn't need to reference the Interop namespace. Defaults to Ctrl+Alt+G.
+    public int HotkeyModifiers { get; set; } = 0x1 | 0x2; // Alt | Control
+    public int HotkeyVirtualKey { get; set; } = 'G';
+
+    public bool ShowDisclaimer { get; set; } = true;
+
     private static string FilePath => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "CaptureCenter", "settings.json");
 
