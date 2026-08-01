@@ -300,10 +300,10 @@ public partial class MainWindow : Window
             RecordStatusText.Text = "--:--";
             RecordDot.Fill = (Brush)FindResource("Text1");
             ReplayStatus.Text = "--:--";
+            SaveReplayIcon.Foreground = (Brush)FindResource("Text0");
             _statusOverlay.SetRecording(false);
             _statusOverlay.SetReplayOnline(false);
             _statusOverlay.SetMicStatus(MicStatus.Hidden);
-            LogoGreen.Opacity = 0;
             return;
         }
 
@@ -338,8 +338,8 @@ public partial class MainWindow : Window
 
             ReplayStatus.Text = replayActive ? "On" : "Off";
             ReplayStatus.Foreground = (Brush)FindResource(replayActive ? "Green" : "Text2");
+            SaveReplayIcon.Foreground = (Brush)FindResource(replayActive ? "Green" : "Text0");
             _statusOverlay.SetReplayOnline(replayActive);
-            LogoGreen.Opacity = replayActive ? 1 : 0;
         }
         catch
         {
