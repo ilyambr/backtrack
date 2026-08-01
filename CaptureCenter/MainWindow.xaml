@@ -115,9 +115,12 @@
             <Setter Property="Template" Value="{StaticResource BufRowTemplate}"/>
         </Style>
 
+        <!-- Position on a 0-1000 scale, not raw seconds. A straight 15s-3600s linear
+             slider squeezes every length anyone actually wants (15s-2min) into the
+             first couple percent of the track. See PosToSeconds/SecondsToPos. -->
         <Style x:Key="RowLengthSlider" TargetType="Slider">
-            <Setter Property="Minimum" Value="15"/>
-            <Setter Property="Maximum" Value="3600"/>
+            <Setter Property="Minimum" Value="0"/>
+            <Setter Property="Maximum" Value="1000"/>
             <Setter Property="Margin" Value="0,6,0,0"/>
         </Style>
 
