@@ -272,12 +272,12 @@ public partial class MainWindow : Window
     /// (GalleryScrollHost's MaxHeight, PlayerVideoHost's Height) rather than the
     /// window itself.
     /// </summary>
-    private double BigWidth() => Math.Min(SystemParameters.PrimaryScreenWidth * 0.55, 980);
+    private double BigWidth() => Math.Min(SystemParameters.PrimaryScreenWidth * 0.72, 1400);
 
     private void ApplyBigScreenSize()
     {
         double screenH = SystemParameters.PrimaryScreenHeight;
-        double contentHeight = screenH * 0.62;
+        double contentHeight = screenH * 0.8;
 
         GalleryScrollHost.MaxHeight = Math.Max(contentHeight - 70, 300);
         PlayerVideoHost.Height = Math.Max(contentHeight - 170, 320);
