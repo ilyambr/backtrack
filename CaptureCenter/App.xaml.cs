@@ -11,6 +11,7 @@ public partial class App : Application
     private ToastOverlay? _toasts;
     private ScrimOverlay? _scrim;
     private DisclaimerOverlay? _disclaimer;
+    private LogoOverlay? _logo;
     private MainWindow? _main;
 
     protected override void OnStartup(StartupEventArgs e)
@@ -34,9 +35,14 @@ public partial class App : Application
         // sense while the overlay itself is actually open.
         _disclaimer = new DisclaimerOverlay();
 
+        // Also only shown/hidden in lockstep with the HUD -- lives at a fixed
+        // screen position, independent of MainWindow's own size, which changes a
+        // lot between the compact pill and the big Gallery/Player panel.
+        _logo = new LogoOverlay();
+
         // MainWindow creates its own HWND immediately (for the global hotkey) but
         // is never Shown until the hotkey is pressed -- it's a summonable overlay,
         // not a normal always-visible window.
-        _main = new MainWindow(_status, _toasts, _scrim, _disclaimer);
+        _main = new MainWindow(_status, _toasts, _scrim, _disclaimer, _logo);
     }
 }

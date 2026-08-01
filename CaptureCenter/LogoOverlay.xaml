@@ -1,0 +1,26 @@
+<Window x:Class="CaptureCenter.LogoOverlay"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Capture Center Logo"
+        Width="160" Height="46"
+        WindowStyle="None"
+        AllowsTransparency="True"
+        Background="Transparent"
+        Topmost="True"
+        ShowInTaskbar="False"
+        ResizeMode="NoResize">
+    <!--
+      A fixed screen position, independent of MainWindow's own size/position:
+      MainWindow resizes and moves a lot (compact pill vs. the big Gallery/Player
+      panel), and the logo used to live inside it, so it dragged around and
+      resized along with every screen change instead of staying put. Shown/hidden
+      in lockstep with the HUD's own open/close state (see MainWindow.ToggleVisible/
+      CloseOverlay), same as the Scrim and Disclaimer, not an always-on fixture
+      like the Status/Toast overlays.
+    -->
+    <Rectangle Width="160" Height="46">
+        <Rectangle.Fill>
+            <ImageBrush ImageSource="Assets/logo.png" Stretch="Uniform" Opacity="0.7"/>
+        </Rectangle.Fill>
+    </Rectangle>
+</Window>

@@ -35,6 +35,7 @@ public partial class MainWindow : Window
     private readonly ToastOverlay _toastOverlay;
     private readonly ScrimOverlay _scrim;
     private readonly DisclaimerOverlay _disclaimer;
+    private readonly LogoOverlay _logo;
     private readonly AppSettings _settings;
     private readonly Dictionary<string, string> _rowLabels = new();
     private List<ReplayRow> _lastReplayRows = new();
@@ -56,13 +57,14 @@ public partial class MainWindow : Window
     private TimeSpan? _trimStart;
     private TimeSpan? _trimEnd;
 
-    public MainWindow(StatusOverlay statusOverlay, ToastOverlay toastOverlay, ScrimOverlay scrim, DisclaimerOverlay disclaimer)
+    public MainWindow(StatusOverlay statusOverlay, ToastOverlay toastOverlay, ScrimOverlay scrim, DisclaimerOverlay disclaimer, LogoOverlay logo)
     {
         InitializeComponent();
         _statusOverlay = statusOverlay;
         _toastOverlay = toastOverlay;
         _scrim = scrim;
         _disclaimer = disclaimer;
+        _logo = logo;
         _settings = AppSettings.Load();
 
         _scrim.Dismissed += () => Dispatcher.BeginInvoke(CloseOverlay);
@@ -210,6 +212,7 @@ public partial class MainWindow : Window
         Hide();
         _scrim.Hide();
         _disclaimer.Hide();
+        _logo.Hide();
     }
 
     private void ToggleVisible()
@@ -221,6 +224,7 @@ public partial class MainWindow : Window
         else
         {
             _scrim.Show();
+            _logo.Show();
             Show();
             Activate();
             // Activate() re-asserts THIS window to the front of the topmost band --
@@ -277,13 +281,13 @@ public partial class MainWindow : Window
     /// the actual on-screen height is driven by content, not a Window.Height
     /// set here.
     /// </summary>
-    private double BigWidth() => Math.Min(SystemParameters.PrimaryScreenWidth * 0.68, 1300);
+    private double BigWidth() => Math.Min(SystemParameters.PrimaryScreenWidth * 0.78, 1500);
 
     private void ApplyBigScreenSize()
     {
         double screenH = SystemParameters.PrimaryScreenHeight;
 
-        GalleryScrollHost.MaxHeight = Math.Max(screenH * 0.8, 300);
+        GalleryScrollHost.MaxHeight = Math.Max(screenH * 0.65, 300);
 
         // Sized from the actual video column's width using a 16:9 ratio, not a
         // guessed fraction of screen height: picking the height independently of

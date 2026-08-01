@@ -408,23 +408,12 @@
         </Style>
     </Window.Resources>
 
-    <StackPanel>
-        <!-- Above the dark panel, on the window's own transparent background,
-             not inside the pill itself. Only for the compact screens (Idle/Save
-             Replay/Settings); collapsed for Gallery/Player (see ShowScreen).
-             A Rectangle+ImageBrush, not an Image with Opacity set directly on it:
-             UIElement.Opacity forces an offscreen layer pass that composites
-             against an opaque black backdrop, clashing with the DWM blur-behind
-             window (that's the black box this was showing). Brush-level Opacity
-             blends per-pixel during normal rendering instead, avoiding that.
-             NOTE: this workaround did not fully fix it, still investigating. -->
-        <Rectangle x:Name="LogoImage" Height="46" Width="160" HorizontalAlignment="Center" Margin="0,0,0,8">
-            <Rectangle.Fill>
-                <ImageBrush ImageSource="Assets/logo.png" Stretch="Uniform" Opacity="0.7"/>
-            </Rectangle.Fill>
-        </Rectangle>
-
-        <Border x:Name="RootBorder" Background="{StaticResource PanelBg}" BorderBrush="{StaticResource Hairline}" BorderThickness="1">
+    <!-- The brand logo used to live here, above RootBorder, but that meant it moved
+         and resized along with MainWindow itself (which changes size a lot between
+         the compact pill and the big Gallery/Player panel). It's now its own
+         separate, fixed-position window (see LogoOverlay.xaml), shown/hidden in
+         lockstep with the HUD by MainWindow.ToggleVisible/CloseOverlay. -->
+    <Border x:Name="RootBorder" Background="{StaticResource PanelBg}" BorderBrush="{StaticResource Hairline}" BorderThickness="1">
         <Grid>
             <!-- Idle screen: Record / Save Replay / Gallery -->
             <StackPanel x:Name="IdlePanel">
@@ -793,6 +782,5 @@
                 </StackPanel>
             </DockPanel>
         </Grid>
-        </Border>
-    </StackPanel>
+    </Border>
 </Window>
