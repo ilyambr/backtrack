@@ -40,13 +40,33 @@ public static class Acrylic
 
     private const int WCA_ACCENT_POLICY = 19;
 
+    [StructLayout(LayoutKind.Sequential)]
+    private struct Margins
+    {
+        public int Left, Right, Top, Bottom;
+    }
+
     [DllImport("user32.dll")]
     private static extern int SetWindowCompositionAttribute(IntPtr hwnd, ref WindowCompositionAttributeData data);
 
+    [DllImport("dwmapi.dll")]
+    private static extern int DwmExtendFrameIntoClientArea(IntPtr hwnd, ref Margins margins);
+
+    /// <summary>
+    /// Real acrylic blur-behind needs two things together: telling DWM the whole
+    /// client area is "glass" (so a plain WPF Background="Transparent" -- with
+    /// AllowsTransparency left OFF -- actually shows DWM's composited blur
+    /// through it instead of rendering opaque black), then the accent policy
+    /// itself. AllowsTransparency="True" uses GDI layered windows instead of DWM
+    /// composition and silently defeats this -- the window must not use it.
+    /// </summary>
     public static void TryEnableBlurBehind(IntPtr hwnd, byte r, byte g, byte b, byte a)
     {
         try
         {
+            var margins = new Margins { Left = -1, Right = -1, Top = -1, Bottom = -1 };
+            DwmExtendFrameIntoClientArea(hwnd, ref margins);
+
             var accent = new AccentPolicy
             {
                 AccentState = AccentState.ACCENT_ENABLE_ACRYLICBLURBEHIND,

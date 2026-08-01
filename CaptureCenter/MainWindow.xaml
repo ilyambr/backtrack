@@ -4,15 +4,15 @@
         Title="Capture Center"
         Width="460" Height="130"
         WindowStyle="None"
-        AllowsTransparency="True"
+        AllowsTransparency="False"
         Background="Transparent"
         Topmost="True"
         ShowInTaskbar="False"
         ResizeMode="NoResize"
         SizeToContent="Height"
-        Loaded="Window_Loaded">
+        Visibility="Hidden">
     <Window.Resources>
-        <SolidColorBrush x:Key="PanelBg" Color="#E4101113"/>
+        <SolidColorBrush x:Key="PanelBg" Color="#101113"/>
         <SolidColorBrush x:Key="Hairline" Color="#1FFFFFFF"/>
         <SolidColorBrush x:Key="Text0" Color="#F5F6F8"/>
         <SolidColorBrush x:Key="Text1" Color="#AEB4BD"/>
@@ -66,6 +66,29 @@
             <Setter Property="Margin" Value="0,4,0,0"/>
         </Style>
 
+        <Style x:Key="BackArrow" TargetType="TextBlock">
+            <Setter Property="Text" Value="&#8249;"/>
+            <Setter Property="Foreground" Value="{StaticResource Text2}"/>
+            <Setter Property="FontWeight" Value="Bold"/>
+            <Setter Property="FontSize" Value="14"/>
+            <Setter Property="Margin" Value="0,0,10,0"/>
+            <Setter Property="Cursor" Value="Hand"/>
+        </Style>
+
+        <Style x:Key="ScreenTitle" TargetType="TextBlock">
+            <Setter Property="FontWeight" Value="Bold"/>
+            <Setter Property="FontSize" Value="13"/>
+            <Setter Property="Foreground" Value="{StaticResource Text0}"/>
+        </Style>
+
+        <!-- Base template shared by both variants; only the hover behavior differs -->
+        <ControlTemplate x:Key="BufRowTemplate" TargetType="Button">
+            <Border Background="{TemplateBinding Background}" Padding="12,10">
+                <ContentPresenter/>
+            </Border>
+        </ControlTemplate>
+
+        <!-- Online (green) rows: hoverable, they're actually actionable -->
         <Style x:Key="BufRowButton" TargetType="Button">
             <Setter Property="Background" Value="{StaticResource RowBg}"/>
             <Setter Property="BorderThickness" Value="0"/>
@@ -73,35 +96,91 @@
             <Setter Property="Cursor" Value="Hand"/>
             <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
             <Setter Property="Margin" Value="0,0,0,2"/>
-            <Setter Property="Template">
-                <Setter.Value>
-                    <ControlTemplate TargetType="Button">
-                        <Border Background="{TemplateBinding Background}" Padding="12,10">
-                            <ContentPresenter/>
-                        </Border>
-                    </ControlTemplate>
-                </Setter.Value>
-            </Setter>
+            <Setter Property="Template" Value="{StaticResource BufRowTemplate}"/>
             <Style.Triggers>
                 <Trigger Property="IsMouseOver" Value="True">
                     <Setter Property="Background" Value="{StaticResource RowHoverBg}"/>
                 </Trigger>
             </Style.Triggers>
         </Style>
+
+        <!-- Grey/red rows: no hover feedback, since saving them isn't expected to do much -->
+        <Style x:Key="BufRowButtonNoHover" TargetType="Button">
+            <Setter Property="Background" Value="{StaticResource RowBg}"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Foreground" Value="{StaticResource Text0}"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+            <Setter Property="Margin" Value="0,0,0,2"/>
+            <Setter Property="Template" Value="{StaticResource BufRowTemplate}"/>
+        </Style>
+
+        <Style x:Key="RowLengthSlider" TargetType="Slider">
+            <Setter Property="Minimum" Value="15"/>
+            <Setter Property="Maximum" Value="3600"/>
+            <Setter Property="Margin" Value="0,6,0,0"/>
+        </Style>
+
+        <!-- Track+knob toggle switch, matching the design mockup exactly -->
+        <Style x:Key="AppToggle" TargetType="ToggleButton">
+            <Setter Property="Width" Value="34"/>
+            <Setter Property="Height" Value="18"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ToggleButton">
+                        <Border x:Name="Track" Background="{StaticResource Hairline}">
+                            <Ellipse x:Name="Knob" Width="14" Height="14" Fill="{StaticResource Text0}"
+                                     HorizontalAlignment="Left" Margin="2,0,0,0"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="Track" Property="Background" Value="{StaticResource Accent}"/>
+                                <Setter TargetName="Knob" Property="HorizontalAlignment" Value="Right"/>
+                                <Setter TargetName="Knob" Property="Margin" Value="0,0,2,0"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="SettingsSectionHeader" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="10.5"/>
+            <Setter Property="FontWeight" Value="Bold"/>
+            <Setter Property="Foreground" Value="{StaticResource Text2}"/>
+            <Setter Property="Margin" Value="0,16,0,6"/>
+        </Style>
+
+        <Style x:Key="SettingsRow" TargetType="Border">
+            <Setter Property="BorderBrush" Value="{StaticResource Hairline}"/>
+            <Setter Property="BorderThickness" Value="0,1,0,0"/>
+            <Setter Property="Padding" Value="0,10"/>
+        </Style>
+
+        <Style x:Key="FlatButton" TargetType="Button">
+            <Setter Property="Background" Value="#1AFFFFFF"/>
+            <Setter Property="Foreground" Value="{StaticResource Text0}"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Padding" Value="10,5"/>
+            <Setter Property="FontSize" Value="11.5"/>
+            <Setter Property="FontWeight" Value="Bold"/>
+            <Setter Property="Cursor" Value="Hand"/>
+        </Style>
+
+        <Style x:Key="IconButton" TargetType="Button">
+            <Setter Property="Background" Value="#12FFFFFF"/>
+            <Setter Property="Foreground" Value="{StaticResource Text1}"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Padding" Value="6,4"/>
+            <Setter Property="FontSize" Value="11"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Margin" Value="0,0,4,0"/>
+        </Style>
     </Window.Resources>
 
-    <Border Background="{StaticResource PanelBg}" BorderBrush="{StaticResource Hairline}" BorderThickness="1">
+    <Border x:Name="RootBorder" Background="{StaticResource PanelBg}" BorderBrush="{StaticResource Hairline}" BorderThickness="1">
         <Grid>
-            <Ellipse x:Name="ConnDot" Width="7" Height="7" Fill="{StaticResource Text2}"
-                     HorizontalAlignment="Left" VerticalAlignment="Top" Margin="8,8,0,0" ToolTip="OBS connection"/>
-
-            <Button x:Name="SettingsButton" Width="20" Height="20" FontSize="11"
-                    HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,6,6,0"
-                    Style="{StaticResource TileButton}" Padding="0" Click="SettingsButton_Click"
-                    ToolTip="Settings (not built yet)">
-                <TextBlock Text="&#9881;" Foreground="{StaticResource Text1}" FontSize="12"/>
-            </Button>
-
             <!-- Idle screen: Record / Save Replay / Gallery -->
             <Grid x:Name="IdlePanel">
                 <Grid.ColumnDefinitions>
@@ -140,43 +219,101 @@
                             <Rectangle Width="7" Height="7" Fill="{StaticResource Text0}" Margin="2,2,0,0"/>
                         </UniformGrid>
                         <TextBlock x:Name="GalleryLabel" Text="Gallery" Style="{StaticResource TileLabel}"/>
-                        <TextBlock x:Name="GalleryStatus" Text="not built yet" Style="{StaticResource TileStatus}"/>
+                        <TextBlock x:Name="GalleryStatus" Text="0 clips" Style="{StaticResource TileStatus}"/>
                     </StackPanel>
                 </Button>
             </Grid>
 
+            <!-- Settings gear, declared AFTER IdlePanel so it wins hit-testing in the
+                 corner where it would otherwise overlap the Gallery tile underneath it.
+                 Only ever visible while IdlePanel itself is showing. -->
+            <Button x:Name="SettingsButton" Width="20" Height="20" FontSize="11"
+                    HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,6,6,0"
+                    Style="{StaticResource TileButton}" Padding="0" Click="SettingsButton_Click"
+                    ToolTip="Settings">
+                <TextBlock Text="&#9881;" Foreground="{StaticResource Text1}" FontSize="12"/>
+            </Button>
+
+            <Ellipse x:Name="ConnDot" Width="7" Height="7" Fill="{StaticResource Text2}"
+                     HorizontalAlignment="Left" VerticalAlignment="Top" Margin="8,8,0,0" ToolTip="OBS connection"/>
+
             <!-- Save Replay screen -->
             <DockPanel x:Name="SaveReplayPanel" Visibility="Collapsed" Margin="14,12,14,14">
                 <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,10">
-                    <TextBlock Text="&#8249;" Foreground="{StaticResource Text2}" FontWeight="Bold" FontSize="14"
-                               Margin="0,0,10,0" Cursor="Hand" MouseLeftButtonUp="BackFromSaveReplay_Click"/>
-                    <TextBlock Text="Save which buffer?" FontWeight="Bold" FontSize="13" Foreground="{StaticResource Text0}"/>
+                    <TextBlock Style="{StaticResource BackArrow}" MouseLeftButtonUp="BackToIdle_Click"/>
+                    <TextBlock Text="Save which buffer?" Style="{StaticResource ScreenTitle}"/>
                 </StackPanel>
                 <StackPanel x:Name="BufRowsPanel"/>
             </DockPanel>
 
-            <!-- Placeholder for anything not actually built yet (Gallery, Settings) -->
-            <DockPanel x:Name="NotBuiltPanel" Visibility="Collapsed" Margin="14,12,14,14">
-                <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,10">
-                    <TextBlock Text="&#8249;" Foreground="{StaticResource Text2}" FontWeight="Bold" FontSize="14"
-                               Margin="0,0,10,0" Cursor="Hand" MouseLeftButtonUp="BackFromNotBuilt_Click"/>
-                    <TextBlock x:Name="NotBuiltTitle" Text="Gallery" FontWeight="Bold" FontSize="13" Foreground="{StaticResource Text0}"/>
+            <!-- Gallery screen -->
+            <DockPanel x:Name="GalleryPanel" Visibility="Collapsed" Margin="16,14,16,16">
+                <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,12">
+                    <TextBlock Style="{StaticResource BackArrow}" MouseLeftButtonUp="BackToIdle_Click"/>
+                    <TextBlock Text="Gallery" Style="{StaticResource ScreenTitle}"/>
                 </StackPanel>
-                <TextBlock x:Name="NotBuiltMessage" TextWrapping="Wrap" FontSize="12" Foreground="{StaticResource Text2}"
-                           Text="Not built yet -- see the design mockup for what this screen is meant to do."/>
+                <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" MaxHeight="480">
+                    <WrapPanel x:Name="GalleryGrid"/>
+                </ScrollViewer>
             </DockPanel>
 
-            <!-- Always-on status indicator, bottom-right, independent of which screen above is open -->
-            <StackPanel Orientation="Vertical" HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,0,4,4">
-                <Border x:Name="RecBadge" Width="14" Height="14" Background="#CC0A0B0D" BorderBrush="#14FFFFFF" BorderThickness="1"
-                        Visibility="Collapsed" ToolTip="Recording">
-                    <Ellipse Width="7" Height="7" Fill="{StaticResource Rec}" HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                </Border>
-                <Border x:Name="ReplayBadge" Width="14" Height="14" Background="#CC0A0B0D" BorderBrush="#14FFFFFF" BorderThickness="1"
-                        Margin="0,1,0,0" Visibility="Collapsed" ToolTip="Replay Buffer Online">
-                    <TextBlock Text="&#8635;" FontSize="8" Foreground="{StaticResource Green}" HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                </Border>
-            </StackPanel>
+            <!-- Settings screen -->
+            <DockPanel x:Name="SettingsPanel" Visibility="Collapsed" Margin="16,14,16,16">
+                <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,4">
+                    <TextBlock Style="{StaticResource BackArrow}" MouseLeftButtonUp="BackToIdle_Click"/>
+                    <TextBlock Text="Settings" Style="{StaticResource ScreenTitle}"/>
+                </StackPanel>
+                <StackPanel>
+                    <TextBlock Text="GENERAL" Style="{StaticResource SettingsSectionHeader}"/>
+                    <Border Style="{StaticResource SettingsRow}" BorderThickness="0">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="Launch with Windows" FontSize="13" FontWeight="Bold" Foreground="{StaticResource Text0}" VerticalAlignment="Center"/>
+                            <ToggleButton x:Name="LaunchWithWindowsToggle" Grid.Column="1" Style="{StaticResource AppToggle}" Click="LaunchWithWindowsToggle_Click"/>
+                        </Grid>
+                    </Border>
+
+                    <TextBlock Text="CLIPS" Style="{StaticResource SettingsSectionHeader}"/>
+                    <Border Style="{StaticResource SettingsRow}" BorderThickness="0">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <StackPanel>
+                                <TextBlock Text="Save location" FontSize="13" FontWeight="Bold" Foreground="{StaticResource Text0}"/>
+                                <TextBlock x:Name="ClipsFolderText" FontSize="11" Foreground="{StaticResource Text2}" Margin="0,2,0,0"/>
+                            </StackPanel>
+                            <Button Grid.Column="1" Content="Change" Style="{StaticResource FlatButton}" Click="ChangeClipsFolder_Click"/>
+                        </Grid>
+                    </Border>
+                    <Border Style="{StaticResource SettingsRow}">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="Max clip length" FontSize="13" FontWeight="Bold" Foreground="{StaticResource Text0}" VerticalAlignment="Center"/>
+                            <TextBlock Grid.Column="1" Text="60:00 (fixed by Replay Slider)" FontSize="11" Foreground="{StaticResource Text2}" VerticalAlignment="Center"/>
+                        </Grid>
+                    </Border>
+
+                    <TextBlock Text="OVERLAY" Style="{StaticResource SettingsSectionHeader}"/>
+                    <Border Style="{StaticResource SettingsRow}" BorderThickness="0">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="Toggle hotkey" FontSize="13" FontWeight="Bold" Foreground="{StaticResource Text0}" VerticalAlignment="Center"/>
+                            <TextBlock Grid.Column="1" Text="Ctrl+Alt+G" FontSize="11" Foreground="{StaticResource Text2}" VerticalAlignment="Center"/>
+                        </Grid>
+                    </Border>
+                </StackPanel>
+            </DockPanel>
         </Grid>
     </Border>
 </Window>

@@ -5,7 +5,7 @@ using System.Threading.Tasks;
 
 namespace CaptureCenter.Obs;
 
-public sealed record ReplayRow(string Key, string Label, string Hotkey, int Status);
+public sealed record ReplayRow(string Key, string Label, string Hotkey, int Status, int LengthSeconds);
 
 public sealed record RecordStatus(bool Active, long DurationMs);
 
@@ -103,7 +103,8 @@ public sealed class ObsService
                     item.GetProperty("key").GetString() ?? "",
                     item.GetProperty("label").GetString() ?? "",
                     item.TryGetProperty("hotkey", out JsonElement hk) ? hk.GetString() ?? "" : "",
-                    item.TryGetProperty("status", out JsonElement st) ? st.GetInt32() : 0));
+                    item.TryGetProperty("status", out JsonElement st) ? st.GetInt32() : 0,
+                    item.TryGetProperty("length_seconds", out JsonElement ls) ? ls.GetInt32() : 60));
             }
         }
         return rows;
@@ -116,6 +117,17 @@ public sealed class ObsService
             ["vendorName"] = "replay-buffer-slider",
             ["requestType"] = "save_row",
             ["requestData"] = new Dictionary<string, object?> { ["key"] = key },
+        });
+    }
+
+    /// <summary>Needs the set-row-length bridge PR merged into the plugin; older builds will just error.</summary>
+    public async Task SetReplayRowLengthAsync(string key, int seconds)
+    {
+        await _client.RequestAsync("CallVendorRequest", new Dictionary<string, object?>
+        {
+            ["vendorName"] = "replay-buffer-slider",
+            ["requestType"] = "set_row_length",
+            ["requestData"] = new Dictionary<string, object?> { ["key"] = key, ["seconds"] = seconds },
         });
     }
 }

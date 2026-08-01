@@ -1,0 +1,28 @@
+<Window x:Class="CaptureCenter.StatusOverlay"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Capture Center Status"
+        Width="24" Height="48"
+        WindowStyle="None"
+        AllowsTransparency="True"
+        Background="Transparent"
+        Topmost="True"
+        ShowInTaskbar="False"
+        ResizeMode="NoResize">
+    <!--
+      Always visible, independent of MainWindow's hidden/shown state; this is
+      the "always-on-screen indicator" from the design, separate from the
+      hotkey-summoned HUD on purpose. Click-through (see ClickThrough.Enable in
+      the code-behind) so it never blocks clicks to the game underneath it.
+    -->
+    <StackPanel>
+        <Border x:Name="RecBadge" Width="14" Height="14" Background="#CC0A0B0D" BorderBrush="#14FFFFFF" BorderThickness="1"
+                Visibility="Collapsed">
+            <Ellipse Width="7" Height="7" Fill="#FF5B52" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+        </Border>
+        <Border x:Name="ReplayBadge" Width="14" Height="14" Background="#CC0A0B0D" BorderBrush="#14FFFFFF" BorderThickness="1"
+                Margin="0,1,0,0" Visibility="Collapsed">
+            <TextBlock Text="&#8635;" FontSize="8" Foreground="#3ECF8E" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+        </Border>
+    </StackPanel>
+</Window>
