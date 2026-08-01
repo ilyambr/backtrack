@@ -106,7 +106,11 @@ public partial class MainWindow : Window
         try
         {
             LibVlc.Core.Initialize();
-            _libVlc = new LibVlc.LibVLC("--no-video-title-show");
+            // --avcodec-hw=none: disables hardware-accelerated decoding. Without this,
+            // the video surface can come up as a blank white swapchain with nothing
+            // ever drawn into it on machines/VMs where GPU decode acceleration isn't
+            // reliably available -- software decode is slower but actually paints frames.
+            _libVlc = new LibVlc.LibVLC("--no-video-title-show", "--avcodec-hw=none");
         }
         catch (Exception ex)
         {
@@ -256,20 +260,22 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// Gallery and Player are meant to feel almost fullscreen, not squeezed into
-    /// the same small pill width as Idle/Settings. Width comes from the primary
-    /// screen's own size (capped, so it doesn't get absurd on huge monitors);
-    /// since the window uses SizeToContent="Height", the actual on-screen height
-    /// is driven by content, not a Window.Height set here -- so the real work is
-    /// sizing the two variable-height content hosts (GalleryScrollHost's MaxHeight,
-    /// PlayerVideoHost's Height) rather than the window itself.
+    /// Gallery and Player are meant to feel noticeably bigger than the compact
+    /// pill, not literally edge-to-edge fullscreen -- a comfortable, centered
+    /// panel over the game, matching the original design concept's proportions.
+    /// Width comes from the primary screen's own size (capped, so it doesn't get
+    /// absurd on huge monitors); since the window uses SizeToContent="Height",
+    /// the actual on-screen height is driven by content, not a Window.Height set
+    /// here -- so the real work is sizing the two variable-height content hosts
+    /// (GalleryScrollHost's MaxHeight, PlayerVideoHost's Height) rather than the
+    /// window itself.
     /// </summary>
-    private double BigWidth() => Math.Min(SystemParameters.PrimaryScreenWidth * 0.7, 1300);
+    private double BigWidth() => Math.Min(SystemParameters.PrimaryScreenWidth * 0.55, 980);
 
     private void ApplyBigScreenSize()
     {
         double screenH = SystemParameters.PrimaryScreenHeight;
-        double contentHeight = screenH * 0.82;
+        double contentHeight = screenH * 0.62;
 
         GalleryScrollHost.MaxHeight = Math.Max(contentHeight - 70, 300);
         PlayerVideoHost.Height = Math.Max(contentHeight - 170, 320);
