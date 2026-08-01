@@ -160,56 +160,72 @@ public partial class MainWindow : Window
     /// </summary>
     private async Task CheckForUpdatesAsync()
     {
-        await CheckAndApplyPluginUpdateAsync("obs-replay-slider", "replay-slider.dll",
-            name => name.Contains("windows", StringComparison.OrdinalIgnoreCase) && name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase));
-
-        await CheckAndApplyPluginUpdateAsync("obs-source-record", "source-record.dll",
-            name => name.Contains("windows-installer", StringComparison.OrdinalIgnoreCase) && name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase));
-
-        await CheckAndApplySelfUpdateAsync();
+        await CheckForUpdatesAsync(statusCallback: null);
     }
 
-    private async Task CheckAndApplyPluginUpdateAsync(string repo, string dllFileName, Func<string, bool> assetPredicate)
+    /// <summary>
+    /// Runs all three checks and, if given a callback (the manual Settings button),
+    /// reports a per-component status line for each -- not just a single pass/fail,
+    /// since "nothing happened" is ambiguous with three independent components and
+    /// the user should be able to see all three actually got checked.
+    /// </summary>
+    private async Task CheckForUpdatesAsync(Action<string>? statusCallback)
+    {
+        string backtrack = await CheckAndApplySelfUpdateAsync();
+        string replaySlider = await CheckAndApplyPluginUpdateAsync("obs-replay-slider", "Replay Slider", "replay-slider.dll",
+            name => name.Contains("windows", StringComparison.OrdinalIgnoreCase) && name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase));
+        string sourceRecord = await CheckAndApplyPluginUpdateAsync("obs-source-record", "Source Record", "source-record.dll",
+            name => name.Contains("windows-installer", StringComparison.OrdinalIgnoreCase) && name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase));
+
+        statusCallback?.Invoke($"Backtrack: {backtrack} · Replay Slider: {replaySlider} · Source Record: {sourceRecord}");
+    }
+
+    private async Task<string> CheckAndApplyPluginUpdateAsync(string repo, string displayName, string dllFileName, Func<string, bool> assetPredicate)
     {
         try
         {
             ReleaseInfo? release = await _updates.GetLatestReleaseAsync("ilyambr", repo, assetPredicate);
             if (release?.DownloadUrl is null)
-                return;
+                return "check failed";
 
             Version installed = _updates.GetInstalledPluginVersion(dllFileName);
             if (!UpdateService.IsNewer(release.Version, installed))
-                return;
+                return "up to date";
 
             await _updates.InstallPluginUpdateAsync(release.DownloadUrl);
-            _ = Dispatcher.BeginInvoke(() => _toastOverlay.ShowUpdateApplied(repo, release.Version));
+            _ = Dispatcher.BeginInvoke(() => _toastOverlay.ShowUpdateApplied(displayName, release.Version));
+            return $"updated to {release.Version}";
         }
         catch (Exception ex)
         {
             Debug.WriteLine($"Update check/apply failed for {repo}: {ex.Message}");
+            return "check failed";
         }
     }
 
-    private async Task CheckAndApplySelfUpdateAsync()
+    private async Task<string> CheckAndApplySelfUpdateAsync()
     {
         try
         {
             ReleaseInfo? release = await _updates.GetLatestReleaseAsync("ilyambr", "backtrack",
                 name => name.Contains("windows", StringComparison.OrdinalIgnoreCase) && name.EndsWith(".zip", StringComparison.OrdinalIgnoreCase));
             if (release?.DownloadUrl is null)
-                return;
+                return "check failed";
 
             if (!UpdateService.IsNewer(release.Version, UpdateService.CurrentAppVersion))
-                return;
+                return "up to date";
 
             await _updates.ApplySelfUpdateAsync(release.DownloadUrl);
             // The helper script above is now waiting for this process to exit --
-            // shut down cleanly so it can finish the swap and relaunch.
+            // shut down cleanly so it can finish the swap and relaunch. Whatever
+            // called this never actually sees this return value in that case.
             _ = Dispatcher.BeginInvoke(() => Application.Current.Shutdown());
+            return $"updated to {release.Version}, restarting";
         }
         catch (Exception ex)
         {
             Debug.WriteLine($"Self-update check/apply failed: {ex.Message}");
+            return "check failed";
         }
     }
 
@@ -1445,6 +1461,24 @@ public partial class MainWindow : Window
     }
 
     private void QuitApp_Click(object sender, RoutedEventArgs e) => Application.Current.Shutdown();
+
+    private async void CheckUpdatesButton_Click(object sender, RoutedEventArgs e)
+    {
+        CheckUpdatesButton.IsEnabled = false;
+        UpdateStatusText.Text = "Checking Backtrack, Replay Slider, and Source Record...";
+        try
+        {
+            await CheckForUpdatesAsync(status => UpdateStatusText.Text = status);
+        }
+        catch (Exception ex)
+        {
+            UpdateStatusText.Text = $"Update check failed: {ex.Message}";
+        }
+        finally
+        {
+            CheckUpdatesButton.IsEnabled = true;
+        }
+    }
 
     // ------------------------------------------------------------ hotkey capture
 
