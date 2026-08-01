@@ -263,26 +263,35 @@ public partial class MainWindow : Window
 
     /// <summary>
     /// Gallery and Player are meant to feel noticeably bigger than the compact
-    /// pill, not literally edge-to-edge fullscreen -- a comfortable, centered
-    /// panel over the game, matching the original design concept's proportions.
-    /// Width comes from the primary screen's own size (capped, so it doesn't get
+    /// pill, not literally edge-to-edge fullscreen -- a comfortable panel over
+    /// the game, matching the original design concept's proportions. Width
+    /// comes from the primary screen's own size (capped, so it doesn't get
     /// absurd on huge monitors); since the window uses SizeToContent="Height",
-    /// the actual on-screen height is driven by content, not a Window.Height set
-    /// here -- so the real work is sizing the two variable-height content hosts
-    /// (GalleryScrollHost's MaxHeight, PlayerVideoHost's Height) rather than the
-    /// window itself.
+    /// the actual on-screen height is driven by content, not a Window.Height
+    /// set here.
     /// </summary>
-    private double BigWidth() => Math.Min(SystemParameters.PrimaryScreenWidth * 0.72, 1400);
+    private double BigWidth() => Math.Min(SystemParameters.PrimaryScreenWidth * 0.62, 1150);
 
     private void ApplyBigScreenSize()
     {
         double screenH = SystemParameters.PrimaryScreenHeight;
-        double contentHeight = screenH * 0.8;
 
-        GalleryScrollHost.MaxHeight = Math.Max(contentHeight - 70, 300);
-        PlayerVideoHost.Height = Math.Max(contentHeight - 170, 320);
+        GalleryScrollHost.MaxHeight = Math.Max(screenH * 0.75, 300);
 
-        Top = Math.Max((screenH - contentHeight) / 2 - 20, 16);
+        // Sized from the actual video column's width using a 16:9 ratio, not a
+        // guessed fraction of screen height: picking the height independently of
+        // the video's real aspect ratio was letterboxing it (grey bars either
+        // side) whenever the guess didn't match. The rail column is a fixed 90px
+        // and RootBorder has a 1px border each side.
+        double videoColumnWidth = Width - 90 - 2;
+        PlayerVideoHost.Height = Math.Max(videoColumnWidth * 9.0 / 16.0, 320);
+
+        // A small fixed top margin, same idea as the compact screens, rather than
+        // trying to vertically center against a guessed total window height --
+        // that guess routinely drifted from the real rendered height (which also
+        // varies with whether the Trim panel is open), leaving the window
+        // visibly off-center.
+        Top = 30;
     }
 
     private void BackToIdle_Click(object sender, MouseButtonEventArgs e) => ShowScreen(Screen.Idle);
