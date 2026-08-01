@@ -14,33 +14,58 @@ using System.Windows.Threading;
 using CaptureCenter.Interop;
 using CaptureCenter.Obs;
 using Microsoft.Win32;
+using LibVlc = LibVLCSharp.Shared;
 
 namespace CaptureCenter;
 
 public partial class MainWindow : Window
 {
-    private enum Screen { Idle, SaveReplay, Gallery, Settings }
+    private enum Screen { Idle, SaveReplay, Gallery, Player, Settings }
 
     private const double CompactWidth = 460;
     private const double WideWidth = 680;
     private const string RunKeyName = "CaptureCenter";
+    private const string ScheduledTaskName = "CaptureCenterAutostart";
 
     private readonly ObsService _obs;
     private bool _serverEnabledAtStartup;
     private readonly DispatcherTimer _pollTimer;
+    private readonly DispatcherTimer _micTimer;
     private readonly StatusOverlay _statusOverlay;
     private readonly ToastOverlay _toastOverlay;
+    private readonly ScrimOverlay _scrim;
+    private readonly DisclaimerOverlay _disclaimer;
     private readonly AppSettings _settings;
     private readonly Dictionary<string, string> _rowLabels = new();
     private List<ReplayRow> _lastReplayRows = new();
     private GlobalHotkey? _hotkey;
+    private Screen _lastScreen = Screen.Idle;
 
-    public MainWindow(StatusOverlay statusOverlay, ToastOverlay toastOverlay)
+    // --------------------------------------------------------------- LibVLC / Player
+
+    private LibVlc.LibVLC? _libVlc;
+    private LibVlc.MediaPlayer? _vlcPlayer;
+    private FileInfo? _currentPlayerFile;
+    private readonly DispatcherTimer _seekTimer;
+    private bool _seekDragging;
+
+    // Hotkey capture (Settings)
+    private bool _capturingHotkey;
+
+    // Trim
+    private TimeSpan? _trimStart;
+    private TimeSpan? _trimEnd;
+
+    public MainWindow(StatusOverlay statusOverlay, ToastOverlay toastOverlay, ScrimOverlay scrim, DisclaimerOverlay disclaimer)
     {
         InitializeComponent();
         _statusOverlay = statusOverlay;
         _toastOverlay = toastOverlay;
+        _scrim = scrim;
+        _disclaimer = disclaimer;
         _settings = AppSettings.Load();
+
+        _scrim.Dismissed += () => Dispatcher.BeginInvoke(Hide);
 
         string url;
         string? password;
@@ -50,16 +75,23 @@ public partial class MainWindow : Window
         // Events, not polling -- these fire the instant OBS says so, whether or
         // not the HUD is even open, which is the only way "did it actually save"
         // can be answered truthfully instead of guessed at.
-        _obs.RecordingStateChanged += (active) => Dispatcher.BeginInvoke(() => _toastOverlay.ShowRecording(active));
+        _obs.RecordingStateChanged += (active, path) => Dispatcher.BeginInvoke(() => _toastOverlay.ShowRecording(active, path));
         _obs.ReplaySaved += (key, path) => Dispatcher.BeginInvoke(() =>
         {
             string label = _rowLabels.TryGetValue(key, out string? l) ? l : key;
             _toastOverlay.ShowReplaySaved(label, path);
+            _ = RefreshGalleryCountAsync();
         });
         _obs.StateChanged += () => Dispatcher.BeginInvoke(() => _ = PrefetchRowLabelsAsync());
 
         _pollTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
         _pollTimer.Tick += async (_, _) => await RefreshStatusAsync();
+
+        _micTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
+        _micTimer.Tick += (_, _) => _statusOverlay.SetMicStatus(_obs.GetMicStatus());
+
+        _seekTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(200) };
+        _seekTimer.Tick += (_, _) => UpdatePlayerSeekUi();
 
         // The window needs a real HWND immediately for RegisterHotKey and the
         // acrylic blur, but must never actually appear until the hotkey is
@@ -69,22 +101,38 @@ public partial class MainWindow : Window
         Top = 40;
         Acrylic.TryEnableBlurBehind(hwnd, 16, 17, 19, 205);
 
+        RegisterHotkeyFromSettings();
+
         try
         {
-            _hotkey = new GlobalHotkey(this, GlobalHotkey.Modifiers.Control | GlobalHotkey.Modifiers.Alt, (uint)'G');
+            LibVlc.Core.Initialize();
+            _libVlc = new LibVlc.LibVLC("--no-video-title-show");
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"LibVLC init failed: {ex.Message}");
+        }
+
+        _obs.Start();
+        _pollTimer.Start();
+        _micTimer.Start();
+        _ = RefreshStatusAsync();
+        ShowScreen(Screen.Idle);
+        _ = RefreshGalleryCountAsync();
+        _ = PrefetchRowLabelsAsync();
+    }
+
+    private void RegisterHotkeyFromSettings()
+    {
+        try
+        {
+            _hotkey = new GlobalHotkey(this, (GlobalHotkey.Modifiers)_settings.HotkeyModifiers, (uint)_settings.HotkeyVirtualKey);
             _hotkey.Pressed += () => Dispatcher.Invoke(ToggleVisible);
         }
         catch (InvalidOperationException ex)
         {
             Debug.WriteLine($"Hotkey registration failed: {ex.Message}");
         }
-
-        _obs.Start();
-        _pollTimer.Start();
-        _ = RefreshStatusAsync();
-        ShowScreen(Screen.Idle);
-        _ = RefreshGalleryCountAsync();
-        _ = PrefetchRowLabelsAsync();
     }
 
     /// <summary>
@@ -110,10 +158,10 @@ public partial class MainWindow : Window
     /// <summary>
     /// Returns (url, password, serverEnabledAtStartup). Local mode reads this
     /// PC's own obs-websocket config so the password never needs typing;
-    /// remote mode (OBS on a different, e.g. dedicated stream, PC) has no way
-    /// to see that machine's config, so host/port/password all come from
-    /// Settings instead, and "serverEnabledAtStartup" is just assumed true
-    /// since we can't check it up front.
+    /// remote mode (OBS on a different PC) has no way to see that machine's
+    /// config, so host/port/password all come from Settings instead, and
+    /// "serverEnabledAtStartup" is just assumed true since we can't check it
+    /// up front.
     /// </summary>
     private (string Url, string? Password, bool ServerEnabledAtStartup) ResolveObsConnection()
     {
@@ -127,11 +175,26 @@ public partial class MainWindow : Window
     private void ToggleVisible()
     {
         if (IsVisible)
+        {
             Hide();
+            _scrim.Hide();
+            _disclaimer.Hide();
+        }
         else
         {
+            _scrim.Show();
             Show();
             Activate();
+            // Activate() re-asserts THIS window to the front of the topmost band --
+            // the always-on overlays must be re-asserted AFTER that, or Activate()
+            // here would otherwise bury them behind MainWindow.
+            _statusOverlay.Show();
+            WindowZOrder.BringToFrontWithoutActivating(new WindowInteropHelper(_statusOverlay).Handle);
+            _toastOverlay.Show();
+            WindowZOrder.BringToFrontWithoutActivating(new WindowInteropHelper(_toastOverlay).Handle);
+
+            if (_settings.ShowDisclaimer)
+                _disclaimer.Show();
         }
     }
 
@@ -142,17 +205,36 @@ public partial class MainWindow : Window
         IdlePanel.Visibility = screen == Screen.Idle ? Visibility.Visible : Visibility.Collapsed;
         SaveReplayPanel.Visibility = screen == Screen.SaveReplay ? Visibility.Visible : Visibility.Collapsed;
         GalleryPanel.Visibility = screen == Screen.Gallery ? Visibility.Visible : Visibility.Collapsed;
+        PlayerPanel.Visibility = screen == Screen.Player ? Visibility.Visible : Visibility.Collapsed;
         SettingsPanel.Visibility = screen == Screen.Settings ? Visibility.Visible : Visibility.Collapsed;
 
         // The gear only makes sense on the idle screen -- it isn't a fourth tile,
         // so it shouldn't linger once you've navigated away from the row it sits above.
-        SettingsButton.Visibility = screen == Screen.Idle ? Visibility.Visible : Visibility.Collapsed;
+        TopRightButtons.Visibility = screen == Screen.Idle ? Visibility.Visible : Visibility.Collapsed;
 
-        Width = screen is Screen.Gallery or Screen.Settings ? WideWidth : CompactWidth;
+        // Logo only fits above the compact pill -- Gallery/Player are wide,
+        // full-content screens where it would just crowd the layout.
+        LogoImage.Visibility = screen is Screen.Gallery or Screen.Player ? Visibility.Collapsed : Visibility.Visible;
+
+        Width = screen is Screen.Gallery or Screen.Player or Screen.Settings ? WideWidth : CompactWidth;
         Left = (SystemParameters.PrimaryScreenWidth - Width) / 2;
+
+        PlayerOverlayPopup.IsOpen = screen == Screen.Player;
+
+        if (screen != Screen.Player)
+            StopPlayerPlayback();
+
+        if (screen is Screen.Idle or Screen.SaveReplay or Screen.Gallery or Screen.Settings)
+            _lastScreen = screen;
     }
 
     private void BackToIdle_Click(object sender, MouseButtonEventArgs e) => ShowScreen(Screen.Idle);
+
+    private void BackToGallery_Click(object sender, MouseButtonEventArgs e)
+    {
+        ShowScreen(Screen.Gallery);
+        LoadGallery();
+    }
 
     // ------------------------------------------------------------- idle tiles
 
@@ -161,27 +243,30 @@ public partial class MainWindow : Window
         if (!_obs.IsConnected)
         {
             ConnDot.Fill = (Brush)FindResource("Rec");
-            ConnDot.ToolTip = !_serverEnabledAtStartup
+            ConnStatusText.Text = "OBS Disconnected";
+            ConnStatusText.ToolTip = !_serverEnabledAtStartup
                 ? "OBS's WebSocket server is disabled -- enable it in OBS: Tools > WebSocket Server Settings"
                 : _obs.LastError is null ? "Not connected to OBS" : $"OBS: {_obs.LastError}";
             RecordLabel.Text = "Start Recording";
-            RecordStatusText.Text = "OBS offline";
+            RecordStatusText.Text = "--:--";
             RecordDot.Fill = (Brush)FindResource("Text1");
-            ReplayStatus.Text = " ";
+            ReplayStatus.Text = "--:--";
             _statusOverlay.SetRecording(false);
             _statusOverlay.SetReplayOnline(false);
+            _statusOverlay.SetMicStatus(MicStatus.Hidden);
             return;
         }
 
         ConnDot.Fill = (Brush)FindResource("Green");
-        ConnDot.ToolTip = "Connected to OBS";
+        ConnStatusText.Text = "OBS Connected";
+        ConnStatusText.ToolTip = "Connected to OBS";
 
         try
         {
             RecordStatus recStatus = await _obs.GetRecordStatusAsync();
             RecordLabel.Text = recStatus.Active ? "Stop Recording" : "Start Recording";
             RecordDot.Fill = (Brush)FindResource(recStatus.Active ? "Rec" : "Text1");
-            RecordStatusText.Text = recStatus.Active ? FormatDuration(recStatus.DurationMs) : " ";
+            RecordStatusText.Text = recStatus.Active ? FormatDuration(recStatus.DurationMs) : "--:--";
             _statusOverlay.SetRecording(recStatus.Active);
 
             bool replayActive = await _obs.GetReplayBufferActiveAsync();
@@ -196,20 +281,29 @@ public partial class MainWindow : Window
         }
     }
 
+    /// <summary>Rolls over into "h:mm:ss" once past an hour instead of showing e.g. "78:04".</summary>
     private static string FormatDuration(long ms)
     {
         int totalSeconds = (int)(ms / 1000);
-        int m = totalSeconds / 60;
+        int h = totalSeconds / 3600;
+        int m = totalSeconds / 60 % 60;
         int s = totalSeconds % 60;
-        return $"{m}:{s:D2}";
+        return h > 0 ? $"{h}:{m:D2}:{s:D2}" : $"{m}:{s:D2}";
     }
 
     private async void RecordTile_Click(object sender, RoutedEventArgs e)
     {
-        if (!_obs.IsConnected)
-            return;
-        await _obs.ToggleRecordAsync();
-        await RefreshStatusAsync();
+        try
+        {
+            if (!_obs.IsConnected)
+                return;
+            await _obs.ToggleRecordAsync();
+            await RefreshStatusAsync();
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, $"Couldn't toggle recording: {ex.Message}", "Capture Center");
+        }
     }
 
     private void SaveReplayTile_Click(object sender, RoutedEventArgs e)
@@ -228,6 +322,12 @@ public partial class MainWindow : Window
     {
         ShowScreen(Screen.Settings);
         LoadSettingsUi();
+    }
+
+    private void ToggleFullscreen_Click(object sender, RoutedEventArgs e)
+    {
+        // Placeholder toggle -- the window is already at its widest layout size
+        // for Gallery/Player; true OS fullscreen isn't meaningful for a HUD overlay.
     }
 
     // ------------------------------------------------------------ save replay
@@ -497,6 +597,7 @@ public partial class MainWindow : Window
         {
             Background = new SolidColorBrush(thumbColor),
             Height = 84,
+            Cursor = Cursors.Hand,
         };
         thumb.Child = new TextBlock
         {
@@ -506,6 +607,7 @@ public partial class MainWindow : Window
             HorizontalAlignment = HorizontalAlignment.Center,
             VerticalAlignment = VerticalAlignment.Center,
         };
+        thumb.MouseLeftButtonUp += (_, _) => OpenInPlayer(file);
 
         var title = new TextBlock
         {
@@ -524,7 +626,7 @@ public partial class MainWindow : Window
         var sub = new TextBlock { Text = subText, FontSize = 11, Foreground = (Brush)FindResource("Text2") };
 
         var playBtn = new Button { Content = "Play", Style = (Style)FindResource("IconButton") };
-        playBtn.Click += (_, _) => Process.Start(new ProcessStartInfo(file.FullName) { UseShellExecute = true });
+        playBtn.Click += (_, _) => OpenInPlayer(file);
 
         var folderBtn = new Button { Content = "Folder", Style = (Style)FindResource("IconButton") };
         folderBtn.Click += (_, _) => Process.Start(new ProcessStartInfo("explorer.exe", $"/select,\"{file.FullName}\"") { UseShellExecute = true });
@@ -559,14 +661,22 @@ public partial class MainWindow : Window
 
         var card = new Border { Width = 190, Margin = new Thickness(0, 0, 14, 14), Child = content };
 
+        // Extracted, unguarded rename-commit helper: LostFocus fires a second time
+        // when the TextBox is removed from the tree to restore the label (removing a
+        // focused element fires its own LostFocus), which would otherwise re-run a
+        // guarded "commit" a second time against a stale FileInfo. Guarding this exact
+        // method would also skip the real work on the legitimate first call, so instead
+        // BeginRename installs a `finished` flag around the two call sites, not inside this helper.
         renameBtn.Click += (_, _) => BeginRename(card, title, file);
-        deleteBtn.Click += (_, _) => DeleteClip(file);
+        deleteBtn.Click += (_, _) => DeleteClip(file, card);
 
         return card;
     }
 
     private void BeginRename(Border card, TextBlock title, FileInfo file)
     {
+        bool finished = false;
+
         var box = new TextBox
         {
             Text = Path.GetFileNameWithoutExtension(file.Name),
@@ -586,10 +696,10 @@ public partial class MainWindow : Window
         box.Loaded += (_, _) => { box.Focus(); box.SelectAll(); };
         box.KeyDown += (_, e) =>
         {
-            if (e.Key == Key.Enter) CommitRename();
-            else if (e.Key == Key.Escape) LoadGallery();
+            if (e.Key == Key.Enter) { if (!finished) { finished = true; CommitRename(); } }
+            else if (e.Key == Key.Escape) { if (!finished) { finished = true; LoadGallery(); } }
         };
-        box.LostFocus += (_, _) => CommitRename();
+        box.LostFocus += (_, _) => { if (!finished) { finished = true; CommitRename(); } };
 
         void CommitRename()
         {
@@ -632,23 +742,398 @@ public partial class MainWindow : Window
         }
     }
 
-    private void DeleteClip(FileInfo file)
+    /// <summary>Real Undo: nothing actually happens to the file until the 5s toast expires unclicked -- Undo just stops the timer and leaves the clip untouched.</summary>
+    private void DeleteClip(FileInfo file, Border card)
     {
-        var result = MessageBox.Show(this, $"Send \"{file.Name}\" to the Recycle Bin?", "Capture Center", MessageBoxButton.YesNo);
-        if (result != MessageBoxResult.Yes)
+        if (!ConfirmDialog.Ask(this, $"Delete \"{file.Name}\"? You can undo this for a few seconds after.", "Delete"))
             return;
 
-        if (RecycleBin.Delete(file.FullName))
-            LoadGallery();
+        _toastOverlay.ShowDeleteUndo(file.Name, onExpire: () =>
+        {
+            if (!RecycleBin.Delete(file.FullName))
+                Dispatcher.BeginInvoke(() => MessageBox.Show(this, "Couldn't delete that file.", "Capture Center"));
+            Dispatcher.BeginInvoke(() =>
+            {
+                if (GalleryPanel.Visibility == Visibility.Visible)
+                    LoadGallery();
+                else
+                    _ = RefreshGalleryCountAsync();
+            });
+        });
+    }
+
+    // ----------------------------------------------------------------- player
+
+    /// <summary>Resolves a clip that may live on a remote stream PC's share back to a real local path when possible, since LibVLC plays a UNC path fine but some operations (trim export) want a plain string path either way -- kept for symmetry/clarity at call sites.</summary>
+    private static string ResolveLocalClipPath(FileInfo file) => file.FullName;
+
+    private void OpenInPlayer(FileInfo file)
+    {
+        if (_libVlc is null)
+        {
+            MessageBox.Show(this, "The video player failed to initialize (LibVLC).", "Capture Center");
+            return;
+        }
+
+        _currentPlayerFile = file;
+        _trimStart = null;
+        _trimEnd = null;
+        TrimPanel.Visibility = Visibility.Collapsed;
+
+        ShowScreen(Screen.Player);
+        PlayerTitle.Text = Path.GetFileNameWithoutExtension(file.Name);
+
+        StatSize.Text = $"Size: {file.Length / 1024.0 / 1024.0:0.#} MB";
+        StatDate.Text = $"Recorded: {file.LastWriteTime:MMM d, yyyy h:mm tt}";
+        StatResolution.Text = "";
+        StatFps.Text = "";
+
+        StopPlayerPlayback();
+
+        _vlcPlayer = new LibVlc.MediaPlayer(_libVlc);
+        PlayerVideoView.MediaPlayer = _vlcPlayer;
+
+        using var media = new LibVlc.Media(_libVlc, new Uri(ResolveLocalClipPath(file)));
+        _vlcPlayer.Play(media);
+
+        _vlcPlayer.Playing += (_, _) => Dispatcher.BeginInvoke(() =>
+        {
+            PlayIcon.Visibility = Visibility.Collapsed;
+            PauseIcon.Visibility = Visibility.Visible;
+            if (_vlcPlayer.Media is not null)
+            {
+                uint w = _vlcPlayer.Media.Tracks.FirstOrDefault(t => t.TrackType == LibVlc.TrackType.Video).Data.Video.Width;
+                uint h = _vlcPlayer.Media.Tracks.FirstOrDefault(t => t.TrackType == LibVlc.TrackType.Video).Data.Video.Height;
+                if (w > 0 && h > 0)
+                    StatResolution.Text = $"Resolution: {w}x{h}";
+            }
+        });
+        _vlcPlayer.Paused += (_, _) => Dispatcher.BeginInvoke(() =>
+        {
+            PlayIcon.Visibility = Visibility.Visible;
+            PauseIcon.Visibility = Visibility.Collapsed;
+        });
+        _vlcPlayer.EndReached += (_, _) => Dispatcher.BeginInvoke(() =>
+        {
+            PlayIcon.Visibility = Visibility.Visible;
+            PauseIcon.Visibility = Visibility.Collapsed;
+        });
+
+        LoadAudioTracks();
+        _seekTimer.Start();
+    }
+
+    private void LoadAudioTracks()
+    {
+        if (_vlcPlayer?.Media is null)
+            return;
+
+        var tracks = _vlcPlayer.Media.Tracks.Where(t => t.TrackType == LibVlc.TrackType.Audio).ToList();
+        if (tracks.Count <= 1)
+        {
+            AudioTrackCombo.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        AudioTrackCombo.Visibility = Visibility.Visible;
+        AudioTrackCombo.ItemsSource = tracks.Select((t, i) => new AudioTrackOption(t.Id, string.IsNullOrEmpty(t.Description) ? $"Track {i + 1}" : t.Description)).ToList();
+        AudioTrackCombo.SelectedIndex = 0;
+    }
+
+    private sealed record AudioTrackOption(int Id, string Name);
+
+    private void AudioTrackCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_vlcPlayer is not null && AudioTrackCombo.SelectedItem is AudioTrackOption opt)
+            _vlcPlayer.SetAudioTrack(opt.Id);
+    }
+
+    private void PlayPauseButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_vlcPlayer is null)
+            return;
+        if (_vlcPlayer.IsPlaying)
+            _vlcPlayer.Pause();
         else
-            MessageBox.Show(this, "Couldn't delete that file.", "Capture Center");
+            _vlcPlayer.Play();
+    }
+
+    private void UpdatePlayerSeekUi()
+    {
+        if (_vlcPlayer is null || _seekDragging)
+            return;
+
+        long lengthMs = _vlcPlayer.Length;
+        long timeMs = _vlcPlayer.Time;
+        PlayerSeek.Maximum = Math.Max(lengthMs, 1);
+        PlayerSeek.Value = Math.Clamp(timeMs, 0, PlayerSeek.Maximum);
+        PlayerCurrentTime.Text = FormatDuration(Math.Max(timeMs, 0));
+        PlayerDurationText.Text = FormatDuration(Math.Max(lengthMs, 0));
+    }
+
+    private void PlayerSeek_DragStarted(object sender, MouseButtonEventArgs e) => _seekDragging = true;
+
+    private void PlayerSeek_DragCompleted(object sender, MouseButtonEventArgs e)
+    {
+        _seekDragging = false;
+        if (_vlcPlayer is not null)
+            _vlcPlayer.Time = (long)PlayerSeek.Value;
+    }
+
+    private void StopPlayerPlayback()
+    {
+        _seekTimer.Stop();
+        if (_vlcPlayer is not null)
+        {
+            _vlcPlayer.Stop();
+            _vlcPlayer.Dispose();
+            _vlcPlayer = null;
+        }
+        PlayerVideoView.MediaPlayer = null;
+    }
+
+    private void PlayerFolder_Click(object sender, RoutedEventArgs e)
+    {
+        if (_currentPlayerFile is null)
+            return;
+        Process.Start(new ProcessStartInfo("explorer.exe", $"/select,\"{_currentPlayerFile.FullName}\"") { UseShellExecute = true });
+    }
+
+    /// <summary>
+    /// Swaps PlayerTitle for an inline TextBox in place, same pattern as the
+    /// Gallery cards' rename. Same double-invocation footgun applies here too:
+    /// removing the focused TextBox to restore the label fires its own
+    /// LostFocus, which would re-run a guarded commit a second time against a
+    /// stale FileInfo -- the `finished` flag is guarded at both call sites,
+    /// not inside CommitRename itself, so the legitimate first call still runs.
+    /// </summary>
+    private void PlayerRename_Click(object sender, RoutedEventArgs e)
+    {
+        if (_currentPlayerFile is null)
+            return;
+        FileInfo file = _currentPlayerFile;
+        bool finished = false;
+
+        var stack = (StackPanel)PlayerTitle.Parent;
+        int index = stack.Children.IndexOf(PlayerTitle);
+
+        var box = new TextBox
+        {
+            Text = Path.GetFileNameWithoutExtension(file.Name),
+            FontWeight = FontWeights.Bold,
+            FontSize = 13,
+            MinWidth = 120,
+            VerticalAlignment = VerticalAlignment.Center,
+            Background = Brushes.Transparent,
+            Foreground = Brushes.White,
+            BorderThickness = new Thickness(0, 0, 0, 1),
+            BorderBrush = Brushes.White,
+        };
+
+        stack.Children.RemoveAt(index);
+        stack.Children.Insert(index, box);
+
+        box.Loaded += (_, _) => { box.Focus(); box.SelectAll(); };
+        box.KeyDown += (_, ke) =>
+        {
+            if (ke.Key == Key.Enter) { if (!finished) { finished = true; CommitRename(); } }
+            else if (ke.Key == Key.Escape) { if (!finished) { finished = true; RevertBox(); } }
+        };
+        box.LostFocus += (_, _) => { if (!finished) { finished = true; CommitRename(); } };
+
+        void RevertBox()
+        {
+            stack.Children.Remove(box);
+            stack.Children.Insert(index, PlayerTitle);
+        }
+
+        void CommitRename()
+        {
+            string newName = box.Text.Trim();
+            if (!string.IsNullOrEmpty(newName) && newName != Path.GetFileNameWithoutExtension(file.Name))
+            {
+                try
+                {
+                    StopPlayerPlayback();
+                    string newPath = Path.Combine(file.DirectoryName!, newName + file.Extension);
+                    File.Move(file.FullName, newPath);
+                    _currentPlayerFile = new FileInfo(newPath);
+                    PlayerTitle.Text = Path.GetFileNameWithoutExtension(_currentPlayerFile.Name);
+                    stack.Children.Remove(box);
+                    stack.Children.Insert(index, PlayerTitle);
+                    OpenInPlayer(_currentPlayerFile);
+                    return;
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show(this, $"Couldn't rename: {ex.Message}", "Capture Center");
+                }
+            }
+            RevertBox();
+        }
+    }
+
+    private void PlayerDelete_Click(object sender, RoutedEventArgs e)
+    {
+        if (_currentPlayerFile is null)
+            return;
+        FileInfo file = _currentPlayerFile;
+
+        if (!ConfirmDialog.Ask(this, $"Delete \"{file.Name}\"? You can undo this for a few seconds after.", "Delete"))
+            return;
+
+        StopPlayerPlayback();
+        ShowScreen(Screen.Gallery);
+        LoadGallery();
+
+        _toastOverlay.ShowDeleteUndo(file.Name, onExpire: () =>
+        {
+            if (!RecycleBin.Delete(file.FullName))
+                Dispatcher.BeginInvoke(() => MessageBox.Show(this, "Couldn't delete that file.", "Capture Center"));
+            Dispatcher.BeginInvoke(() =>
+            {
+                if (GalleryPanel.Visibility == Visibility.Visible)
+                    LoadGallery();
+            });
+        });
+    }
+
+    // ------------------------------------------------------------------ trim
+
+    private void PlayerTrim_Click(object sender, RoutedEventArgs e)
+    {
+        TrimPanel.Visibility = TrimPanel.Visibility == Visibility.Visible ? Visibility.Collapsed : Visibility.Visible;
+    }
+
+    private void TrimSetStart_Click(object sender, RoutedEventArgs e)
+    {
+        if (_vlcPlayer is null)
+            return;
+        _trimStart = TimeSpan.FromMilliseconds(_vlcPlayer.Time);
+        TrimStartText.Text = FormatDuration((long)_trimStart.Value.TotalMilliseconds);
+    }
+
+    private void TrimSetEnd_Click(object sender, RoutedEventArgs e)
+    {
+        if (_vlcPlayer is null)
+            return;
+        _trimEnd = TimeSpan.FromMilliseconds(_vlcPlayer.Time);
+        TrimEndText.Text = FormatDuration((long)_trimEnd.Value.TotalMilliseconds);
+    }
+
+    private void TrimCancel_Click(object sender, RoutedEventArgs e)
+    {
+        _trimStart = null;
+        _trimEnd = null;
+        TrimStartText.Text = "0:00";
+        TrimEndText.Text = "0:00";
+        TrimStatusText.Text = "";
+        TrimPanel.Visibility = Visibility.Collapsed;
+    }
+
+    private async void TrimReplace_Click(object sender, RoutedEventArgs e) => await RunTrimAsync(replaceOriginal: true);
+
+    private async void TrimSaveNew_Click(object sender, RoutedEventArgs e) => await RunTrimAsync(replaceOriginal: false);
+
+    /// <summary>
+    /// Exports via LibVLC's own transcode/sout chain (no ffmpeg dependency) using a
+    /// second, headless MediaPlayer so the visible preview player keeps playing
+    /// undisturbed. Runs roughly real-time, not instantly.
+    /// </summary>
+    private async Task RunTrimAsync(bool replaceOriginal)
+    {
+        if (_libVlc is null || _currentPlayerFile is null || _trimStart is null || _trimEnd is null || _trimEnd <= _trimStart)
+        {
+            MessageBox.Show(this, "Set both a start and end point first (end must be after start).", "Capture Center");
+            return;
+        }
+
+        FileInfo sourceFile = _currentPlayerFile;
+        TimeSpan start = _trimStart.Value;
+        TimeSpan end = _trimEnd.Value;
+
+        string tempOut = Path.Combine(Path.GetTempPath(), $"cc_trim_{Guid.NewGuid():N}{sourceFile.Extension}");
+
+        TrimReplaceButton.IsEnabled = false;
+        TrimSaveNewButton.IsEnabled = false;
+        TrimStatusText.Text = "Trimming...";
+
+        try
+        {
+            await Task.Run(() => ExportTrim(sourceFile.FullName, tempOut, start, end));
+
+            if (replaceOriginal)
+            {
+                if (!ConfirmDialog.Ask(this, "Replace the original clip with this trimmed version? This can't be undone.", "Replace"))
+                {
+                    File.Delete(tempOut);
+                    return;
+                }
+                StopPlayerPlayback();
+                File.Copy(tempOut, sourceFile.FullName, overwrite: true);
+                File.Delete(tempOut);
+                _currentPlayerFile = new FileInfo(sourceFile.FullName);
+                OpenInPlayer(_currentPlayerFile);
+            }
+            else
+            {
+                string newName = $"{Path.GetFileNameWithoutExtension(sourceFile.Name)} (trimmed){sourceFile.Extension}";
+                string destPath = Path.Combine(sourceFile.DirectoryName!, newName);
+                int i = 2;
+                while (File.Exists(destPath))
+                {
+                    destPath = Path.Combine(sourceFile.DirectoryName!, $"{Path.GetFileNameWithoutExtension(sourceFile.Name)} (trimmed {i}){sourceFile.Extension}");
+                    i++;
+                }
+                File.Copy(tempOut, destPath, overwrite: false);
+                File.Delete(tempOut);
+                _ = RefreshGalleryCountAsync();
+            }
+
+            TrimStatusText.Text = "Done.";
+            TrimPanel.Visibility = Visibility.Collapsed;
+        }
+        catch (Exception ex)
+        {
+            TrimStatusText.Text = "";
+            MessageBox.Show(this, $"Trim failed: {ex.Message}", "Capture Center");
+        }
+        finally
+        {
+            TrimReplaceButton.IsEnabled = true;
+            TrimSaveNewButton.IsEnabled = true;
+        }
+    }
+
+    private void ExportTrim(string sourcePath, string destPath, TimeSpan start, TimeSpan end)
+    {
+        if (_libVlc is null)
+            return;
+
+        using var media = new LibVlc.Media(_libVlc, new Uri(sourcePath));
+        string sout = $":sout=#std{{access=file,mux=mp4,dst={destPath.Replace("\\", "/")}}}\" :sout-keep";
+        media.AddOption($":start-time={start.TotalSeconds.ToString(System.Globalization.CultureInfo.InvariantCulture)}");
+        media.AddOption($":stop-time={end.TotalSeconds.ToString(System.Globalization.CultureInfo.InvariantCulture)}");
+        media.AddOption($":sout=#std{{access=file,mux=mp4,dst={destPath.Replace("\\", "/")}}}");
+        media.AddOption(":sout-keep");
+
+        using var exportPlayer = new LibVlc.MediaPlayer(media);
+        using var done = new System.Threading.ManualResetEventSlim(false);
+
+        exportPlayer.EndReached += (_, _) => done.Set();
+        exportPlayer.EncounteredError += (_, _) => done.Set();
+
+        exportPlayer.Play();
+        if (!done.Wait(TimeSpan.FromMinutes(10)))
+            throw new TimeoutException("Trim export took too long.");
+        exportPlayer.Stop();
     }
 
     // --------------------------------------------------------------- settings
 
     private void LoadSettingsUi()
     {
-        LaunchWithWindowsToggle.IsChecked = IsLaunchWithWindowsEnabled();
+        LaunchWithWindowsToggle.IsChecked = _settings.LaunchWithWindows;
         ClipsFolderText.Text = _settings.ClipsFolder;
 
         ObsRemoteToggle.IsChecked = _settings.ObsIsRemote;
@@ -656,6 +1141,9 @@ public partial class MainWindow : Window
         ObsHostBox.Text = _settings.ObsHost;
         ObsPortBox.Text = _settings.ObsPort.ToString();
         ObsPasswordBox.Password = _settings.ObsRemotePassword;
+
+        ShowDisclaimerToggle.IsChecked = _settings.ShowDisclaimer;
+        HotkeyCaptureButton.Content = FormatHotkey((GlobalHotkey.Modifiers)_settings.HotkeyModifiers, (uint)_settings.HotkeyVirtualKey);
     }
 
     private void ObsRemoteToggle_Click(object sender, RoutedEventArgs e)
@@ -665,67 +1153,188 @@ public partial class MainWindow : Window
 
     private void ApplyObsConnection_Click(object sender, RoutedEventArgs e)
     {
-        bool remote = ObsRemoteToggle.IsChecked == true;
-        if (remote && string.IsNullOrWhiteSpace(ObsHostBox.Text))
+        try
         {
-            MessageBox.Show(this, "Enter the stream PC's address first.", "Capture Center");
-            return;
+            bool remote = ObsRemoteToggle.IsChecked == true;
+            if (remote && string.IsNullOrWhiteSpace(ObsHostBox.Text))
+            {
+                MessageBox.Show(this, "Enter the stream PC's address first.", "Capture Center");
+                return;
+            }
+
+            _settings.ObsIsRemote = remote;
+            _settings.ObsHost = ObsHostBox.Text.Trim();
+            _settings.ObsPort = int.TryParse(ObsPortBox.Text.Trim(), out int p) ? p : 4455;
+            _settings.ObsRemotePassword = ObsPasswordBox.Password;
+            _settings.Save();
+
+            (string url, string? password, _serverEnabledAtStartup) = ResolveObsConnection();
+            _obs.Reconfigure(url, password);
+            _ = RefreshStatusAsync();
         }
-
-        _settings.ObsIsRemote = remote;
-        _settings.ObsHost = ObsHostBox.Text.Trim();
-        _settings.ObsPort = int.TryParse(ObsPortBox.Text.Trim(), out int p) ? p : 4455;
-        _settings.ObsRemotePassword = ObsPasswordBox.Password;
-        _settings.Save();
-
-        (string url, string? password, _serverEnabledAtStartup) = ResolveObsConnection();
-        _obs.Reconfigure(url, password);
-        _ = RefreshStatusAsync();
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, $"Couldn't apply that OBS connection: {ex.Message}", "Capture Center");
+        }
     }
 
-    private static string RunKeyPath => @"SOFTWARE\Microsoft\Windows\CurrentVersion\Run";
-
-    private bool IsLaunchWithWindowsEnabled()
+    private void ShowDisclaimerToggle_Click(object sender, RoutedEventArgs e)
     {
-        using RegistryKey? key = Registry.CurrentUser.OpenSubKey(RunKeyPath, writable: false);
-        return key?.GetValue(RunKeyName) is not null;
+        _settings.ShowDisclaimer = ShowDisclaimerToggle.IsChecked == true;
+        _settings.Save();
+        if (!_settings.ShowDisclaimer)
+            _disclaimer.Hide();
+        else if (IsVisible)
+            _disclaimer.Show();
     }
 
+    // Uses a Scheduled Task (not the Run registry key) so the app can launch
+    // already elevated/consistent across Windows updates without a UAC prompt
+    // every boot; Task Scheduler is also easier to inspect/remove by hand than
+    // a Run key buried in the registry.
     private void LaunchWithWindowsToggle_Click(object sender, RoutedEventArgs e)
     {
         bool enabled = LaunchWithWindowsToggle.IsChecked == true;
         try
         {
-            using RegistryKey key = Registry.CurrentUser.OpenSubKey(RunKeyPath, writable: true)!;
+            string exePath = Environment.ProcessPath ?? Process.GetCurrentProcess().MainModule!.FileName;
             if (enabled)
-                key.SetValue(RunKeyName, Environment.ProcessPath ?? Process.GetCurrentProcess().MainModule!.FileName);
+            {
+                var psi = new ProcessStartInfo("schtasks.exe",
+                    $"/Create /F /SC ONLOGON /RL HIGHEST /TN \"{ScheduledTaskName}\" /TR \"\\\"{exePath}\\\"\"")
+                { UseShellExecute = false, CreateNoWindow = true };
+                using Process proc = Process.Start(psi)!;
+                proc.WaitForExit();
+                if (proc.ExitCode != 0)
+                    throw new InvalidOperationException("schtasks.exe failed to create the startup task.");
+            }
             else
-                key.DeleteValue(RunKeyName, throwOnMissingValue: false);
+            {
+                var psi = new ProcessStartInfo("schtasks.exe", $"/Delete /F /TN \"{ScheduledTaskName}\"")
+                { UseShellExecute = false, CreateNoWindow = true };
+                using Process proc = Process.Start(psi)!;
+                proc.WaitForExit();
+            }
 
             _settings.LaunchWithWindows = enabled;
             _settings.Save();
         }
         catch (Exception ex)
         {
-            MessageBox.Show(this, $"Couldn't update the startup registry key: {ex.Message}", "Capture Center");
+            MessageBox.Show(this, $"Couldn't update the startup task: {ex.Message}", "Capture Center");
             LaunchWithWindowsToggle.IsChecked = !enabled;
         }
     }
 
     private void ChangeClipsFolder_Click(object sender, RoutedEventArgs e)
     {
-        var dialog = new OpenFolderDialog { InitialDirectory = _settings.ClipsFolder };
-        if (dialog.ShowDialog(this) == true)
+        try
         {
-            _settings.ClipsFolder = dialog.FolderName;
-            _settings.Save();
-            ClipsFolderText.Text = _settings.ClipsFolder;
-            _ = RefreshGalleryCountAsync();
+            var dialog = new OpenFolderDialog { InitialDirectory = _settings.ClipsFolder };
+            if (dialog.ShowDialog(this) == true)
+            {
+                _settings.ClipsFolder = dialog.FolderName;
+                _settings.Save();
+                ClipsFolderText.Text = _settings.ClipsFolder;
+                _ = RefreshGalleryCountAsync();
+            }
         }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, $"Couldn't change the clips folder: {ex.Message}", "Capture Center");
+        }
+    }
+
+    private void QuitApp_Click(object sender, RoutedEventArgs e) => Application.Current.Shutdown();
+
+    // ------------------------------------------------------------ hotkey capture
+
+    private static string FormatHotkey(GlobalHotkey.Modifiers modifiers, uint virtualKey)
+    {
+        var parts = new List<string>();
+        if (modifiers.HasFlag(GlobalHotkey.Modifiers.Control)) parts.Add("Ctrl");
+        if (modifiers.HasFlag(GlobalHotkey.Modifiers.Alt)) parts.Add("Alt");
+        if (modifiers.HasFlag(GlobalHotkey.Modifiers.Shift)) parts.Add("Shift");
+        if (modifiers.HasFlag(GlobalHotkey.Modifiers.Win)) parts.Add("Win");
+        parts.Add(((char)virtualKey).ToString());
+        return string.Join("+", parts);
+    }
+
+    private void HotkeyCaptureButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_capturingHotkey)
+            return;
+
+        _capturingHotkey = true;
+        HotkeyCaptureButton.Content = "Press a key combo...";
+        PreviewKeyDown += HotkeyCapture_PreviewKeyDown;
+    }
+
+    private void HotkeyCapture_PreviewKeyDown(object sender, KeyEventArgs e)
+    {
+        Key key = e.Key == Key.System ? e.SystemKey : e.Key;
+
+        if (key is Key.LeftCtrl or Key.RightCtrl or Key.LeftAlt or Key.RightAlt or Key.LeftShift or Key.RightShift or Key.LWin or Key.RWin)
+        {
+            e.Handled = true;
+            return;
+        }
+
+        if (key == Key.Escape)
+        {
+            e.Handled = true;
+            EndHotkeyCapture(cancelled: true);
+            return;
+        }
+
+        e.Handled = true;
+
+        GlobalHotkey.Modifiers modifiers = 0;
+        if (Keyboard.Modifiers.HasFlag(ModifierKeys.Control)) modifiers |= GlobalHotkey.Modifiers.Control;
+        if (Keyboard.Modifiers.HasFlag(ModifierKeys.Alt)) modifiers |= GlobalHotkey.Modifiers.Alt;
+        if (Keyboard.Modifiers.HasFlag(ModifierKeys.Shift)) modifiers |= GlobalHotkey.Modifiers.Shift;
+        if (Keyboard.Modifiers.HasFlag(ModifierKeys.Windows)) modifiers |= GlobalHotkey.Modifiers.Win;
+
+        uint virtualKey = (uint)KeyInterop.VirtualKeyFromKey(key);
+
+        try
+        {
+            if (_hotkey is null)
+            {
+                _hotkey = new GlobalHotkey(this, modifiers, virtualKey);
+                _hotkey.Pressed += () => Dispatcher.Invoke(ToggleVisible);
+            }
+            else
+            {
+                _hotkey.Rebind(modifiers, virtualKey);
+            }
+
+            _settings.HotkeyModifiers = (int)modifiers;
+            _settings.HotkeyVirtualKey = (int)virtualKey;
+            _settings.Save();
+            HotkeyCaptureButton.Content = FormatHotkey(modifiers, virtualKey);
+        }
+        catch (InvalidOperationException ex)
+        {
+            MessageBox.Show(this, ex.Message, "Capture Center");
+            HotkeyCaptureButton.Content = FormatHotkey((GlobalHotkey.Modifiers)_settings.HotkeyModifiers, (uint)_settings.HotkeyVirtualKey);
+        }
+
+        EndHotkeyCapture(cancelled: false);
+    }
+
+    private void EndHotkeyCapture(bool cancelled)
+    {
+        PreviewKeyDown -= HotkeyCapture_PreviewKeyDown;
+        _capturingHotkey = false;
+        if (cancelled)
+            HotkeyCaptureButton.Content = FormatHotkey((GlobalHotkey.Modifiers)_settings.HotkeyModifiers, (uint)_settings.HotkeyVirtualKey);
     }
 
     protected override void OnClosed(EventArgs e)
     {
+        StopPlayerPlayback();
+        _libVlc?.Dispose();
         _hotkey?.Dispose();
         base.OnClosed(e);
     }
