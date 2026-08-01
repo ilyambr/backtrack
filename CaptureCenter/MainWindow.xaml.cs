@@ -101,6 +101,17 @@ public partial class MainWindow : Window
         Top = 40;
         Acrylic.TryEnableBlurBehind(hwnd, 16, 17, 19, 205);
 
+        // Vertically centers Gallery/Player once their real height is actually known --
+        // SizeToContent="Height" means the window's true height isn't known until after
+        // layout runs, so trying to precompute it upfront (transport bar + trim panel,
+        // whose visibility toggles) kept drifting off-center. Same fix as DisclaimerOverlay
+        // uses for its own bottom positioning.
+        SizeChanged += (_, _) =>
+        {
+            if (GalleryPanel.Visibility == Visibility.Visible || PlayerPanel.Visibility == Visibility.Visible)
+                Top = Math.Max((SystemParameters.PrimaryScreenHeight - ActualHeight) / 2, 16);
+        };
+
         RegisterHotkeyFromSettings();
 
         try
@@ -239,10 +250,6 @@ public partial class MainWindow : Window
         // so it shouldn't linger once you've navigated away from the row it sits above.
         TopRightButtons.Visibility = screen == Screen.Idle ? Visibility.Visible : Visibility.Collapsed;
 
-        // Logo only fits above the compact pill -- Gallery/Player are wide,
-        // full-content screens where it would just crowd the layout.
-        LogoImage.Visibility = screen is Screen.Gallery or Screen.Player ? Visibility.Collapsed : Visibility.Visible;
-
         bool big = screen is Screen.Gallery or Screen.Player;
         Width = screen == Screen.Settings ? WideWidth : big ? BigWidth() : CompactWidth;
         Left = (SystemParameters.PrimaryScreenWidth - Width) / 2;
@@ -270,13 +277,13 @@ public partial class MainWindow : Window
     /// the actual on-screen height is driven by content, not a Window.Height
     /// set here.
     /// </summary>
-    private double BigWidth() => Math.Min(SystemParameters.PrimaryScreenWidth * 0.62, 1150);
+    private double BigWidth() => Math.Min(SystemParameters.PrimaryScreenWidth * 0.68, 1300);
 
     private void ApplyBigScreenSize()
     {
         double screenH = SystemParameters.PrimaryScreenHeight;
 
-        GalleryScrollHost.MaxHeight = Math.Max(screenH * 0.75, 300);
+        GalleryScrollHost.MaxHeight = Math.Max(screenH * 0.8, 300);
 
         // Sized from the actual video column's width using a 16:9 ratio, not a
         // guessed fraction of screen height: picking the height independently of
@@ -286,11 +293,10 @@ public partial class MainWindow : Window
         double videoColumnWidth = Width - 90 - 2;
         PlayerVideoHost.Height = Math.Max(videoColumnWidth * 9.0 / 16.0, 320);
 
-        // A small fixed top margin, same idea as the compact screens, rather than
-        // trying to vertically center against a guessed total window height --
-        // that guess routinely drifted from the real rendered height (which also
-        // varies with whether the Trim panel is open), leaving the window
-        // visibly off-center.
+        // Real vertical centering happens in the SizeChanged handler below, once
+        // ActualHeight is actually known -- guessing the total window height up
+        // front (transport bar + trim panel, which toggles) kept drifting off.
+        // This is just a reasonable placeholder until that first layout pass lands.
         Top = 30;
     }
 
