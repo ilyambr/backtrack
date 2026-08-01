@@ -342,22 +342,6 @@
                         </Grid>
                     </Border>
 
-                    <TextBlock Text="REMOTE CONTROL" Style="{StaticResource SettingsSectionHeader}"/>
-                    <Border Style="{StaticResource SettingsRow}" BorderThickness="0">
-                        <Grid>
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition/>
-                                <ColumnDefinition Width="Auto"/>
-                            </Grid.ColumnDefinitions>
-                            <StackPanel>
-                                <TextBlock Text="Enable phone remote page" FontSize="13" FontWeight="Bold" Foreground="{StaticResource Text0}"/>
-                                <TextBlock Text="Talks straight to OBS's websocket -- same LAN only, real password required" FontSize="10.5" Foreground="{StaticResource Text2}" TextWrapping="Wrap" Margin="0,2,0,0"/>
-                            </StackPanel>
-                            <ToggleButton x:Name="RemoteControlToggle" Grid.Column="1" Style="{StaticResource AppToggle}" VerticalAlignment="Top" Click="RemoteControlToggle_Click"/>
-                        </Grid>
-                    </Border>
-                    <TextBlock x:Name="RemoteControlUrlText" FontSize="12" FontWeight="Bold" Foreground="{StaticResource Accent}"
-                               Margin="0,8,0,0" TextWrapping="Wrap" Visibility="Collapsed"/>
                 </StackPanel>
             </DockPanel>
         </Grid>

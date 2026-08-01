@@ -13,7 +13,6 @@ using System.Windows.Media;
 using System.Windows.Threading;
 using CaptureCenter.Interop;
 using CaptureCenter.Obs;
-using CaptureCenter.Remote;
 using Microsoft.Win32;
 
 namespace CaptureCenter;
@@ -30,20 +29,33 @@ public partial class MainWindow : Window
     private bool _serverEnabledAtStartup;
     private readonly DispatcherTimer _pollTimer;
     private readonly StatusOverlay _statusOverlay;
+    private readonly ToastOverlay _toastOverlay;
     private readonly AppSettings _settings;
-    private readonly RemoteServer _remoteServer = new();
+    private readonly Dictionary<string, string> _rowLabels = new();
     private GlobalHotkey? _hotkey;
 
-    public MainWindow(StatusOverlay statusOverlay)
+    public MainWindow(StatusOverlay statusOverlay, ToastOverlay toastOverlay)
     {
         InitializeComponent();
         _statusOverlay = statusOverlay;
+        _toastOverlay = toastOverlay;
         _settings = AppSettings.Load();
 
         string url;
         string? password;
         (url, password, _serverEnabledAtStartup) = ResolveObsConnection();
         _obs = new ObsService(url, password);
+
+        // Events, not polling -- these fire the instant OBS says so, whether or
+        // not the HUD is even open, which is the only way "did it actually save"
+        // can be answered truthfully instead of guessed at.
+        _obs.RecordingStateChanged += (active) => Dispatcher.BeginInvoke(() => _toastOverlay.ShowRecording(active));
+        _obs.ReplaySaved += (key, path) => Dispatcher.BeginInvoke(() =>
+        {
+            string label = _rowLabels.TryGetValue(key, out string? l) ? l : key;
+            _toastOverlay.ShowReplaySaved(label, path);
+        });
+        _obs.StateChanged += () => Dispatcher.BeginInvoke(() => _ = PrefetchRowLabelsAsync());
 
         _pollTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
         _pollTimer.Tick += async (_, _) => await RefreshStatusAsync();
@@ -71,9 +83,27 @@ public partial class MainWindow : Window
         _ = RefreshStatusAsync();
         ShowScreen(Screen.Idle);
         _ = RefreshGalleryCountAsync();
+        _ = PrefetchRowLabelsAsync();
+    }
 
-        if (_settings.RemoteControlEnabled)
-            _remoteServer.Start();
+    /// <summary>
+    /// So a "replay saved" toast can show a real row name even if a save
+    /// happens via the game's own hotkey without the Save Replay screen ever
+    /// having been opened this session.
+    /// </summary>
+    private async Task PrefetchRowLabelsAsync()
+    {
+        if (!_obs.IsConnected)
+            return;
+        try
+        {
+            foreach (ReplayRow row in await _obs.ListReplayRowsAsync())
+                _rowLabels[row.Key] = row.Label;
+        }
+        catch
+        {
+            // Fine -- the toast just falls back to showing the row key instead of its label.
+        }
     }
 
     /// <summary>
@@ -230,6 +260,9 @@ public partial class MainWindow : Window
             AddInfoLine(BufRowsPanel, "No replay buffers found.");
             return;
         }
+
+        foreach (ReplayRow row in rows)
+            _rowLabels[row.Key] = row.Label;
 
         // Online (armed) buffers first -- everything else keeps its original order after them.
         foreach (ReplayRow row in rows.OrderBy(r => r.Status == 1 ? 0 : 1))
@@ -579,8 +612,6 @@ public partial class MainWindow : Window
     {
         LaunchWithWindowsToggle.IsChecked = IsLaunchWithWindowsEnabled();
         ClipsFolderText.Text = _settings.ClipsFolder;
-        RemoteControlToggle.IsChecked = _settings.RemoteControlEnabled;
-        UpdateRemoteControlUrlText();
 
         ObsRemoteToggle.IsChecked = _settings.ObsIsRemote;
         ObsRemoteFields.Visibility = _settings.ObsIsRemote ? Visibility.Visible : Visibility.Collapsed;
@@ -612,44 +643,6 @@ public partial class MainWindow : Window
         (string url, string? password, _serverEnabledAtStartup) = ResolveObsConnection();
         _obs.Reconfigure(url, password);
         _ = RefreshStatusAsync();
-    }
-
-    private void UpdateRemoteControlUrlText()
-    {
-        if (_remoteServer.IsRunning)
-        {
-            RemoteControlUrlText.Text = $"Open {_remoteServer.LocalUrl} on your phone (same WiFi/LAN).";
-            RemoteControlUrlText.Visibility = Visibility.Visible;
-        }
-        else
-        {
-            RemoteControlUrlText.Visibility = Visibility.Collapsed;
-        }
-    }
-
-    private void RemoteControlToggle_Click(object sender, RoutedEventArgs e)
-    {
-        bool enabled = RemoteControlToggle.IsChecked == true;
-        if (enabled)
-        {
-            if (!_remoteServer.Start())
-            {
-                MessageBox.Show(this,
-                    "Couldn't start the remote page's local server. Try running Capture Center as Administrator once " +
-                    "(needed the first time to reserve the port), or check whether something else is already using it.",
-                    "Capture Center");
-                RemoteControlToggle.IsChecked = false;
-                return;
-            }
-        }
-        else
-        {
-            _remoteServer.Stop();
-        }
-
-        _settings.RemoteControlEnabled = enabled;
-        _settings.Save();
-        UpdateRemoteControlUrlText();
     }
 
     private static string RunKeyPath => @"SOFTWARE\Microsoft\Windows\CurrentVersion\Run";
@@ -696,7 +689,6 @@ public partial class MainWindow : Window
     protected override void OnClosed(EventArgs e)
     {
         _hotkey?.Dispose();
-        _remoteServer.Stop();
         base.OnClosed(e);
     }
 }

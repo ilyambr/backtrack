@@ -12,10 +12,4 @@
          v5 client over System.Net.WebSockets, so this builds offline. -->
   </PropertyGroup>
 
-  <ItemGroup>
-    <None Include="Web\remote.html">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
-  </ItemGroup>
-
 </Project>

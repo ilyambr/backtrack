@@ -41,7 +41,10 @@ public sealed class ObsClient : IAsyncDisposable
         var identify = new Dictionary<string, object?>
         {
             ["rpcVersion"] = rpcVersion,
-            ["eventSubscriptions"] = 0,
+            // General|Config|Scenes|Inputs|Transitions|Filters|Outputs|SceneItems|MediaInputs|Vendors
+            // ((1<<10)-1) -- was 0 (no events at all) before, which is why nothing ever
+            // fired: RecordStateChanged needs Outputs, our own row_saved needs Vendors.
+            ["eventSubscriptions"] = 1023,
         };
 
         if (helloData.TryGetProperty("authentication", out JsonElement auth))

@@ -32,11 +32,40 @@ public sealed class ObsService
     public string? LastError { get; private set; }
     public event Action? StateChanged;
 
+    /// <summary>Fires the moment OBS's own recording output actually starts/stops -- event-driven, not the 1s poll.</summary>
+    public event Action<bool>? RecordingStateChanged;
+
+    /// <summary>Fires when a Replay Slider row's buffer actually finishes saving: (rowKey, path). This is the real "yes, the clip exists now" confirmation.</summary>
+    public event Action<string, string>? ReplaySaved;
+
     public ObsService(string url, string? password)
     {
         _url = url;
         _password = password;
-        _client.Disconnected += () => StateChanged?.Invoke();
+        HookClientEvents(_client);
+    }
+
+    private void HookClientEvents(ObsClient client)
+    {
+        client.Disconnected += () => StateChanged?.Invoke();
+        client.EventReceived += HandleEvent;
+    }
+
+    private void HandleEvent(string eventType, JsonElement data)
+    {
+        if (eventType == "RecordStateChanged" && data.TryGetProperty("outputActive", out JsonElement active))
+        {
+            RecordingStateChanged?.Invoke(active.GetBoolean());
+        }
+        else if (eventType == "VendorEvent" &&
+                 data.TryGetProperty("vendorName", out JsonElement vn) && vn.GetString() == "replay-buffer-slider" &&
+                 data.TryGetProperty("eventType", out JsonElement et) && et.GetString() == "row_saved" &&
+                 data.TryGetProperty("eventData", out JsonElement ed))
+        {
+            string key = ed.TryGetProperty("key", out JsonElement k) ? k.GetString() ?? "" : "";
+            string path = ed.TryGetProperty("path", out JsonElement p) ? p.GetString() ?? "" : "";
+            ReplaySaved?.Invoke(key, path);
+        }
     }
 
     /// <summary>Connects, and keeps retrying every 5s in the background if OBS isn't up yet.</summary>
@@ -57,7 +86,7 @@ public sealed class ObsService
 
         var oldClient = _client;
         _client = new ObsClient();
-        _client.Disconnected += () => StateChanged?.Invoke();
+        HookClientEvents(_client);
         LastError = null;
         StateChanged?.Invoke();
 

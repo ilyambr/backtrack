@@ -7,7 +7,6 @@ namespace CaptureCenter;
 public sealed class AppSettings
 {
     public bool LaunchWithWindows { get; set; }
-    public bool RemoteControlEnabled { get; set; }
 
     // Where clips live -- can be a local folder or a UNC network path
     // (\\STREAM-PC\Clips) when OBS runs on a different machine than this overlay.
