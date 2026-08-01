@@ -24,6 +24,11 @@ public partial class MainWindow : Window
 
     private const double CompactWidth = 460;
     private const double WideWidth = 680;
+
+    // LogoOverlay sits at a fixed Top=20 with Height=46 (bottom edge at 66), so the
+    // compact HUD panel needs to start clear of that, not at the same Top=40 both
+    // windows used to share back when the logo was drawn inside MainWindow itself.
+    private const double CompactTop = 76;
     private const string RunKeyName = "CaptureCenter";
     private const string ScheduledTaskName = "CaptureCenterAutostart";
 
@@ -100,7 +105,7 @@ public partial class MainWindow : Window
         // pressed -- EnsureHandle() creates it without calling Show().
         IntPtr hwnd = new WindowInteropHelper(this).EnsureHandle();
         Left = (SystemParameters.PrimaryScreenWidth - Width) / 2;
-        Top = 40;
+        Top = CompactTop;
         Acrylic.TryEnableBlurBehind(hwnd, 16, 17, 19, 205);
 
         // Vertically centers Gallery/Player once their real height is actually known --
@@ -108,11 +113,7 @@ public partial class MainWindow : Window
         // layout runs, so trying to precompute it upfront (transport bar + trim panel,
         // whose visibility toggles) kept drifting off-center. Same fix as DisclaimerOverlay
         // uses for its own bottom positioning.
-        SizeChanged += (_, _) =>
-        {
-            if (GalleryPanel.Visibility == Visibility.Visible || PlayerPanel.Visibility == Visibility.Visible)
-                Top = Math.Max((SystemParameters.PrimaryScreenHeight - ActualHeight) / 2, 16);
-        };
+        SizeChanged += (_, _) => RecenterIfBig();
 
         RegisterHotkeyFromSettings();
 
@@ -259,9 +260,19 @@ public partial class MainWindow : Window
         Left = (SystemParameters.PrimaryScreenWidth - Width) / 2;
 
         if (big)
+        {
             ApplyBigScreenSize();
+            // A single SizeChanged firing during this transition can catch an
+            // intermediate, not-yet-settled ActualHeight (most visible on the first
+            // compact-to-big jump, a big size delta) -- scheduling one more recenter
+            // after the dispatcher finishes this layout pass catches that case
+            // instead of leaving it looking centered only after a second transition.
+            Dispatcher.BeginInvoke(RecenterIfBig, DispatcherPriority.ContextIdle);
+        }
         else
-            Top = 40;
+        {
+            Top = CompactTop;
+        }
 
         PlayerOverlayPopup.IsOpen = screen == Screen.Player;
 
@@ -285,23 +296,31 @@ public partial class MainWindow : Window
 
     private void ApplyBigScreenSize()
     {
-        double screenH = SystemParameters.PrimaryScreenHeight;
-
-        GalleryScrollHost.MaxHeight = Math.Max(screenH * 0.65, 300);
-
         // Sized from the actual video column's width using a 16:9 ratio, not a
         // guessed fraction of screen height: picking the height independently of
         // the video's real aspect ratio was letterboxing it (grey bars either
         // side) whenever the guess didn't match. The rail column is a fixed 90px
         // and RootBorder has a 1px border each side.
         double videoColumnWidth = Width - 90 - 2;
-        PlayerVideoHost.Height = Math.Max(videoColumnWidth * 9.0 / 16.0, 320);
+        double contentHeight = Math.Max(videoColumnWidth * 9.0 / 16.0, 320);
 
-        // Real vertical centering happens in the SizeChanged handler below, once
-        // ActualHeight is actually known -- guessing the total window height up
-        // front (transport bar + trim panel, which toggles) kept drifting off.
-        // This is just a reasonable placeholder until that first layout pass lands.
+        // Gallery uses the exact same height as the Player's video area, not its
+        // own separately-tuned fraction -- the two screens are meant to feel like
+        // the same size panel, not different sizes depending on which you're on.
+        PlayerVideoHost.Height = contentHeight;
+        GalleryScrollHost.MaxHeight = contentHeight;
+
+        // Real vertical centering happens in RecenterIfBig, once ActualHeight is
+        // actually known -- guessing the total window height up front (transport
+        // bar + trim panel, which toggles) kept drifting off. This is just a
+        // reasonable placeholder until that first layout pass lands.
         Top = 30;
+    }
+
+    private void RecenterIfBig()
+    {
+        if (GalleryPanel.Visibility == Visibility.Visible || PlayerPanel.Visibility == Visibility.Visible)
+            Top = Math.Max((SystemParameters.PrimaryScreenHeight - ActualHeight) / 2, 16);
     }
 
     private void BackToIdle_Click(object sender, MouseButtonEventArgs e) => ShowScreen(Screen.Idle);
