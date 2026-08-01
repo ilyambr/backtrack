@@ -528,7 +528,7 @@
                         <TextBlock Text="&#9974;" FontSize="13" Foreground="{StaticResource Text1}"/>
                     </Button>
                 </Grid>
-                <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" MaxHeight="440">
+                <ScrollViewer x:Name="GalleryScrollHost" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
                     <WrapPanel x:Name="GalleryGrid"/>
                 </ScrollViewer>
             </DockPanel>
@@ -542,6 +542,24 @@
                 </Grid.ColumnDefinitions>
 
                 <DockPanel Grid.Column="0">
+                    <!-- A real in-flow title bar, not an overlay Popup floated on top of the
+                         video: an earlier version tried layering the back button over the
+                         video via a Popup (to dodge the VideoView's native-HWND "airspace"),
+                         but the Popup's position could desync from the video after a resize,
+                         leaving the back button rendered somewhere unclickable with no way
+                         to exit the Player screen except killing the app. Docking it above
+                         the video instead means it's a normal WPF sibling that never
+                         overlaps the native HWND in the first place, so there's nothing to desync. -->
+                    <Grid DockPanel.Dock="Top" Background="{StaticResource PanelBg}" Margin="14,10,14,0">
+                        <StackPanel Orientation="Horizontal">
+                            <Grid Style="{StaticResource BackButtonHost}" MouseLeftButtonUp="BackToGallery_Click">
+                                <Ellipse Fill="#14FFFFFF"/>
+                                <TextBlock Style="{StaticResource BackButtonGlyph}"/>
+                            </Grid>
+                            <TextBlock x:Name="PlayerTitle" Text="Clip" Style="{StaticResource ScreenTitle}"/>
+                        </StackPanel>
+                    </Grid>
+
                     <StackPanel DockPanel.Dock="Bottom" Background="{StaticResource PanelBg}">
                         <!-- Trim panel: hidden until "Trim" is pressed on the rail -->
                         <StackPanel x:Name="TrimPanel" Visibility="Collapsed" Margin="16,10,16,0">
@@ -600,32 +618,10 @@
                         </Grid>
                     </StackPanel>
 
-                    <Grid Background="Black" Height="400">
+                    <Grid x:Name="PlayerVideoHost" Background="Black" Height="400" Margin="14,10,14,0">
                         <vlc:VideoView x:Name="PlayerVideoView"/>
                     </Grid>
                 </DockPanel>
-
-                <!-- A Popup, not a plain sibling element: VideoView hosts a native HWND for
-                     the video surface, and native HWND content always paints over WPF
-                     siblings regardless of XAML z-order ("airspace"). Popups are their own
-                     top-level window, so unlike a plain overlay this one actually renders
-                     above the video instead of getting hidden behind it. -->
-                <Popup x:Name="PlayerOverlayPopup" PlacementTarget="{Binding ElementName=PlayerVideoView}" Placement="Relative"
-                       HorizontalOffset="0" VerticalOffset="0" AllowsTransparency="True" StaysOpen="True" Focusable="False" IsOpen="False">
-                    <Grid Width="{Binding ElementName=PlayerVideoView, Path=ActualWidth}" Height="46">
-                        <StackPanel Orientation="Horizontal" Margin="14,0,0,0" VerticalAlignment="Center">
-                            <StackPanel.Effect>
-                                <DropShadowEffect BlurRadius="6" ShadowDepth="1" Color="Black" Opacity="0.85"/>
-                            </StackPanel.Effect>
-                            <Grid Style="{StaticResource BackButtonHost}" MouseLeftButtonUp="BackToGallery_Click">
-                                <Ellipse Fill="#33FFFFFF"/>
-                                <TextBlock Text="&#8249;" FontSize="14" FontWeight="Bold" Foreground="White"
-                                           HorizontalAlignment="Center" VerticalAlignment="Center" Margin="0,0,1,0"/>
-                            </Grid>
-                            <TextBlock x:Name="PlayerTitle" Text="Clip" FontWeight="Bold" FontSize="13" Foreground="White" VerticalAlignment="Center"/>
-                        </StackPanel>
-                    </Grid>
-                </Popup>
 
                 <DockPanel Grid.Column="1" Background="{StaticResource PanelBg}" LastChildFill="False">
                     <StackPanel DockPanel.Dock="Top">

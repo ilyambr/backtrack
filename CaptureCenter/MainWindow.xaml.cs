@@ -65,7 +65,7 @@ public partial class MainWindow : Window
         _disclaimer = disclaimer;
         _settings = AppSettings.Load();
 
-        _scrim.Dismissed += () => Dispatcher.BeginInvoke(Hide);
+        _scrim.Dismissed += () => Dispatcher.BeginInvoke(CloseOverlay);
 
         string url;
         string? password;
@@ -172,13 +172,36 @@ public partial class MainWindow : Window
         return ("ws://127.0.0.1:4455", password, enabled);
     }
 
+    /// <summary>
+    /// The one path that closes the whole HUD, not just MainWindow -- the Scrim is a
+    /// full-screen, non-click-through window (that's the point: it blocks clicks to
+    /// the game underneath while the HUD is open), so if it's left showing after
+    /// MainWindow hides, the user is stuck staring at a dark screen that eats every
+    /// click with no way back out. Both the hotkey-close path and the Scrim's own
+    /// background-click/X-button dismissal must go through this, not just Hide().
+    ///
+    /// Also tears down the LibVLC player if the Player screen was open: VideoView's
+    /// video surface is a real, separate top-level OS window (not a true WPF child --
+    /// that's how it dodges the "airspace" problem), so simply hiding MainWindow does
+    /// NOT hide it. Left running, it's an orphaned always-on-top window with nothing
+    /// left to route clicks to it -- exactly the "locked out, had to Alt+F4" bug.
+    /// </summary>
+    private void CloseOverlay()
+    {
+        // Falls back to whatever non-Player screen was last showing (Idle by default)
+        // rather than leaving Player active: reopening later must never show a
+        // screen wired to a _vlcPlayer that CloseOverlay is about to tear down.
+        ShowScreen(_lastScreen);
+        Hide();
+        _scrim.Hide();
+        _disclaimer.Hide();
+    }
+
     private void ToggleVisible()
     {
         if (IsVisible)
         {
-            Hide();
-            _scrim.Hide();
-            _disclaimer.Hide();
+            CloseOverlay();
         }
         else
         {
@@ -216,16 +239,42 @@ public partial class MainWindow : Window
         // full-content screens where it would just crowd the layout.
         LogoImage.Visibility = screen is Screen.Gallery or Screen.Player ? Visibility.Collapsed : Visibility.Visible;
 
-        Width = screen is Screen.Gallery or Screen.Player or Screen.Settings ? WideWidth : CompactWidth;
+        bool big = screen is Screen.Gallery or Screen.Player;
+        Width = screen == Screen.Settings ? WideWidth : big ? BigWidth() : CompactWidth;
         Left = (SystemParameters.PrimaryScreenWidth - Width) / 2;
 
-        PlayerOverlayPopup.IsOpen = screen == Screen.Player;
+        if (big)
+            ApplyBigScreenSize();
+        else
+            Top = 40;
 
         if (screen != Screen.Player)
             StopPlayerPlayback();
 
         if (screen is Screen.Idle or Screen.SaveReplay or Screen.Gallery or Screen.Settings)
             _lastScreen = screen;
+    }
+
+    /// <summary>
+    /// Gallery and Player are meant to feel almost fullscreen, not squeezed into
+    /// the same small pill width as Idle/Settings. Width comes from the primary
+    /// screen's own size (capped, so it doesn't get absurd on huge monitors);
+    /// since the window uses SizeToContent="Height", the actual on-screen height
+    /// is driven by content, not a Window.Height set here -- so the real work is
+    /// sizing the two variable-height content hosts (GalleryScrollHost's MaxHeight,
+    /// PlayerVideoHost's Height) rather than the window itself.
+    /// </summary>
+    private double BigWidth() => Math.Min(SystemParameters.PrimaryScreenWidth * 0.7, 1300);
+
+    private void ApplyBigScreenSize()
+    {
+        double screenH = SystemParameters.PrimaryScreenHeight;
+        double contentHeight = screenH * 0.82;
+
+        GalleryScrollHost.MaxHeight = Math.Max(contentHeight - 70, 300);
+        PlayerVideoHost.Height = Math.Max(contentHeight - 170, 320);
+
+        Top = Math.Max((screenH - contentHeight) / 2 - 20, 16);
     }
 
     private void BackToIdle_Click(object sender, MouseButtonEventArgs e) => ShowScreen(Screen.Idle);
@@ -269,7 +318,23 @@ public partial class MainWindow : Window
             RecordStatusText.Text = recStatus.Active ? FormatDuration(recStatus.DurationMs) : "--:--";
             _statusOverlay.SetRecording(recStatus.Active);
 
-            bool replayActive = await _obs.GetReplayBufferActiveAsync();
+            // Not just OBS's single global replay-buffer flag: obs-replay-slider (and
+            // obs-source-record, exposed through the same bridge) can each have their
+            // own buffer armed independently of it, so a row showing green (Status != 0)
+            // must count as "on" here too -- otherwise this pill can say "Off" while a
+            // buffer row is visibly active, which is exactly backwards.
+            bool replayBufferActive = await _obs.GetReplayBufferActiveAsync();
+            bool anyRowActive = false;
+            try
+            {
+                anyRowActive = (await _obs.ListReplayRowsAsync()).Any(r => r.Status != 0);
+            }
+            catch
+            {
+                // Bridge unreachable this tick -- fall back to just the base OBS flag.
+            }
+            bool replayActive = replayBufferActive || anyRowActive;
+
             ReplayStatus.Text = replayActive ? "On" : "Off";
             ReplayStatus.Foreground = (Brush)FindResource(replayActive ? "Green" : "Text2");
             _statusOverlay.SetReplayOnline(replayActive);
@@ -546,7 +611,7 @@ public partial class MainWindow : Window
                 FontSize = 12,
                 Foreground = (Brush)FindResource("Text2"),
                 TextWrapping = TextWrapping.Wrap,
-                Width = WideWidth - 40,
+                Width = BigWidth() - 40,
             });
             return;
         }
@@ -796,6 +861,7 @@ public partial class MainWindow : Window
         using var media = new LibVlc.Media(_libVlc, new Uri(ResolveLocalClipPath(file)));
         _vlcPlayer.Play(media);
 
+        bool tracksLoaded = false;
         _vlcPlayer.Playing += (_, _) => Dispatcher.BeginInvoke(() =>
         {
             PlayIcon.Visibility = Visibility.Collapsed;
@@ -806,6 +872,17 @@ public partial class MainWindow : Window
                 uint h = _vlcPlayer.Media.Tracks.FirstOrDefault(t => t.TrackType == LibVlc.TrackType.Video).Data.Video.Height;
                 if (w > 0 && h > 0)
                     StatResolution.Text = $"Resolution: {w}x{h}";
+            }
+
+            // Track info isn't known the instant Play() is called -- LibVLC parses the
+            // media asynchronously, so reading Media.Tracks right after Play() (the old
+            // bug here) always saw an empty list and hid the audio selector even on
+            // clips that do have a track. By the time Playing fires, parsing has
+            // actually finished, so this is the first point where Tracks is reliable.
+            if (!tracksLoaded)
+            {
+                tracksLoaded = true;
+                LoadAudioTracks();
             }
         });
         _vlcPlayer.Paused += (_, _) => Dispatcher.BeginInvoke(() =>
@@ -819,17 +896,17 @@ public partial class MainWindow : Window
             PauseIcon.Visibility = Visibility.Collapsed;
         });
 
-        LoadAudioTracks();
         _seekTimer.Start();
     }
 
+    /// <summary>Shown whenever there's at least one audio track -- not just when there's a choice to make, since seeing "Track 1" confirms audio was actually detected at all.</summary>
     private void LoadAudioTracks()
     {
         if (_vlcPlayer?.Media is null)
             return;
 
         var tracks = _vlcPlayer.Media.Tracks.Where(t => t.TrackType == LibVlc.TrackType.Audio).ToList();
-        if (tracks.Count <= 1)
+        if (tracks.Count == 0)
         {
             AudioTrackCombo.Visibility = Visibility.Collapsed;
             return;
