@@ -303,6 +303,7 @@ public partial class MainWindow : Window
             _statusOverlay.SetRecording(false);
             _statusOverlay.SetReplayOnline(false);
             _statusOverlay.SetMicStatus(MicStatus.Hidden);
+            LogoGreen.Opacity = 0;
             return;
         }
 
@@ -338,6 +339,7 @@ public partial class MainWindow : Window
             ReplayStatus.Text = replayActive ? "On" : "Off";
             ReplayStatus.Foreground = (Brush)FindResource(replayActive ? "Green" : "Text2");
             _statusOverlay.SetReplayOnline(replayActive);
+            LogoGreen.Opacity = replayActive ? 1 : 0;
         }
         catch
         {
