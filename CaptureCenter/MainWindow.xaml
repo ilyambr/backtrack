@@ -264,6 +264,35 @@
                     <TextBlock Text="Settings" Style="{StaticResource ScreenTitle}"/>
                 </StackPanel>
                 <StackPanel>
+                    <TextBlock Text="OBS CONNECTION" Style="{StaticResource SettingsSectionHeader}" Margin="0,0,0,6"/>
+                    <Border Style="{StaticResource SettingsRow}" BorderThickness="0">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <StackPanel>
+                                <TextBlock Text="OBS is on a different PC" FontSize="13" FontWeight="Bold" Foreground="{StaticResource Text0}"/>
+                                <TextBlock Text="e.g. a separate stream/broadcast PC -- off means OBS on this same PC" FontSize="10.5" Foreground="{StaticResource Text2}" TextWrapping="Wrap" Margin="0,2,0,0"/>
+                            </StackPanel>
+                            <ToggleButton x:Name="ObsRemoteToggle" Grid.Column="1" Style="{StaticResource AppToggle}" VerticalAlignment="Top" Click="ObsRemoteToggle_Click"/>
+                        </Grid>
+                    </Border>
+                    <StackPanel x:Name="ObsRemoteFields" Visibility="Collapsed" Margin="0,10,0,0">
+                        <TextBlock Text="Stream PC address" FontSize="11" FontWeight="Bold" Foreground="{StaticResource Text1}" Margin="0,0,0,4"/>
+                        <Grid Margin="0,0,0,8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition/>
+                                <ColumnDefinition Width="70"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBox x:Name="ObsHostBox" Background="#0BFFFFFF" Foreground="{StaticResource Text0}" BorderThickness="0" Padding="8,6"/>
+                            <TextBox x:Name="ObsPortBox" Grid.Column="1" Background="#0BFFFFFF" Foreground="{StaticResource Text0}" BorderThickness="0" Padding="8,6" Margin="6,0,0,0"/>
+                        </Grid>
+                        <TextBlock Text="Password (from that PC's OBS: Tools &gt; WebSocket Server Settings &gt; Show Connect Info)" FontSize="11" FontWeight="Bold" Foreground="{StaticResource Text1}" Margin="0,0,0,4" TextWrapping="Wrap"/>
+                        <PasswordBox x:Name="ObsPasswordBox" Background="#0BFFFFFF" Foreground="{StaticResource Text0}" BorderThickness="0" Padding="8,6" Margin="0,0,0,8"/>
+                        <Button Content="Save &amp; reconnect" Style="{StaticResource FlatButton}" HorizontalAlignment="Left" Click="ApplyObsConnection_Click"/>
+                    </StackPanel>
+
                     <TextBlock Text="GENERAL" Style="{StaticResource SettingsSectionHeader}"/>
                     <Border Style="{StaticResource SettingsRow}" BorderThickness="0">
                         <Grid>

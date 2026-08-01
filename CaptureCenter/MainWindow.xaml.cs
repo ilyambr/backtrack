@@ -27,7 +27,7 @@ public partial class MainWindow : Window
     private const string RunKeyName = "CaptureCenter";
 
     private readonly ObsService _obs;
-    private readonly bool _serverEnabledAtStartup;
+    private bool _serverEnabledAtStartup;
     private readonly DispatcherTimer _pollTimer;
     private readonly StatusOverlay _statusOverlay;
     private readonly AppSettings _settings;
@@ -40,8 +40,10 @@ public partial class MainWindow : Window
         _statusOverlay = statusOverlay;
         _settings = AppSettings.Load();
 
-        (_serverEnabledAtStartup, string? password) = ObsConfigReader.ReadLocalConfig();
-        _obs = new ObsService("ws://127.0.0.1:4455", password);
+        string url;
+        string? password;
+        (url, password, _serverEnabledAtStartup) = ResolveObsConnection();
+        _obs = new ObsService(url, password);
 
         _pollTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
         _pollTimer.Tick += async (_, _) => await RefreshStatusAsync();
@@ -72,6 +74,23 @@ public partial class MainWindow : Window
 
         if (_settings.RemoteControlEnabled)
             _remoteServer.Start();
+    }
+
+    /// <summary>
+    /// Returns (url, password, serverEnabledAtStartup). Local mode reads this
+    /// PC's own obs-websocket config so the password never needs typing;
+    /// remote mode (OBS on a different, e.g. dedicated stream, PC) has no way
+    /// to see that machine's config, so host/port/password all come from
+    /// Settings instead, and "serverEnabledAtStartup" is just assumed true
+    /// since we can't check it up front.
+    /// </summary>
+    private (string Url, string? Password, bool ServerEnabledAtStartup) ResolveObsConnection()
+    {
+        if (_settings.ObsIsRemote)
+            return ($"ws://{_settings.ObsHost}:{_settings.ObsPort}", _settings.ObsRemotePassword, true);
+
+        (bool enabled, string? password) = ObsConfigReader.ReadLocalConfig();
+        return ("ws://127.0.0.1:4455", password, enabled);
     }
 
     private void ToggleVisible()
@@ -440,13 +459,26 @@ public partial class MainWindow : Window
         folderBtn.Click += (_, _) => Process.Start(new ProcessStartInfo("explorer.exe", $"/select,\"{file.FullName}\"") { UseShellExecute = true });
 
         var renameBtn = new Button { Content = "Rename", Style = (Style)FindResource("IconButton") };
-        var deleteBtn = new Button { Content = "Delete", Style = (Style)FindResource("IconButton"), Margin = new Thickness(0) };
+        var deleteBtn = new Button { Content = "Delete", Style = (Style)FindResource("IconButton") };
 
         var actions = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 6, 0, 0) };
         actions.Children.Add(playBtn);
         actions.Children.Add(renameBtn);
         actions.Children.Add(folderBtn);
         actions.Children.Add(deleteBtn);
+
+        // Only worth showing when the clip isn't already local -- this is the
+        // "bring it from the stream PC to this one" action.
+        if (IsNetworkPath(_settings.ClipsFolder))
+        {
+            var copyBtn = new Button { Content = "Copy here", Style = (Style)FindResource("IconButton"), Margin = new Thickness(0) };
+            copyBtn.Click += async (_, _) => await CopyToThisPcAsync(file, copyBtn);
+            actions.Children.Add(copyBtn);
+        }
+        else
+        {
+            deleteBtn.Margin = new Thickness(0);
+        }
 
         var content = new StackPanel();
         content.Children.Add(thumb);
@@ -507,6 +539,28 @@ public partial class MainWindow : Window
         }
     }
 
+    private static bool IsNetworkPath(string path) => path.StartsWith(@"\\", StringComparison.Ordinal);
+
+    private async Task CopyToThisPcAsync(FileInfo file, Button triggerButton)
+    {
+        triggerButton.IsEnabled = false;
+        string originalText = (string)triggerButton.Content;
+        triggerButton.Content = "Copying...";
+        try
+        {
+            Directory.CreateDirectory(_settings.LocalCopyFolder);
+            string dest = Path.Combine(_settings.LocalCopyFolder, file.Name);
+            await Task.Run(() => File.Copy(file.FullName, dest, overwrite: true));
+            triggerButton.Content = "Copied";
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, $"Couldn't copy that clip: {ex.Message}", "Capture Center");
+            triggerButton.Content = originalText;
+            triggerButton.IsEnabled = true;
+        }
+    }
+
     private void DeleteClip(FileInfo file)
     {
         var result = MessageBox.Show(this, $"Send \"{file.Name}\" to the Recycle Bin?", "Capture Center", MessageBoxButton.YesNo);
@@ -527,6 +581,37 @@ public partial class MainWindow : Window
         ClipsFolderText.Text = _settings.ClipsFolder;
         RemoteControlToggle.IsChecked = _settings.RemoteControlEnabled;
         UpdateRemoteControlUrlText();
+
+        ObsRemoteToggle.IsChecked = _settings.ObsIsRemote;
+        ObsRemoteFields.Visibility = _settings.ObsIsRemote ? Visibility.Visible : Visibility.Collapsed;
+        ObsHostBox.Text = _settings.ObsHost;
+        ObsPortBox.Text = _settings.ObsPort.ToString();
+        ObsPasswordBox.Password = _settings.ObsRemotePassword;
+    }
+
+    private void ObsRemoteToggle_Click(object sender, RoutedEventArgs e)
+    {
+        ObsRemoteFields.Visibility = ObsRemoteToggle.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private void ApplyObsConnection_Click(object sender, RoutedEventArgs e)
+    {
+        bool remote = ObsRemoteToggle.IsChecked == true;
+        if (remote && string.IsNullOrWhiteSpace(ObsHostBox.Text))
+        {
+            MessageBox.Show(this, "Enter the stream PC's address first.", "Capture Center");
+            return;
+        }
+
+        _settings.ObsIsRemote = remote;
+        _settings.ObsHost = ObsHostBox.Text.Trim();
+        _settings.ObsPort = int.TryParse(ObsPortBox.Text.Trim(), out int p) ? p : 4455;
+        _settings.ObsRemotePassword = ObsPasswordBox.Password;
+        _settings.Save();
+
+        (string url, string? password, _serverEnabledAtStartup) = ResolveObsConnection();
+        _obs.Reconfigure(url, password);
+        _ = RefreshStatusAsync();
     }
 
     private void UpdateRemoteControlUrlText()

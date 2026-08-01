@@ -14,13 +14,19 @@ public sealed record RecordStatus(bool Active, long DurationMs);
 /// exposes the handful of calls the overlay UI actually needs, including the
 /// two custom requests the patched obs-replay-slider plugin exposes as an
 /// obs-websocket vendor (see vendor/obs-replay-slider/src/websocket-bridge.cpp).
+///
+/// The OBS instance this talks to doesn't have to be on this PC -- e.g. a
+/// two-PC setup where OBS runs on a separate stream/broadcast machine and this
+/// overlay runs on the PC you actually sit at. <see cref="Reconfigure"/> lets
+/// Settings point it at a different host without restarting the app.
 /// </summary>
 public sealed class ObsService
 {
-    private readonly ObsClient _client = new();
-    private readonly string _url;
-    private readonly string? _password;
+    private ObsClient _client = new();
+    private string _url;
+    private string? _password;
     private bool _running;
+    private int _generation;
 
     public bool IsConnected => _client.IsConnected;
     public string? LastError { get; private set; }
@@ -39,18 +45,35 @@ public sealed class ObsService
         if (_running)
             return;
         _running = true;
-        _ = RetryLoopAsync();
+        _ = RetryLoopAsync(_client, _generation);
     }
 
-    private async Task RetryLoopAsync()
+    /// <summary>Points this at a different OBS instance (e.g. switching between "this PC" and a remote stream PC) and reconnects immediately.</summary>
+    public void Reconfigure(string url, string? password)
     {
-        while (_running)
+        _url = url;
+        _password = password;
+        _generation++; // orphans the old retry loop so it stops touching the new client
+
+        var oldClient = _client;
+        _client = new ObsClient();
+        _client.Disconnected += () => StateChanged?.Invoke();
+        LastError = null;
+        StateChanged?.Invoke();
+
+        _ = oldClient.DisposeAsync().AsTask();
+        _ = RetryLoopAsync(_client, _generation);
+    }
+
+    private async Task RetryLoopAsync(ObsClient client, int generation)
+    {
+        while (_running && generation == _generation)
         {
-            if (!_client.IsConnected)
+            if (!client.IsConnected)
             {
                 try
                 {
-                    await _client.ConnectAsync(_url, _password);
+                    await client.ConnectAsync(_url, _password);
                     LastError = null;
                     StateChanged?.Invoke();
                 }
