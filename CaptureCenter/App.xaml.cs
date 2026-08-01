@@ -12,6 +12,7 @@ public partial class App : Application
     private ScrimOverlay? _scrim;
     private DisclaimerOverlay? _disclaimer;
     private LogoOverlay? _logo;
+    private PairingRequestOverlay? _pairingRequest;
     private MainWindow? _main;
 
     protected override void OnStartup(StartupEventArgs e)
@@ -40,9 +41,15 @@ public partial class App : Application
         // lot between the compact pill and the big Gallery/Player panel.
         _logo = new LogoOverlay();
 
+        // A pairing request can arrive at any time (whoever's on the other PC
+        // decides when to click "pair"), independent of whether the HUD is open --
+        // created up front like the other always-available overlays, but only
+        // actually shown when a request comes in.
+        _pairingRequest = new PairingRequestOverlay();
+
         // MainWindow creates its own HWND immediately (for the global hotkey) but
         // is never Shown until the hotkey is pressed -- it's a summonable overlay,
         // not a normal always-visible window.
-        _main = new MainWindow(_status, _toasts, _scrim, _disclaimer, _logo);
+        _main = new MainWindow(_status, _toasts, _scrim, _disclaimer, _logo, _pairingRequest);
     }
 }

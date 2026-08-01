@@ -777,6 +777,37 @@
                         <Button Content="Save &amp; reconnect" Style="{StaticResource FlatButton}" HorizontalAlignment="Left" Click="ApplyObsConnection_Click"/>
                     </StackPanel>
 
+                    <TextBlock Text="SHARING" Style="{StaticResource SettingsSectionHeader}"/>
+                    <Border Style="{StaticResource SettingsRow}" BorderThickness="0">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <StackPanel>
+                                <TextBlock Text="Share my clips with another PC" FontSize="13" FontWeight="Bold" Foreground="{StaticResource Text0}"/>
+                                <TextBlock x:Name="ShareClipsStatusText" Text="Off" FontSize="10.5" Foreground="{StaticResource Text2}" Margin="0,2,0,0" TextWrapping="Wrap"/>
+                            </StackPanel>
+                            <ToggleButton x:Name="ShareClipsToggle" Grid.Column="1" Style="{StaticResource AppToggle}" VerticalAlignment="Top" Click="ShareClipsToggle_Click"/>
+                        </Grid>
+                    </Border>
+                    <Border Style="{StaticResource SettingsRow}">
+                        <StackPanel>
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <StackPanel>
+                                    <TextBlock Text="Connect to another PC's clips" FontSize="13" FontWeight="Bold" Foreground="{StaticResource Text0}"/>
+                                    <TextBlock x:Name="PairingStatusText" Text="Not paired" FontSize="10.5" Foreground="{StaticResource Text2}" Margin="0,2,0,0" TextWrapping="Wrap"/>
+                                </StackPanel>
+                                <Button x:Name="UnpairButton" Grid.Column="1" Content="Unpair" Style="{StaticResource FlatButton}" Click="UnpairButton_Click" Visibility="Collapsed"/>
+                            </Grid>
+                            <StackPanel x:Name="DiscoveredDevicesPanel" Margin="0,10,0,0"/>
+                        </StackPanel>
+                    </Border>
+
                     <TextBlock Text="OVERLAY" Style="{StaticResource SettingsSectionHeader}"/>
                     <Border Style="{StaticResource SettingsRow}" BorderThickness="0">
                         <Grid>

@@ -34,6 +34,31 @@ public sealed class AppSettings
 
     public bool ShowDisclaimer { get; set; } = true;
 
+    // A stable identity for this install, shown to (and shown by) other Backtrack
+    // instances during pairing -- generated once, not tied to the Windows machine
+    // name alone since that can change.
+    public string DeviceId { get; set; } = Guid.NewGuid().ToString();
+
+    // Host side: broadcasts this machine as pairable and answers pairing requests.
+    public bool ShareClipsEnabled { get; set; }
+
+    // Client side: the one peer this install is currently paired with. Only one at
+    // a time -- this mirrors the existing single "OBS is on a different PC" model
+    // rather than supporting a whole paired-device list, since that's the actual
+    // use case (two of your own PCs), not a general file-sharing platform.
+    public string? PairedPeerDeviceId { get; set; }
+    public string? PairedPeerName { get; set; }
+    public string? PairedPeerHost { get; set; }
+    public int PairedPeerPort { get; set; }
+    public string? PairedPeerSecret { get; set; }
+
+    // Host side: who was actually approved to pull from this PC's own share.
+    // Kept separate from PairedPeer* above since a single install could in theory
+    // both share its own clips and pull from someone else's at once.
+    public string? AuthorizedClientDeviceId { get; set; }
+    public string? AuthorizedClientName { get; set; }
+    public string? AuthorizedClientSecret { get; set; }
+
     private static string FilePath => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "CaptureCenter", "settings.json");
 

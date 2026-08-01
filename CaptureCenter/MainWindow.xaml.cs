@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
@@ -13,6 +14,7 @@ using System.Windows.Media;
 using System.Windows.Threading;
 using CaptureCenter.Interop;
 using CaptureCenter.Obs;
+using CaptureCenter.Pairing;
 using CaptureCenter.Updates;
 using Microsoft.Win32;
 using LibVlc = LibVLCSharp.Shared;
@@ -42,9 +44,11 @@ public partial class MainWindow : Window
     private readonly ScrimOverlay _scrim;
     private readonly DisclaimerOverlay _disclaimer;
     private readonly LogoOverlay _logo;
+    private readonly PairingRequestOverlay _pairingRequestOverlay;
     private readonly AppSettings _settings;
     private readonly UpdateService _updates = new();
     private readonly DispatcherTimer _updateTimer;
+    private readonly PairingService _pairing;
     private readonly Dictionary<string, string> _rowLabels = new();
     private List<ReplayRow> _lastReplayRows = new();
     private GlobalHotkey? _hotkey;
@@ -65,15 +69,38 @@ public partial class MainWindow : Window
     private TimeSpan? _trimStart;
     private TimeSpan? _trimEnd;
 
-    public MainWindow(StatusOverlay statusOverlay, ToastOverlay toastOverlay, ScrimOverlay scrim, DisclaimerOverlay disclaimer, LogoOverlay logo)
+    public MainWindow(StatusOverlay statusOverlay, ToastOverlay toastOverlay, ScrimOverlay scrim, DisclaimerOverlay disclaimer, LogoOverlay logo, PairingRequestOverlay pairingRequestOverlay)
     {
         InitializeComponent();
         _statusOverlay = statusOverlay;
+        _pairingRequestOverlay = pairingRequestOverlay;
         _toastOverlay = toastOverlay;
         _scrim = scrim;
         _disclaimer = disclaimer;
         _logo = logo;
         _settings = AppSettings.Load();
+
+        _pairing = new PairingService(_settings);
+        _pairing.PairingRequested += (deviceName, code, requestId) => Dispatcher.BeginInvoke(() =>
+        {
+            _pairingRequestOverlay.ShowRequest(deviceName, code,
+                onAllow: () => _pairing.ApproveRequest(requestId),
+                onDeny: () => _pairing.DenyRequest(requestId));
+        });
+        // Always listening for other Backtrack instances announcing themselves, so
+        // the Settings screen has a live discovered-devices list ready the moment
+        // it's opened rather than only starting to listen once you navigate there.
+        _pairing.StartDiscoveryListener();
+        if (_settings.ShareClipsEnabled)
+        {
+            _pairing.StartAnnouncing();
+            _pairing.StartPairingServer();
+        }
+        _pairing.DiscoveredPeersChanged += () => Dispatcher.BeginInvoke(() =>
+        {
+            if (SettingsPanel.Visibility == Visibility.Visible)
+                RenderDiscoveredDevices();
+        });
 
         _scrim.Dismissed += () => Dispatcher.BeginInvoke(CloseOverlay);
 
@@ -1373,11 +1400,159 @@ public partial class MainWindow : Window
 
         ShowDisclaimerToggle.IsChecked = _settings.ShowDisclaimer;
         HotkeyCaptureButton.Content = FormatHotkey((GlobalHotkey.Modifiers)_settings.HotkeyModifiers, (uint)_settings.HotkeyVirtualKey);
+
+        ShareClipsToggle.IsChecked = _settings.ShareClipsEnabled;
+        RefreshShareClipsStatusText();
+        RefreshPairingStatusUi();
+        RenderDiscoveredDevices();
     }
 
     private void ObsRemoteToggle_Click(object sender, RoutedEventArgs e)
     {
         ObsRemoteFields.Visibility = ObsRemoteToggle.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    // -------------------------------------------------------------- pairing
+
+    private void RefreshShareClipsStatusText()
+    {
+        if (!_settings.ShareClipsEnabled)
+        {
+            ShareClipsStatusText.Text = "Off";
+        }
+        else if (!string.IsNullOrEmpty(_settings.AuthorizedClientName))
+        {
+            ShareClipsStatusText.Text = $"Sharing as \"{Environment.MachineName}\" — authorized: {_settings.AuthorizedClientName}";
+        }
+        else
+        {
+            ShareClipsStatusText.Text = $"Sharing as \"{Environment.MachineName}\" — waiting for a PC to pair";
+        }
+    }
+
+    private void ShareClipsToggle_Click(object sender, RoutedEventArgs e)
+    {
+        bool enabled = ShareClipsToggle.IsChecked == true;
+        _settings.ShareClipsEnabled = enabled;
+        _settings.Save();
+
+        if (enabled)
+        {
+            _pairing.StartAnnouncing();
+            _pairing.StartPairingServer();
+        }
+        else
+        {
+            _pairing.StopAnnouncing();
+            _pairing.StopPairingServer();
+        }
+
+        RefreshShareClipsStatusText();
+    }
+
+    private void RefreshPairingStatusUi()
+    {
+        if (!string.IsNullOrEmpty(_settings.PairedPeerName))
+        {
+            PairingStatusText.Text = $"Paired with \"{_settings.PairedPeerName}\"";
+            UnpairButton.Visibility = Visibility.Visible;
+        }
+        else
+        {
+            PairingStatusText.Text = "Not paired";
+            UnpairButton.Visibility = Visibility.Collapsed;
+        }
+    }
+
+    private void UnpairButton_Click(object sender, RoutedEventArgs e)
+    {
+        _settings.PairedPeerDeviceId = null;
+        _settings.PairedPeerName = null;
+        _settings.PairedPeerHost = null;
+        _settings.PairedPeerPort = 0;
+        _settings.PairedPeerSecret = null;
+        _settings.Save();
+        RefreshPairingStatusUi();
+    }
+
+    /// <summary>Rebuilds the discovered-devices list from scratch each time -- simplest way to stay in sync with a set that changes as peers appear/expire, matching the same pattern already used for the Gallery grid and buffer rows.</summary>
+    private void RenderDiscoveredDevices()
+    {
+        DiscoveredDevicesPanel.Children.Clear();
+
+        if (!string.IsNullOrEmpty(_settings.PairedPeerName))
+            return; // Already paired -- no point offering to pair with something else too.
+
+        var peers = _pairing.DiscoveredPeers;
+        if (peers.Count == 0)
+        {
+            DiscoveredDevicesPanel.Children.Add(new TextBlock
+            {
+                Text = "No other Backtrack PCs found on this network yet. Make sure the other PC has \"Share my clips\" turned on.",
+                FontSize = 10.5,
+                Foreground = (Brush)FindResource("Text2"),
+                TextWrapping = TextWrapping.Wrap,
+            });
+            return;
+        }
+
+        foreach (DiscoveredPeer peer in peers)
+            DiscoveredDevicesPanel.Children.Add(BuildDiscoveredDeviceRow(peer));
+    }
+
+    private Border BuildDiscoveredDeviceRow(DiscoveredPeer peer)
+    {
+        var name = new TextBlock { Text = peer.DeviceName, FontWeight = FontWeights.Bold, FontSize = 12, Foreground = (Brush)FindResource("Text0"), VerticalAlignment = VerticalAlignment.Center };
+        var statusText = new TextBlock { Text = "", FontSize = 10.5, Foreground = (Brush)FindResource("Text2"), VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(10, 0, 0, 0) };
+        var pairButton = new Button { Content = "Pair", Style = (Style)FindResource("IconButton"), Margin = new Thickness(0) };
+
+        var left = new StackPanel { Orientation = Orientation.Horizontal };
+        left.Children.Add(name);
+        left.Children.Add(statusText);
+
+        var row = new Grid();
+        row.ColumnDefinitions.Add(new ColumnDefinition());
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        Grid.SetColumn(left, 0);
+        Grid.SetColumn(pairButton, 1);
+        row.Children.Add(left);
+        row.Children.Add(pairButton);
+
+        pairButton.Click += async (_, _) =>
+        {
+            pairButton.IsEnabled = false;
+            var cts = new CancellationTokenSource(TimeSpan.FromSeconds(70));
+            try
+            {
+                PairingResult result = await _pairing.RequestPairingAsync(peer,
+                    onCodeReceived: code => Dispatcher.BeginInvoke(() => statusText.Text = $"Code: {code} — waiting for approval..."),
+                    cts.Token);
+
+                switch (result.Outcome)
+                {
+                    case PairingOutcome.Approved:
+                        statusText.Text = "Paired!";
+                        RefreshPairingStatusUi();
+                        RenderDiscoveredDevices();
+                        return;
+                    case PairingOutcome.Denied:
+                        statusText.Text = "Request denied.";
+                        break;
+                    case PairingOutcome.TimedOut:
+                        statusText.Text = "Request timed out.";
+                        break;
+                    default:
+                        statusText.Text = $"Failed: {result.Error}";
+                        break;
+                }
+            }
+            finally
+            {
+                pairButton.IsEnabled = true;
+            }
+        };
+
+        return new Border { BorderBrush = (Brush)FindResource("Hairline"), BorderThickness = new Thickness(0, 1, 0, 0), Padding = new Thickness(0, 8, 0, 8), Child = row };
     }
 
     private void ApplyObsConnection_Click(object sender, RoutedEventArgs e)
