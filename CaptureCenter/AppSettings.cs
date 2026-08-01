@@ -7,6 +7,7 @@ namespace CaptureCenter;
 public sealed class AppSettings
 {
     public bool LaunchWithWindows { get; set; }
+    public bool RemoteControlEnabled { get; set; }
     public string ClipsFolder { get; set; } = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.MyVideos), "Capture Center");
 

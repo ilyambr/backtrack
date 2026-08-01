@@ -1,0 +1,314 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Capture Center Remote</title>
+<style>
+  :root{
+    --text-0:#f5f6f8; --text-1:#aeb4bd; --text-2:#767d87;
+    --accent:#f0a63d; --accent-ink:#241505; --rec:#ff5b52; --green:#3ecf8e;
+    --hairline:rgba(255,255,255,.12);
+    --panel:#16181b; --row:rgba(255,255,255,.05); --row-hover:rgba(255,255,255,.09);
+    --track:rgba(255,255,255,.18); --fill:#e9ebee;
+    --bg:#0b0c0e;
+  }
+  *{ box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html,body{ margin:0; background:var(--bg); }
+  body{
+    font-family: ui-sans-serif, "Segoe UI", Roboto, Arial, sans-serif;
+    color:var(--text-0); min-height:100vh; padding:16px; padding-bottom:40px;
+  }
+  .mono{ font-family: ui-monospace, "SF Mono", Consolas, monospace; }
+  h1{ font-size:15px; font-weight:700; margin:0 0 2px; }
+  .sub{ font-size:12px; color:var(--text-2); margin:0 0 18px; }
+
+  .conn-row{ display:flex; align-items:center; gap:8px; margin-bottom:18px; }
+  .conn-dot{ width:8px; height:8px; background:var(--text-2); flex:none; }
+  .conn-dot.ok{ background:var(--green); }
+  .conn-dot.bad{ background:var(--rec); }
+  .conn-text{ font-size:12.5px; color:var(--text-1); flex:1; }
+  .gear{ background:none; border:none; color:var(--text-2); font-size:16px; cursor:pointer; padding:4px; }
+
+  .tiles{ display:flex; background:var(--panel); border:1px solid var(--hairline); margin-bottom:16px; }
+  .tile{
+    flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center;
+    gap:6px; padding:18px 6px; background:none; border:none; color:var(--text-0);
+    font-family:inherit; position:relative;
+  }
+  .tile + .tile::before{ content:""; position:absolute; left:0; top:20%; bottom:20%; width:1px; background:var(--hairline); }
+  .tile .ic{ font-size:22px; line-height:1; }
+  .tile .lbl{ font-size:13px; font-weight:700; }
+  .tile .status{ font-size:11px; color:var(--text-2); }
+  .tile.rec-active .ic, .tile.rec-active .status{ color:var(--rec); }
+  .tile.replay-on .ic, .tile.replay-on .status{ color:var(--green); }
+
+  h2{ font-size:11px; font-weight:700; letter-spacing:.05em; text-transform:uppercase; color:var(--text-2); margin:20px 0 8px; }
+
+  .buf-row{ background:var(--row); padding:12px; margin-bottom:2px; }
+  .buf-row .top{ display:flex; align-items:center; justify-content:space-between; gap:10px; }
+  .buf-row .name{ font-size:13px; font-weight:700; }
+  .buf-row .hk{ display:flex; align-items:center; gap:6px; font-size:11px; color:var(--text-2); flex:none; }
+  .buf-row .dot{ width:7px; height:7px; border-radius:50%; background:var(--text-2); }
+  .buf-row.status-1 .dot{ background:var(--green); }
+  .buf-row.status-2 .dot{ background:var(--rec); }
+  .buf-row .save-btn{
+    background:rgba(255,255,255,.1); color:var(--text-0); border:none; padding:5px 12px;
+    font-size:12px; font-weight:700; font-family:inherit;
+  }
+  .buf-row.status-1 .save-btn{ background:var(--accent); color:var(--accent-ink); }
+  .track-row{ display:flex; align-items:center; gap:8px; margin-top:8px; }
+  input[type=range]{ flex:1; accent-color:var(--accent); }
+  .len{ font-size:11px; font-weight:700; color:var(--accent); min-width:40px; text-align:right; }
+
+  .empty{ font-size:12.5px; color:var(--text-2); padding:8px 2px; }
+
+  .setup{ position:fixed; inset:0; background:var(--bg); padding:20px; display:flex; flex-direction:column; gap:12px; }
+  .setup.hidden{ display:none; }
+  .setup label{ font-size:12px; font-weight:700; color:var(--text-1); }
+  .setup input{
+    background:var(--panel); border:1px solid var(--hairline); color:var(--text-0);
+    padding:10px; font-size:14px; font-family:inherit;
+  }
+  .setup button{
+    background:var(--accent); color:var(--accent-ink); border:none; padding:12px;
+    font-size:14px; font-weight:700; font-family:inherit; margin-top:8px;
+  }
+  .setup .note{ font-size:11.5px; color:var(--text-2); line-height:1.5; }
+</style>
+</head>
+<body>
+
+  <div class="conn-row">
+    <div class="conn-dot" id="connDot"></div>
+    <div class="conn-text" id="connText">Not connected</div>
+    <button class="gear" id="gearBtn" title="Connection settings">&#9881;</button>
+  </div>
+  <h1>Capture Center Remote</h1>
+  <p class="sub">Talks straight to OBS's own WebSocket server &mdash; same protocol as the desktop app, no extra relay.</p>
+
+  <div class="tiles">
+    <button class="tile" id="tileRecord">
+      <div class="ic">&#9679;</div>
+      <div class="lbl" id="recordLabel">Start Recording</div>
+      <div class="status" id="recordStatus">&nbsp;</div>
+    </button>
+    <button class="tile" id="tileReplayInfo">
+      <div class="ic">&#8635;</div>
+      <div class="lbl">Replay Buffer</div>
+      <div class="status" id="replayStatus">&nbsp;</div>
+    </button>
+  </div>
+
+  <h2>Save Which Buffer?</h2>
+  <div id="bufRows"><div class="empty">Connect to OBS to see buffers.</div></div>
+
+  <div class="setup" id="setup">
+    <label>OBS host / IP</label>
+    <input id="inHost" placeholder="192.168.1.50" autocapitalize="off" autocorrect="off" />
+    <label>Port</label>
+    <input id="inPort" placeholder="4455" inputmode="numeric" />
+    <label>Password</label>
+    <input id="inPassword" type="password" placeholder="from OBS: Tools > WebSocket Server Settings > Show Connect Info" />
+    <p class="note">Only works while your phone is on the same WiFi/LAN as the PC running OBS. The port also needs to be allowed through Windows Firewall on that PC.</p>
+    <button id="saveBtn">Connect</button>
+  </div>
+
+<script>
+(function(){
+  const $ = (id) => document.getElementById(id);
+  let ws = null, connected = false, rpcVersion = 1;
+  const pending = new Map();
+
+  function loadConfig() {
+    return {
+      host: localStorage.getItem('cc_host') || '',
+      port: localStorage.getItem('cc_port') || '4455',
+      password: localStorage.getItem('cc_password') || '',
+    };
+  }
+  function saveConfig(host, port, password) {
+    localStorage.setItem('cc_host', host);
+    localStorage.setItem('cc_port', port);
+    localStorage.setItem('cc_password', password);
+  }
+
+  async function sha256Base64(str) {
+    const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(str));
+    return btoa(String.fromCharCode(...new Uint8Array(buf)));
+  }
+  async function computeAuth(password, salt, challenge) {
+    const secret = await sha256Base64(password + salt);
+    return await sha256Base64(secret + challenge);
+  }
+
+  function setConnUi(ok, text) {
+    $('connDot').className = 'conn-dot' + (ok ? ' ok' : connected === null ? '' : ' bad');
+    $('connText').textContent = text;
+  }
+
+  function connect() {
+    const cfg = loadConfig();
+    if (!cfg.host) { openSetup(); return; }
+
+    setConnUi(false, `Connecting to ${cfg.host}...`);
+    ws = new WebSocket(`ws://${cfg.host}:${cfg.port}`);
+
+    ws.onopen = () => {};
+    ws.onclose = () => { connected = false; setConnUi(false, 'Disconnected — retrying...'); resetTiles(); setTimeout(connect, 4000); };
+    ws.onerror = () => {};
+
+    ws.onmessage = async (evt) => {
+      const msg = JSON.parse(evt.data);
+      if (msg.op === 0) {
+        rpcVersion = msg.d.rpcVersion;
+        const identify = { rpcVersion, eventSubscriptions: 0 };
+        if (msg.d.authentication) {
+          identify.authentication = await computeAuth(cfg.password, msg.d.authentication.salt, msg.d.authentication.challenge);
+        }
+        send(1, identify);
+      } else if (msg.op === 2) {
+        connected = true;
+        setConnUi(true, `Connected to ${cfg.host}`);
+        refreshStatus();
+        loadBuffers();
+        startPolling();
+      } else if (msg.op === 7) {
+        const rid = msg.d.requestId;
+        const resolver = pending.get(rid);
+        if (resolver) {
+          pending.delete(rid);
+          if (msg.d.requestStatus && msg.d.requestStatus.result) resolver.resolve(msg.d.responseData || {});
+          else resolver.reject(new Error((msg.d.requestStatus && msg.d.requestStatus.comment) || 'request failed'));
+        }
+      }
+    };
+  }
+
+  function send(op, d) {
+    ws.send(JSON.stringify({ op, d }));
+  }
+
+  function request(requestType, requestData) {
+    return new Promise((resolve, reject) => {
+      const requestId = Math.random().toString(36).slice(2);
+      pending.set(requestId, { resolve, reject });
+      send(6, { requestType, requestId, requestData });
+    });
+  }
+
+  function callVendor(requestType, requestData) {
+    return request('CallVendorRequest', { vendorName: 'replay-buffer-slider', requestType, requestData: requestData || {} });
+  }
+
+  let pollTimer = null;
+  function startPolling() {
+    if (pollTimer) return;
+    pollTimer = setInterval(() => { if (connected) refreshStatus(); }, 1000);
+  }
+
+  function resetTiles() {
+    $('tileRecord').classList.remove('rec-active');
+    $('recordLabel').textContent = 'Start Recording';
+    $('recordStatus').textContent = 'offline';
+    $('replayStatus').textContent = ' ';
+    $('tileReplayInfo').classList.remove('replay-on');
+  }
+
+  async function refreshStatus() {
+    try {
+      const rec = await request('GetRecordStatus');
+      $('tileRecord').classList.toggle('rec-active', !!rec.outputActive);
+      $('recordLabel').textContent = rec.outputActive ? 'Stop Recording' : 'Start Recording';
+      $('recordStatus').textContent = rec.outputActive ? formatDuration(rec.outputDuration) : ' ';
+
+      const replay = await request('GetReplayBufferStatus');
+      $('tileReplayInfo').classList.toggle('replay-on', !!replay.outputActive);
+      $('replayStatus').textContent = replay.outputActive ? 'On' : 'Off';
+    } catch (e) { /* one bad tick is fine, next poll recovers */ }
+  }
+
+  function formatDuration(ms) {
+    const s = Math.floor((ms || 0) / 1000);
+    return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+  }
+
+  $('tileRecord').addEventListener('click', async () => {
+    if (!connected) return;
+    const rec = await request('GetRecordStatus');
+    await request(rec.outputActive ? 'StopRecord' : 'StartRecord');
+    refreshStatus();
+  });
+
+  async function loadBuffers() {
+    const container = $('bufRows');
+    container.innerHTML = '<div class="empty">Loading&hellip;</div>';
+    try {
+      const res = await callVendor('list_rows', {});
+      const rows = (res.rows || []).slice().sort((a, b) => (a.status === 1 ? 0 : 1) - (b.status === 1 ? 0 : 1));
+      if (rows.length === 0) { container.innerHTML = '<div class="empty">No replay buffers found.</div>'; return; }
+      container.innerHTML = '';
+      rows.forEach((row) => container.appendChild(buildRow(row)));
+    } catch (e) {
+      container.innerHTML = `<div class="empty">Could not reach the Replay Slider bridge: ${escapeHtml(e.message)}</div>`;
+    }
+  }
+
+  function buildRow(row) {
+    const el = document.createElement('div');
+    el.className = `buf-row status-${row.status}`;
+    el.innerHTML = `
+      <div class="top">
+        <div class="name">${escapeHtml(row.label)}</div>
+        <div class="hk"><span class="dot"></span>${escapeHtml(row.hotkey || '(unbound)')}</div>
+        <button class="save-btn">Save</button>
+      </div>
+      <div class="track-row">
+        <input type="range" min="15" max="3600" value="${row.length_seconds}" />
+        <div class="len mono">${formatDuration(row.length_seconds * 1000)}</div>
+      </div>
+    `;
+    const range = el.querySelector('input');
+    const len = el.querySelector('.len');
+    range.addEventListener('input', () => { len.textContent = formatDuration(range.value * 1000); });
+    range.addEventListener('change', async () => {
+      try { await callVendor('set_row_length', { key: row.key, seconds: parseInt(range.value, 10) }); }
+      catch (e) { alert('Could not set clip length: ' + e.message); }
+    });
+    el.querySelector('.save-btn').addEventListener('click', async (ev) => {
+      const btn = ev.currentTarget;
+      btn.disabled = true;
+      try { await callVendor('save_row', { key: row.key }); }
+      catch (e) { alert('Save failed: ' + e.message); }
+      finally { btn.disabled = false; }
+    });
+    return el;
+  }
+
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, (c) => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+  }
+
+  function openSetup() {
+    const cfg = loadConfig();
+    $('inHost').value = cfg.host;
+    $('inPort').value = cfg.port;
+    $('inPassword').value = cfg.password;
+    $('setup').classList.remove('hidden');
+  }
+  $('gearBtn').addEventListener('click', openSetup);
+  $('saveBtn').addEventListener('click', () => {
+    const host = $('inHost').value.trim();
+    if (!host) return;
+    saveConfig(host, $('inPort').value.trim() || '4455', $('inPassword').value);
+    $('setup').classList.add('hidden');
+    if (ws) { try { ws.close(); } catch (e) {} }
+    connect();
+  });
+
+  const initial = loadConfig();
+  if (!initial.host) openSetup(); else connect();
+})();
+</script>
+</body>
+</html>

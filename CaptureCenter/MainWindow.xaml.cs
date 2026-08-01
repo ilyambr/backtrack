@@ -13,6 +13,7 @@ using System.Windows.Media;
 using System.Windows.Threading;
 using CaptureCenter.Interop;
 using CaptureCenter.Obs;
+using CaptureCenter.Remote;
 using Microsoft.Win32;
 
 namespace CaptureCenter;
@@ -30,6 +31,7 @@ public partial class MainWindow : Window
     private readonly DispatcherTimer _pollTimer;
     private readonly StatusOverlay _statusOverlay;
     private readonly AppSettings _settings;
+    private readonly RemoteServer _remoteServer = new();
     private GlobalHotkey? _hotkey;
 
     public MainWindow(StatusOverlay statusOverlay)
@@ -67,6 +69,9 @@ public partial class MainWindow : Window
         _ = RefreshStatusAsync();
         ShowScreen(Screen.Idle);
         _ = RefreshGalleryCountAsync();
+
+        if (_settings.RemoteControlEnabled)
+            _remoteServer.Start();
     }
 
     private void ToggleVisible()
@@ -520,6 +525,46 @@ public partial class MainWindow : Window
     {
         LaunchWithWindowsToggle.IsChecked = IsLaunchWithWindowsEnabled();
         ClipsFolderText.Text = _settings.ClipsFolder;
+        RemoteControlToggle.IsChecked = _settings.RemoteControlEnabled;
+        UpdateRemoteControlUrlText();
+    }
+
+    private void UpdateRemoteControlUrlText()
+    {
+        if (_remoteServer.IsRunning)
+        {
+            RemoteControlUrlText.Text = $"Open {_remoteServer.LocalUrl} on your phone (same WiFi/LAN).";
+            RemoteControlUrlText.Visibility = Visibility.Visible;
+        }
+        else
+        {
+            RemoteControlUrlText.Visibility = Visibility.Collapsed;
+        }
+    }
+
+    private void RemoteControlToggle_Click(object sender, RoutedEventArgs e)
+    {
+        bool enabled = RemoteControlToggle.IsChecked == true;
+        if (enabled)
+        {
+            if (!_remoteServer.Start())
+            {
+                MessageBox.Show(this,
+                    "Couldn't start the remote page's local server. Try running Capture Center as Administrator once " +
+                    "(needed the first time to reserve the port), or check whether something else is already using it.",
+                    "Capture Center");
+                RemoteControlToggle.IsChecked = false;
+                return;
+            }
+        }
+        else
+        {
+            _remoteServer.Stop();
+        }
+
+        _settings.RemoteControlEnabled = enabled;
+        _settings.Save();
+        UpdateRemoteControlUrlText();
     }
 
     private static string RunKeyPath => @"SOFTWARE\Microsoft\Windows\CurrentVersion\Run";
@@ -566,6 +611,7 @@ public partial class MainWindow : Window
     protected override void OnClosed(EventArgs e)
     {
         _hotkey?.Dispose();
+        _remoteServer.Stop();
         base.OnClosed(e);
     }
 }
