@@ -593,8 +593,12 @@
                          WrapPanel sizes every row to its tallest child, so if any card's
                          title/date text rendered even slightly differently, that row's
                          gap to the next one would shift; fixing the cell size itself
-                         guarantees every row and column lines up exactly the same. -->
-                    <WrapPanel x:Name="GalleryGrid" ItemWidth="264" ItemHeight="212"/>
+                         guarantees every row and column lines up exactly the same.
+                         240 cell width -> 6 columns fit in BigWidth()'s ~1454px usable
+                         content area (1500 max width, minus the panel's 32px margin,
+                         2px border, and the scrollbar's own width) with real gutters
+                         left over, not just barely squeezing in a 6th. -->
+                    <WrapPanel x:Name="GalleryGrid" ItemWidth="240" ItemHeight="168"/>
                 </ScrollViewer>
             </DockPanel>
 

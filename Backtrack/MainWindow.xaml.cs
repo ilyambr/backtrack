@@ -847,7 +847,7 @@ public partial class MainWindow : Window
         var thumb = new Border
         {
             Background = new SolidColorBrush(Color.FromRgb(24, 26, 30)),
-            Height = 148,
+            Height = 118,
             Cursor = Cursors.Hand,
             ClipToBounds = true,
         };
@@ -883,7 +883,7 @@ public partial class MainWindow : Window
         // card's 240-wide, ~186-tall content) already reserve the gutter uniformly on
         // every cell, top-left aligned by default, so the leftover space itself becomes
         // the gap to the next card without needing a per-card Margin to also add one.
-        var card = new Border { Width = 240, Child = content };
+        var card = new Border { Width = 210, Child = content };
 
         // Only worth showing when the clip isn't already local -- this is the
         // "bring it from the stream PC to this one" action. Everything else
