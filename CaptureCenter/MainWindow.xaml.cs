@@ -32,6 +32,15 @@ public partial class MainWindow : Window
     // compact HUD panel needs to start clear of that, not at the same Top=40 both
     // windows used to share back when the logo was drawn inside MainWindow itself.
     private const double CompactTop = 76;
+
+    // Gallery/Player always open at this same fixed Top, rather than centering
+    // against the real ActualHeight (which isn't known until after layout runs,
+    // and settles across a couple of frames) -- that meant computing Top
+    // reactively, and doing so visibly moved the window a beat after it first
+    // appeared, no matter how that recompute was timed/debounced. A fixed value
+    // has no timing dependency at all, so there's nothing left to jitter.
+    private const double BigTop = 90;
+
     private const string RunKeyName = "CaptureCenter";
     private const string ScheduledTaskName = "CaptureCenterAutostart";
 
@@ -49,7 +58,6 @@ public partial class MainWindow : Window
     private readonly UpdateService _updates = new();
     private readonly DispatcherTimer _updateTimer;
     private readonly PairingService _pairing;
-    private readonly DispatcherTimer _recenterDebounce = new() { Interval = TimeSpan.FromMilliseconds(90) };
     private readonly Dictionary<string, string> _rowLabels = new();
     private List<ReplayRow> _lastReplayRows = new();
     private GlobalHotkey? _hotkey;
@@ -143,29 +151,6 @@ public partial class MainWindow : Window
         // showing up as five or six separate Alt+Tab entries for one app, since
         // ShowInTaskbar="False" alone doesn't affect Alt+Tab, only the taskbar.
         ToolWindow.Enable(hwnd);
-
-        // Vertically centers Gallery/Player once their real height is actually known --
-        // SizeToContent="Height" means the window's true height isn't known until after
-        // layout runs, so trying to precompute it upfront (transport bar + trim panel,
-        // whose visibility toggles) kept drifting off-center. Same fix as DisclaimerOverlay
-        // uses for its own bottom positioning.
-        //
-        // Debounced, not called directly on every SizeChanged: Gallery/Player's content
-        // (WrapPanel of clip cards, the video surface) can settle across a couple of
-        // layout passes, each firing SizeChanged with a slightly different intermediate
-        // ActualHeight. Repositioning the real OS window on every one of those was
-        // visibly jittery -- waiting for a short quiet period with no further size
-        // changes means it only actually moves once, after things have truly settled.
-        _recenterDebounce.Tick += (_, _) =>
-        {
-            _recenterDebounce.Stop();
-            RecenterIfBig();
-        };
-        SizeChanged += (_, _) =>
-        {
-            _recenterDebounce.Stop();
-            _recenterDebounce.Start();
-        };
 
         RegisterHotkeyFromSettings();
 
@@ -444,19 +429,7 @@ public partial class MainWindow : Window
         // the same size panel, not different sizes depending on which you're on.
         PlayerVideoHost.Height = contentHeight;
         GalleryScrollHost.MaxHeight = contentHeight;
-
-        // Top is deliberately left untouched here -- the debounced SizeChanged
-        // handler (see constructor) sets it once, from the real ActualHeight, after
-        // layout settles. Assigning a placeholder Top here too (guessing at the
-        // total window height up front) meant the window visibly hopped twice per
-        // transition: once to the wrong placeholder position, then again to the
-        // real one a moment later. Leaving it alone means only one real move.
-    }
-
-    private void RecenterIfBig()
-    {
-        if (GalleryPanel.Visibility == Visibility.Visible || PlayerPanel.Visibility == Visibility.Visible)
-            Top = Math.Max((SystemParameters.PrimaryScreenHeight - ActualHeight) / 2, 16);
+        Top = BigTop;
     }
 
     private void BackToIdle_Click(object sender, MouseButtonEventArgs e) => ShowScreen(Screen.Idle);
