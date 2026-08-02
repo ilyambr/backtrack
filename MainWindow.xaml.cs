@@ -1,8 +1,9 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
@@ -11,6 +12,7 @@ using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
+using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using Backtrack.Interop;
 using Backtrack.Obs;
@@ -62,6 +64,12 @@ public partial class MainWindow : Window
     private List<ReplayRow> _lastReplayRows = new();
     private GlobalHotkey? _hotkey;
     private Screen _lastScreen = Screen.Idle;
+    private readonly SystemTrayManager _trayManager;
+
+    private bool _isRenamingCard;
+    private bool _isPlayerRenaming;
+    private bool _isTrimming;
+    private readonly HashSet<string> _pendingDeletePaths = new(StringComparer.OrdinalIgnoreCase);
 
     // --------------------------------------------------------------- LibVLC / Player
 
@@ -69,7 +77,11 @@ public partial class MainWindow : Window
     private LibVlc.MediaPlayer? _vlcPlayer;
     private FileInfo? _currentPlayerFile;
     private readonly DispatcherTimer _seekTimer;
-    private bool _seekDragging;
+    private readonly DispatcherTimer _seekDebounceTimer;
+    private bool _isScrubbing = false;
+    private bool _isHoveringSeekTrack = false;
+    private long _targetSeekMs = 0;
+    private IntPtr _thumbnailSinkHwnd;
 
     // Hotkey capture (Settings)
     private bool _capturingHotkey;
@@ -77,6 +89,20 @@ public partial class MainWindow : Window
     // Trim
     private TimeSpan? _trimStart;
     private TimeSpan? _trimEnd;
+
+    // --------------------------------------------------------------- Gallery folders / selection
+
+    // null means "at the clips-folder root" -- kept nullable instead of always holding
+    // a path so GalleryTile_Click can reset browsing back to the top with one write,
+    // and so GalleryUp_Click has an unambiguous "there's no further up" state.
+    private string? _currentGalleryFolder;
+    private string GalleryFolder => _currentGalleryFolder ?? _settings.ClipsFolder;
+
+    private readonly HashSet<string> _selectedClipPaths = new(StringComparer.OrdinalIgnoreCase);
+    // Rebuilt every LoadGallery() call -- lets mass actions and the selection-circle
+    // visuals look up a card's controls by file without threading extra state through
+    // BuildClipCard's return value (still just a Border, used everywhere else as one).
+    private readonly List<(FileInfo File, Border Circle, Border Thumb)> _galleryCardSelection = new();
 
     public MainWindow(StatusOverlay statusOverlay, ToastOverlay toastOverlay, ScrimOverlay scrim, DisclaimerOverlay disclaimer, LogoOverlay logo, PairingRequestOverlay pairingRequestOverlay)
     {
@@ -112,6 +138,7 @@ public partial class MainWindow : Window
         });
 
         _scrim.Dismissed += () => Dispatcher.BeginInvoke(CloseOverlay);
+        KeyDown += MainWindow_KeyDown;
 
         string url;
         string? password;
@@ -136,8 +163,18 @@ public partial class MainWindow : Window
         _micTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
         _micTimer.Tick += (_, _) => _statusOverlay.SetMicStatus(_obs.GetMicStatus());
 
-        _seekTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(200) };
+        _seekTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(100) };
         _seekTimer.Tick += (_, _) => UpdatePlayerSeekUi();
+
+        _seekDebounceTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(40) };
+        _seekDebounceTimer.Tick += (_, _) =>
+        {
+            _seekDebounceTimer.Stop();
+            if (_vlcPlayer != null && _vlcPlayer.IsSeekable && _targetSeekMs >= 0)
+            {
+                _vlcPlayer.Time = _targetSeekMs;
+            }
+        };
 
         // The window needs a real HWND immediately for RegisterHotKey and the
         // acrylic blur, but must never actually appear until the hotkey is
@@ -154,6 +191,27 @@ public partial class MainWindow : Window
 
         RegisterHotkeyFromSettings();
 
+        _trayManager = new SystemTrayManager(this);
+        _trayManager.OnOpenHudRequested += () => Dispatcher.BeginInvoke(ToggleVisible);
+        _trayManager.OnOpenSettingsRequested += () => Dispatcher.BeginInvoke(() =>
+        {
+            if (!IsVisible) ToggleVisible();
+            ShowScreen(Screen.Settings);
+        });
+        _trayManager.OnOpenClipsFolderRequested += () => Dispatcher.BeginInvoke(() =>
+        {
+            if (Directory.Exists(_settings.ClipsFolder))
+            {
+                Process.Start(new ProcessStartInfo("explorer.exe", $"\"{_settings.ClipsFolder}\"") { UseShellExecute = true });
+            }
+        });
+        _trayManager.OnToggleStatusOverlayRequested += () => Dispatcher.BeginInvoke(() =>
+        {
+            ToggleStatusOverlay();
+            _trayManager.UpdateStatus(_obs.IsConnected, _statusOverlay.IsVisible);
+        });
+        _trayManager.OnQuitRequested += () => Dispatcher.BeginInvoke(() => Application.Current.Shutdown());
+
         try
         {
             LibVlc.Core.Initialize();
@@ -162,6 +220,15 @@ public partial class MainWindow : Window
             // ever drawn into it on machines/VMs where GPU decode acceleration isn't
             // reliably available -- software decode is slower but actually paints frames.
             _libVlc = new LibVlc.LibVLC("--no-video-title-show", "--avcodec-hw=none");
+
+            // A real HWND for thumbnail-generation MediaPlayers to render into, never
+            // shown (EnsureHandle creates the native window without Show() ever being
+            // called, same trick MainWindow itself uses for the hotkey's HWND). Without
+            // an explicit render target, libvlc creates its own floating window to
+            // render into instead -- which is exactly what looked like "VLC opening in
+            // the background" for every single clip while generating thumbnails.
+            var thumbnailSink = new Window { Width = 2, Height = 2, WindowStyle = WindowStyle.None, ShowInTaskbar = false, Left = -10000, Top = -10000 };
+            _thumbnailSinkHwnd = new WindowInteropHelper(thumbnailSink).EnsureHandle();
         }
         catch (Exception ex)
         {
@@ -175,6 +242,9 @@ public partial class MainWindow : Window
         ShowScreen(Screen.Idle);
         _ = RefreshGalleryCountAsync();
         _ = PrefetchRowLabelsAsync();
+        // Starts generating/caching thumbnails immediately at launch, well before
+        // the user has any reason to open Gallery -- see PrewarmGalleryThumbnailsAsync.
+        _ = PrewarmGalleryThumbnailsAsync();
 
         // Self-heals the startup task if Settings says it should exist -- if the
         // app was ever renamed or moved (the exe path baked into the task's /TR
@@ -269,7 +339,7 @@ public partial class MainWindow : Window
                 return;
             }
 
-            await _updates.ApplySelfUpdateAsync(release.DownloadUrl);
+            await _updates.ApplySelfUpdateAsync(release.DownloadUrl, release.Version);
             SetUpdateStatus(BacktrackStatusDot, BacktrackVersionText, release.Version, ok: true);
             // The helper script above is now waiting for this process to exit --
             // shut down cleanly so it can finish the swap and relaunch.
@@ -346,16 +416,67 @@ public partial class MainWindow : Window
     /// NOT hide it. Left running, it's an orphaned always-on-top window with nothing
     /// left to route clicks to it -- exactly the "locked out, had to Alt+F4" bug.
     /// </summary>
+    private ConfirmDialog? _activeConfirmDialog;
+
+    private bool IsCriticalOperationActive()
+    {
+        bool isRenaming = _isRenamingCard || _isPlayerRenaming;
+        bool isTrimming = (TrimPanel != null && TrimPanel.Visibility == Visibility.Visible) || _trimStart.HasValue || _trimEnd.HasValue || _isTrimming;
+        bool isSelectingClips = _selectedClipPaths.Count > 0;
+        bool isDialogActive = _activeConfirmDialog != null && _activeConfirmDialog.IsLoaded;
+
+        return isRenaming || isTrimming || isSelectingClips || isDialogActive;
+    }
+
+    private void ShowConfirmDialog(string message, string confirmButtonText, Action<bool> callback)
+    {
+        _activeConfirmDialog?.Close();
+        _activeConfirmDialog = ConfirmDialog.ShowNonModal(this, message, confirmButtonText, confirmed =>
+        {
+            _activeConfirmDialog = null;
+            callback(confirmed);
+        });
+    }
+
     private void CloseOverlay()
     {
-        // Falls back to whatever non-Player screen was last showing (Idle by default)
-        // rather than leaving Player active: reopening later must never show a
-        // screen wired to a _vlcPlayer that CloseOverlay is about to tear down.
-        ShowScreen(_lastScreen);
+        if (!IsCriticalOperationActive())
+        {
+            _lastScreen = Screen.Idle;
+            ShowScreen(Screen.Idle);
+        }
+        else
+        {
+            ShowScreen(_lastScreen);
+        }
+
         Hide();
         _scrim.Hide();
         _disclaimer.Hide();
         _logo.Hide();
+        _toastOverlay.UpdatePosition(false);
+    }
+
+    private void MainWindow_KeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key != Key.Escape || !IsVisible)
+            return;
+
+        e.Handled = true;
+        if (_activeConfirmDialog != null && _activeConfirmDialog.IsLoaded)
+        {
+            _activeConfirmDialog.Close();
+            _activeConfirmDialog = null;
+        }
+        else if (_selectedClipPaths.Count > 0)
+        {
+            _selectedClipPaths.Clear();
+            RefreshGallerySelectionUi();
+        }
+        else
+        {
+            CloseOverlay();
+        }
     }
 
     private void ToggleVisible()
@@ -370,12 +491,10 @@ public partial class MainWindow : Window
             _logo.ShowWithIntro();
             Show();
             Activate();
-            // Activate() re-asserts THIS window to the front of the topmost band --
-            // the always-on overlays must be re-asserted AFTER that, or Activate()
-            // here would otherwise bury them behind MainWindow.
             _statusOverlay.Show();
             WindowZOrder.BringToFrontWithoutActivating(new WindowInteropHelper(_statusOverlay).Handle);
             _toastOverlay.Show();
+            _toastOverlay.UpdatePosition(true);
             WindowZOrder.BringToFrontWithoutActivating(new WindowInteropHelper(_toastOverlay).Handle);
 
             if (_settings.ShowDisclaimer)
@@ -401,11 +520,14 @@ public partial class MainWindow : Window
         Width = screen == Screen.Settings ? WideWidth : big ? BigWidth() : CompactWidth;
         Left = (SystemParameters.PrimaryScreenWidth - Width) / 2;
 
-        if (big)
+        if (screen == Screen.Settings)
         {
-            // The debounced SizeChanged handler (see constructor) picks up the real
-            // recenter once layout settles -- no need to also force one here, and
-            // doing both was exactly what caused the double-reposition jitter.
+            double maxScrollHeight = Math.Max(SystemParameters.PrimaryScreenHeight - 260, 450);
+            SettingsScrollHost.MaxHeight = maxScrollHeight;
+            Top = Math.Max((SystemParameters.PrimaryScreenHeight - (maxScrollHeight + 80)) / 2, 85);
+        }
+        else if (big)
+        {
             ApplyBigScreenSize();
         }
         else
@@ -420,6 +542,12 @@ public partial class MainWindow : Window
 
         if (screen is Screen.Idle or Screen.SaveReplay or Screen.Gallery or Screen.Settings)
             _lastScreen = screen;
+
+        IntPtr toastHwnd = new WindowInteropHelper(_toastOverlay).Handle;
+        if (toastHwnd != IntPtr.Zero)
+        {
+            WindowZOrder.BringToFrontWithoutActivating(toastHwnd);
+        }
     }
 
     /// <summary>
@@ -459,10 +587,23 @@ public partial class MainWindow : Window
         LoadGallery();
     }
 
-    // ------------------------------------------------------------- idle tiles
+    private void ToggleStatusOverlay()
+    {
+        if (_statusOverlay.IsVisible)
+        {
+            _statusOverlay.Hide();
+        }
+        else
+        {
+            _statusOverlay.Show();
+            WindowZOrder.BringToFrontWithoutActivating(new WindowInteropHelper(_statusOverlay).Handle);
+        }
+    }
 
     private async Task RefreshStatusAsync()
     {
+        _trayManager?.UpdateStatus(_obs.IsConnected, _statusOverlay.IsVisible);
+
         if (!_obs.IsConnected)
         {
             ConnDot.Fill = (Brush)FindResource("Rec");
@@ -473,7 +614,8 @@ public partial class MainWindow : Window
             RecordLabel.Text = "Start Recording";
             RecordStatusText.Text = "--:--";
             RecordDot.Fill = (Brush)FindResource("Text1");
-            ReplayStatus.Text = "--:--";
+            ReplayStatus.Text = "Off";
+            ReplayStatus.Foreground = (Brush)FindResource("Text2");
             SaveReplayIcon.Foreground = (Brush)FindResource("Text0");
             _statusOverlay.SetRecording(false);
             _statusOverlay.SetReplayOnline(false);
@@ -556,6 +698,7 @@ public partial class MainWindow : Window
     private void GalleryTile_Click(object sender, RoutedEventArgs e)
     {
         ShowScreen(Screen.Gallery);
+        _currentGalleryFolder = null;
         LoadGallery();
     }
 
@@ -778,12 +921,18 @@ public partial class MainWindow : Window
     private void LoadGallery()
     {
         GalleryGrid.Children.Clear();
+        _galleryCardSelection.Clear();
+        _selectedClipPaths.Clear();
+        RefreshGallerySelectionUi();
+        UpdateGalleryPathBar();
 
-        if (!Directory.Exists(_settings.ClipsFolder))
+        string folder = GalleryFolder;
+
+        if (!Directory.Exists(folder))
         {
             GalleryGrid.Children.Add(new TextBlock
             {
-                Text = $"Folder doesn't exist yet: {_settings.ClipsFolder}\n\nSet a folder that actually has your clips in Settings.",
+                Text = $"Folder doesn't exist yet: {folder}\n\nSet a folder that actually has your clips in Settings.",
                 FontSize = 12,
                 Foreground = (Brush)FindResource("Text2"),
                 TextWrapping = TextWrapping.Wrap,
@@ -792,12 +941,32 @@ public partial class MainWindow : Window
             return;
         }
 
+        List<DirectoryInfo> subfolders;
         List<FileInfo> files;
         try
         {
-            files = Directory.EnumerateFiles(_settings.ClipsFolder)
-                .Where(f => VideoExtensions.Contains(Path.GetExtension(f).ToLowerInvariant()))
+            subfolders = Directory.GetDirectories(folder)
+                .Select(d => new DirectoryInfo(d))
+                .OrderBy(d => d.Name, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            files = Directory.EnumerateFiles(folder)
+                .Where(f => VideoExtensions.Contains(Path.GetExtension(f).ToLowerInvariant()) && !_pendingDeletePaths.Contains(Path.GetFullPath(f)))
                 .Select(f => new FileInfo(f))
+                // Filters out obviously-invalid/glitched recordings (e.g. a save
+                // triggered right as OBS started, or a buffer barely armed before
+                // saving) -- only when the duration is actually known already
+                // (cached from a prior thumbnail pass); a clip that hasn't been
+                // probed yet shows optimistically rather than being hidden on a
+                // guess, and gets filtered retroactively once its real duration
+                // comes back (see BuildClipCard).
+                // A bare "< 2000" (not "> 0 and < 2000") matters here: a relational
+                // pattern never matches null, so an unprobed clip (null) already
+                // falls through to "is not" = true on its own -- adding "> 0" as an
+                // extra guard against that case was redundant, and actively wrong,
+                // since it also let a genuine 0ms glitched clip slip through the
+                // same way (0 isn't > 0 either).
+                .Where(f => TryGetCachedDurationMs(f) is not < 2000)
                 .OrderByDescending(f => f.LastWriteTime)
                 .ToList();
         }
@@ -807,7 +976,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        if (files.Count == 0)
+        if (subfolders.Count == 0 && files.Count == 0)
         {
             GalleryGrid.Children.Add(new TextBlock
             {
@@ -815,8 +984,12 @@ public partial class MainWindow : Window
                 FontSize = 12,
                 Foreground = (Brush)FindResource("Text2"),
             });
+            GalleryStatus.Text = "0 clips";
             return;
         }
+
+        foreach (DirectoryInfo dir in subfolders)
+            GalleryGrid.Children.Add(BuildFolderCard(dir));
 
         foreach (FileInfo file in files)
             GalleryGrid.Children.Add(BuildClipCard(file));
@@ -824,31 +997,275 @@ public partial class MainWindow : Window
         GalleryStatus.Text = files.Count == 1 ? "1 clip" : $"{files.Count} clips";
     }
 
-    private Border BuildClipCard(FileInfo file)
+    /// <summary>
+    /// The folder browsing here is scoped to the clips folder tree -- both so "Up"
+    /// has an unambiguous stopping point and so mass-move destinations picked via
+    /// the OS folder dialog land somewhere this same view can browse back to.
+    /// </summary>
+    private void UpdateGalleryPathBar()
     {
-        // Deterministic placeholder color per file -- there's no ffmpeg available
-        // to pull a real video frame, so this is an honest stand-in, not a fake thumbnail.
-        int hash = file.Name.GetHashCode();
-        var thumbColor = Color.FromRgb(
-            (byte)(40 + Math.Abs(hash) % 60),
-            (byte)(40 + Math.Abs(hash / 7) % 60),
-            (byte)(50 + Math.Abs(hash / 13) % 70));
+        bool atRoot = _currentGalleryFolder is null;
+        GalleryPathBar.Visibility = atRoot ? Visibility.Collapsed : Visibility.Visible;
+        if (atRoot)
+            return;
 
-        var thumb = new Border
+        string root = Path.GetFullPath(_settings.ClipsFolder).TrimEnd(Path.DirectorySeparatorChar);
+        string full = Path.GetFullPath(GalleryFolder).TrimEnd(Path.DirectorySeparatorChar);
+        string relative = full.Length > root.Length ? full[(root.Length + 1)..] : full;
+        GalleryPathText.Text = relative.Replace(Path.DirectorySeparatorChar, '/');
+    }
+
+    private void OpenGalleryFolder(string path)
+    {
+        string root = Path.GetFullPath(_settings.ClipsFolder).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        string full = Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+
+        if (string.Equals(full, root, StringComparison.OrdinalIgnoreCase) || !full.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
         {
-            Background = new SolidColorBrush(thumbColor),
-            Height = 84,
+            _currentGalleryFolder = null;
+        }
+        else
+        {
+            _currentGalleryFolder = full;
+        }
+        LoadGallery();
+    }
+
+    private void GalleryUp_Click(object sender, MouseButtonEventArgs e)
+    {
+        string root = Path.GetFullPath(_settings.ClipsFolder).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        string current = Path.GetFullPath(GalleryFolder).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+
+        if (string.Equals(current, root, StringComparison.OrdinalIgnoreCase) || !current.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+        {
+            _currentGalleryFolder = null;
+        }
+        else
+        {
+            string? parent = Path.GetDirectoryName(current);
+            if (parent is null || string.Equals(parent, root, StringComparison.OrdinalIgnoreCase) || !parent.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+            {
+                _currentGalleryFolder = null;
+            }
+            else
+            {
+                _currentGalleryFolder = parent;
+            }
+        }
+        LoadGallery();
+    }
+
+    private void ToggleClipSelected(FileInfo file)
+    {
+        if (!_selectedClipPaths.Add(file.FullName))
+            _selectedClipPaths.Remove(file.FullName);
+        RefreshGallerySelectionUi();
+    }
+
+    private void RefreshGallerySelectionUi()
+    {
+        int count = _selectedClipPaths.Count;
+        GallerySelectionBar.Visibility = count > 0 ? Visibility.Visible : Visibility.Collapsed;
+        GallerySelectionCountText.Text = count == 1 ? "1 selected" : $"{count} selected";
+
+        foreach (var (file, circle, thumb) in _galleryCardSelection)
+        {
+            bool selected = _selectedClipPaths.Contains(file.FullName);
+            circle.Background = selected ? (Brush)FindResource("Green") : new SolidColorBrush(Color.FromArgb(0x40, 0xFF, 0xFF, 0xFF));
+            circle.BorderBrush = selected ? (Brush)FindResource("Green") : (Brush)FindResource("Text0");
+
+            // Selection mode active -> every circle stays visible, not just the
+            // hovered one. Mode inactive -> only the mouse-over hover handlers
+            // decide visibility, except a card the mouse isn't over right now needs
+            // hiding explicitly here too (e.g. selection was just cleared via
+            // Cancel or a mass action, not by moving the mouse off it).
+            if (count > 0)
+                circle.Visibility = Visibility.Visible;
+            else if (!thumb.IsMouseOver)
+                circle.Visibility = Visibility.Collapsed;
+        }
+    }
+
+    private void CancelSelection_Click(object sender, RoutedEventArgs e)
+    {
+        _selectedClipPaths.Clear();
+        RefreshGallerySelectionUi();
+    }
+
+    private void DeleteSelected_Click(object sender, RoutedEventArgs e)
+    {
+        List<FileInfo> targets = _galleryCardSelection
+            .Where(c => _selectedClipPaths.Contains(c.File.FullName))
+            .Select(c => c.File)
+            .ToList();
+        if (targets.Count == 0)
+            return;
+
+        string message = targets.Count == 1
+            ? $"Are you sure you want to delete \"{targets[0].Name}\"? This will send it to your recycle bin."
+            : $"Are you sure you want to delete {targets.Count} clips? This will send them to your recycle bin.";
+
+        ShowConfirmDialog(message, "Delete", confirmed =>
+        {
+            if (confirmed)
+            {
+                _selectedClipPaths.Clear();
+                foreach (FileInfo file in targets)
+                {
+                    QueueDeleteWithUndo(file);
+                }
+            }
+        });
+    }
+
+    private void MoveSelected_Click(object sender, RoutedEventArgs e)
+    {
+        List<FileInfo> targets = _galleryCardSelection
+            .Where(c => _selectedClipPaths.Contains(c.File.FullName))
+            .Select(c => c.File)
+            .ToList();
+        if (targets.Count == 0)
+            return;
+
+        var dialog = new OpenFolderDialog { InitialDirectory = GalleryFolder };
+        if (dialog.ShowDialog(this) != true)
+            return;
+
+        string destination = dialog.FolderName;
+        foreach (FileInfo file in targets)
+        {
+            try
+            {
+                string dest = Path.Combine(destination, file.Name);
+                if (File.Exists(dest))
+                    dest = Path.Combine(destination, $"{Path.GetFileNameWithoutExtension(file.Name)}_{DateTime.Now:HHmmss}{file.Extension}");
+                File.Move(file.FullName, dest);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(this, $"Couldn't move \"{file.Name}\": {ex.Message}", "Backtrack");
+            }
+        }
+
+        LoadGallery();
+    }
+
+    private Border BuildFolderCard(DirectoryInfo dir)
+    {
+        var iconHost = new Border
+        {
+            Background = new SolidColorBrush(Color.FromRgb(24, 26, 30)),
+            Height = 118,
             Cursor = Cursors.Hand,
         };
-        thumb.Child = new TextBlock
+
+        // Real folder glyph (Google's Material Design Icons "folder" outline,
+        // Apache-2.0), not a hand-rolled tab+rectangle approximation -- drawn as a
+        // vector Path so it stays crisp at any size instead of shipping a bitmap.
+        // System.Windows.Shapes is intentionally not `using`'d file-wide: this file
+        // already uses "Path" everywhere to mean System.IO.Path, so the shape type
+        // is fully qualified here instead.
+        var folderGlyph = new System.Windows.Shapes.Path
         {
-            Text = "â–¶",
-            FontSize = 20,
-            Foreground = new SolidColorBrush(Color.FromArgb(120, 255, 255, 255)),
+            Data = Geometry.Parse("M10,4H4C2.89,4 2,4.89 2,6V18A2,2 0 0,0 4,20H20A2,2 0 0,0 22,18V8C22,6.89 21.1,6 20,6H12L10,4Z"),
+            Fill = (Brush)FindResource("Text1"),
+            Width = 46,
+            Height = 38,
+            Stretch = Stretch.Uniform,
             HorizontalAlignment = HorizontalAlignment.Center,
             VerticalAlignment = VerticalAlignment.Center,
         };
-        thumb.MouseLeftButtonUp += (_, _) => OpenInPlayer(file);
+        iconHost.Child = folderGlyph;
+
+        var title = new TextBlock
+        {
+            Text = dir.Name,
+            FontWeight = FontWeights.Bold,
+            FontSize = 12.5,
+            Foreground = (Brush)FindResource("Text0"),
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            Margin = new Thickness(0, 7, 0, 1),
+        };
+
+        var sub = new TextBlock { Text = "Folder", FontSize = 11, Foreground = (Brush)FindResource("Text2") };
+
+        var content = new StackPanel();
+        content.Children.Add(iconHost);
+        content.Children.Add(title);
+        content.Children.Add(sub);
+
+        var card = new Border { Width = 210, Child = content, Cursor = Cursors.Hand };
+        card.MouseLeftButtonUp += (_, _) => OpenGalleryFolder(dir.FullName);
+
+        return card;
+    }
+
+    private Border BuildClipCard(FileInfo file)
+    {
+        // Neutral placeholder shown until the real frame loads in behind it
+        // (LoadThumbnailAsync, kicked off below) -- not a fake thumbnail like the
+        // old per-file color, just what's visible during the brief async load.
+        var thumb = new Border
+        {
+            Background = new SolidColorBrush(Color.FromRgb(24, 26, 30)),
+            Height = 118,
+            Cursor = Cursors.Hand,
+            ClipToBounds = true,
+        };
+        var thumbImage = new Image { Stretch = Stretch.UniformToFill };
+
+        // Hover-revealed selection circle, corner-anchored over the thumbnail.
+        // Hidden by default; stays visible on every card once anything anywhere
+        // is selected (see RefreshGallerySelectionUi), not just the hovered one --
+        // that's what turns "click a circle" into an actual multi-select mode.
+        var selectCircle = new Border
+        {
+            Width = 20,
+            Height = 20,
+            CornerRadius = new CornerRadius(10),
+            Background = new SolidColorBrush(Color.FromArgb(0x40, 0xFF, 0xFF, 0xFF)),
+            BorderBrush = (Brush)FindResource("Text0"),
+            BorderThickness = new Thickness(1.5),
+            HorizontalAlignment = HorizontalAlignment.Left,
+            VerticalAlignment = VerticalAlignment.Top,
+            Margin = new Thickness(8),
+            Visibility = Visibility.Collapsed,
+            Cursor = Cursors.Hand,
+        };
+
+        var thumbHost = new Grid();
+        thumbHost.Children.Add(thumbImage);
+        thumbHost.Children.Add(selectCircle);
+        thumb.Child = thumbHost;
+
+        thumb.MouseEnter += (_, _) => selectCircle.Visibility = Visibility.Visible;
+        thumb.MouseLeave += (_, _) =>
+        {
+            if (_selectedClipPaths.Count == 0)
+                selectCircle.Visibility = Visibility.Collapsed;
+        };
+        selectCircle.MouseLeftButtonUp += (_, e) =>
+        {
+            // Stops this from also bubbling up to thumb's own click handler below,
+            // which would otherwise immediately re-toggle (or open the player) on
+            // the same physical click.
+            e.Handled = true;
+            ToggleClipSelected(file);
+        };
+
+        // Clicking the thumbnail plays the clip directly -- no separate Play button --
+        // unless a mass-selection is already active, in which case every click (not
+        // just the circle) toggles that clip instead, matching the Google Photos-style
+        // "select mode" the circle puts the whole grid into.
+        thumb.MouseLeftButtonUp += (_, _) =>
+        {
+            if (_selectedClipPaths.Count > 0)
+                ToggleClipSelected(file);
+            else
+                OpenInPlayer(file);
+        };
+
+        _galleryCardSelection.Add((file, selectCircle, thumb));
 
         var title = new TextBlock
         {
@@ -858,6 +1275,7 @@ public partial class MainWindow : Window
             Foreground = (Brush)FindResource("Text0"),
             TextTrimming = TextTrimming.CharacterEllipsis,
             Margin = new Thickness(0, 7, 0, 1),
+            Cursor = Cursors.IBeam,
         };
 
         DateTime modified = file.LastWriteTime;
@@ -866,56 +1284,261 @@ public partial class MainWindow : Window
             : modified.ToString("MMM d, h:mm tt");
         var sub = new TextBlock { Text = subText, FontSize = 11, Foreground = (Brush)FindResource("Text2") };
 
-        var playBtn = new Button { Content = "Play", Style = (Style)FindResource("IconButton") };
-        playBtn.Click += (_, _) => OpenInPlayer(file);
-
-        var folderBtn = new Button { Content = "Folder", Style = (Style)FindResource("IconButton") };
-        folderBtn.Click += (_, _) => Process.Start(new ProcessStartInfo("explorer.exe", $"/select,\"{file.FullName}\"") { UseShellExecute = true });
-
-        var renameBtn = new Button { Content = "Rename", Style = (Style)FindResource("IconButton") };
-        var deleteBtn = new Button { Content = "Delete", Style = (Style)FindResource("IconButton") };
-
-        var actions = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 6, 0, 0) };
-        actions.Children.Add(playBtn);
-        actions.Children.Add(renameBtn);
-        actions.Children.Add(folderBtn);
-        actions.Children.Add(deleteBtn);
-
-        // Only worth showing when the clip isn't already local -- this is the
-        // "bring it from the stream PC to this one" action.
-        if (IsNetworkPath(_settings.ClipsFolder))
+        // Duration on the opposite side of the date, same row. Filled in right
+        // away if already cached (from a prior thumbnail pass); otherwise left
+        // blank and picked up by LoadThumbnailAsync once generation finishes.
+        var durationText = new TextBlock
         {
-            var copyBtn = new Button { Content = "Copy here", Style = (Style)FindResource("IconButton"), Margin = new Thickness(0) };
-            copyBtn.Click += async (_, _) => await CopyToThisPcAsync(file, copyBtn);
-            actions.Children.Add(copyBtn);
-        }
-        else
-        {
-            deleteBtn.Margin = new Thickness(0);
-        }
+            FontSize = 11,
+            Foreground = (Brush)FindResource("Text2"),
+            HorizontalAlignment = HorizontalAlignment.Right,
+        };
+        long? knownDurationMs = TryGetCachedDurationMs(file);
+        if (knownDurationMs is long ms)
+            durationText.Text = FormatDuration(ms);
+
+        var subRow = new Grid();
+        subRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        subRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        Grid.SetColumn(sub, 0);
+        Grid.SetColumn(durationText, 1);
+        subRow.Children.Add(sub);
+        subRow.Children.Add(durationText);
 
         var content = new StackPanel();
         content.Children.Add(thumb);
         content.Children.Add(title);
-        content.Children.Add(sub);
-        content.Children.Add(actions);
+        content.Children.Add(subRow);
 
-        var card = new Border { Width = 190, Margin = new Thickness(0, 0, 14, 14), Child = content };
+        _ = LoadThumbnailAsync(file, thumbImage, knownDurationMs is null ? durationText : null);
 
-        // Extracted, unguarded rename-commit helper: LostFocus fires a second time
-        // when the TextBox is removed from the tree to restore the label (removing a
-        // focused element fires its own LostFocus), which would otherwise re-run a
-        // guarded "commit" a second time against a stale FileInfo. Guarding this exact
-        // method would also skip the real work on the legitimate first call, so instead
-        // BeginRename installs a `finished` flag around the two call sites, not inside this helper.
-        renameBtn.Click += (_, _) => BeginRename(card, title, file);
-        deleteBtn.Click += (_, _) => DeleteClip(file, card);
+        // No margin needed here -- GalleryGrid's ItemWidth/ItemHeight (264x212 vs. this
+        // card's 240-wide, ~186-tall content) already reserve the gutter uniformly on
+        // every cell, top-left aligned by default, so the leftover space itself becomes
+        // the gap to the next card without needing a per-card Margin to also add one.
+        var card = new Border { Width = 210, Child = content };
+
+        // Only worth showing when the clip isn't already local -- this is the
+        // "bring it from the stream PC to this one" action. Everything else
+        // (rename, delete, open folder) moved to double-click/right-click, so
+        // this is the one remaining action row, and only appears when relevant.
+        if (IsNetworkPath(_settings.ClipsFolder))
+        {
+            var copyBtn = new Button { Content = "Copy here", Style = (Style)FindResource("IconButton"), Margin = new Thickness(0, 6, 0, 0) };
+            copyBtn.Click += async (_, _) => await CopyToThisPcAsync(file, copyBtn);
+            content.Children.Add(copyBtn);
+        }
+
+        // Double-click the title to rename, instead of a separate button.
+        // Extracted, unguarded rename-commit helper inside BeginRename: LostFocus
+        // fires a second time when the TextBox is removed from the tree to restore
+        // the label (removing a focused element fires its own LostFocus), which
+        // would otherwise re-run a guarded "commit" a second time against a stale
+        // FileInfo. Guarding BeginRename itself would also skip the real work on
+        // the legitimate first call, so the `finished` flag lives at the two call
+        // sites inside it instead.
+        title.MouseLeftButtonDown += (_, e) =>
+        {
+            if (e.ClickCount == 2)
+                BeginRename(card, title, file);
+        };
+
+        var contextMenu = new ContextMenu { Style = (Style)FindResource("DarkContextMenu") };
+        var openFolderItem = new MenuItem { Header = "Open file location", Style = (Style)FindResource("DarkMenuItem") };
+        openFolderItem.Click += (_, _) => Process.Start(new ProcessStartInfo("explorer.exe", $"/select,\"{file.FullName}\"") { UseShellExecute = true });
+        var deleteItem = new MenuItem { Header = "Delete", Style = (Style)FindResource("DarkMenuItem") };
+        deleteItem.Click += (_, _) => DeleteClip(file, card);
+        contextMenu.Items.Add(openFolderItem);
+        contextMenu.Items.Add(deleteItem);
+        thumb.ContextMenu = contextMenu;
 
         return card;
     }
 
+    private static readonly SemaphoreSlim ThumbnailGenerationLock = new(1, 1);
+
+    private static string GetThumbnailCachePath(FileInfo file)
+    {
+        string cacheDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Backtrack", "thumbnails");
+        Directory.CreateDirectory(cacheDir);
+        // Keyed on path + last-write-time + size, not just the path, so a
+        // replaced file (e.g. Trim's "replace original") gets a fresh thumbnail
+        // instead of showing the old clip's frame forever.
+        string key = $"{file.FullName}|{file.LastWriteTimeUtc.Ticks}|{file.Length}";
+        string hash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(key)));
+        return Path.Combine(cacheDir, $"{hash}.jpg");
+    }
+
+    // A tiny sidecar next to the thumbnail (same hash, so it invalidates together
+    // with it) holding the clip's length in milliseconds -- captured for free from
+    // player.Length during thumbnail generation, which already has to briefly play
+    // the file anyway, rather than running a whole separate probe pass.
+    private static string GetDurationCachePath(FileInfo file) => Path.ChangeExtension(GetThumbnailCachePath(file), ".duration");
+
+    private static long? TryGetCachedDurationMs(FileInfo file)
+    {
+        try
+        {
+            string path = GetDurationCachePath(file);
+            return File.Exists(path) && long.TryParse(File.ReadAllText(path), out long ms) ? ms : null;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Grabs a real frame from partway into the clip via a headless LibVLC
+    /// player + TakeSnapshot, caches it to disk, and loads it into the given
+    /// Image once ready. Serialized through one semaphore (not run in parallel
+    /// per card) -- generating several of these at once is heavy CPU/decode
+    /// work, and this app is already forced onto software decode in some
+    /// environments (see --avcodec-hw=none).
+    /// </summary>
+    private async Task<string?> EnsureThumbnailCachedAsync(FileInfo file)
+    {
+        string cachePath = GetThumbnailCachePath(file);
+        // Both need to exist, not just the jpg -- a thumbnail cached before the
+        // .duration sidecar existed (i.e. every clip already thumbnailed once
+        // this feature shipped) would otherwise short-circuit here forever and
+        // never pick up a duration, since generation only reruns when the cache
+        // is considered missing.
+        bool durationCached = File.Exists(GetDurationCachePath(file));
+        if (File.Exists(cachePath) && durationCached)
+            return cachePath;
+
+        if (_libVlc is null)
+            return null;
+
+        await ThumbnailGenerationLock.WaitAsync();
+        try
+        {
+            if (!File.Exists(cachePath) || !File.Exists(GetDurationCachePath(file)))
+                await GenerateThumbnailAsync(file, cachePath);
+        }
+        finally
+        {
+            ThumbnailGenerationLock.Release();
+        }
+
+        return File.Exists(cachePath) ? cachePath : null;
+    }
+
+    /// <summary>
+    /// Generates and caches thumbnails for every clip in the background,
+    /// starting right at launch -- by the time the user actually opens Gallery,
+    /// most/all of them should already be sitting on disk, so it loads
+    /// instantly instead of visibly generating them on demand. Sequential
+    /// (shares the same semaphore as LoadThumbnailAsync), so it never competes
+    /// with a thumbnail the user is actually looking at right now.
+    /// </summary>
+    private async Task PrewarmGalleryThumbnailsAsync()
+    {
+        if (_libVlc is null || !Directory.Exists(_settings.ClipsFolder))
+            return;
+
+        List<FileInfo> files;
+        try
+        {
+            files = Directory.EnumerateFiles(_settings.ClipsFolder)
+                .Where(f => VideoExtensions.Contains(Path.GetExtension(f).ToLowerInvariant()))
+                .Select(f => new FileInfo(f))
+                .OrderByDescending(f => f.LastWriteTime) // newest first -- most likely to be looked at soonest
+                .ToList();
+        }
+        catch
+        {
+            return;
+        }
+
+        foreach (FileInfo file in files)
+            await EnsureThumbnailCachedAsync(file);
+    }
+
+    private async Task LoadThumbnailAsync(FileInfo file, Image target, TextBlock? durationTarget = null)
+    {
+        string? cachePath = await EnsureThumbnailCachedAsync(file);
+
+        // Generation (if it ran) also drops the duration sidecar as a side
+        // effect, so a card built before that duration was known gets it
+        // filled in here once thumbnailing catches up.
+        if (durationTarget is not null && TryGetCachedDurationMs(file) is long ms)
+            durationTarget.Text = FormatDuration(ms);
+
+        if (cachePath is null)
+            return;
+
+        try
+        {
+            var bitmap = new BitmapImage();
+            bitmap.BeginInit();
+            bitmap.CacheOption = BitmapCacheOption.OnLoad;
+            bitmap.UriSource = new Uri(cachePath);
+            bitmap.EndInit();
+            bitmap.Freeze();
+            target.Source = bitmap;
+        }
+        catch
+        {
+            // Cached file is somehow unreadable -- leave the neutral placeholder.
+        }
+    }
+
+    private async Task GenerateThumbnailAsync(FileInfo file, string cachePath)
+    {
+        // This LibVLCSharp version (3.10.0) doesn't expose a dedicated
+        // thumbnailer API -- TakeSnapshot via a real (briefly) playing
+        // MediaPlayer is the only option it actually has. What made the first
+        // attempt bad wasn't TakeSnapshot itself, it was two real bugs: no
+        // render target meant libvlc opened its own floating window per clip
+        // (fixed below via _thumbnailSinkHwnd), and audio was left on, so each
+        // one was audible too (fixed via :no-audio).
+        await Task.Run(() =>
+        {
+            try
+            {
+                using var media = new LibVlc.Media(_libVlc!, new Uri(file.FullName));
+                media.AddOption(":no-audio");
+                using var player = new LibVlc.MediaPlayer(media) { Hwnd = _thumbnailSinkHwnd, Mute = true };
+                using var playingSignal = new ManualResetEventSlim(false);
+
+                player.Playing += (_, _) => playingSignal.Set();
+                player.EncounteredError += (_, _) => playingSignal.Set();
+
+                player.Play();
+                if (!playingSignal.Wait(TimeSpan.FromSeconds(5)))
+                {
+                    player.Stop();
+                    return;
+                }
+
+                // Free to capture here -- already have a real, playing MediaPlayer for
+                // the snapshot itself, no separate probe needed.
+                try { File.WriteAllText(Path.ChangeExtension(cachePath, ".duration"), player.Length.ToString()); }
+                catch { /* not worth failing the thumbnail over */ }
+
+                long seekTarget = Math.Min(2000, Math.Max(player.Length / 4, 0));
+                if (seekTarget > 0)
+                    player.Time = seekTarget;
+                Thread.Sleep(150);
+
+                player.TakeSnapshot(0, cachePath, 480, 0);
+                for (int i = 0; i < 15 && !File.Exists(cachePath); i++)
+                    Thread.Sleep(100);
+
+                player.Stop();
+            }
+            catch
+            {
+                // No thumbnail this time -- the placeholder stays, not worth surfacing an error for.
+            }
+        });
+    }
+
     private void BeginRename(Border card, TextBlock title, FileInfo file)
     {
+        _isRenamingCard = true;
         bool finished = false;
 
         var box = new TextBox
@@ -938,12 +1561,13 @@ public partial class MainWindow : Window
         box.KeyDown += (_, e) =>
         {
             if (e.Key == Key.Enter) { if (!finished) { finished = true; CommitRename(); } }
-            else if (e.Key == Key.Escape) { if (!finished) { finished = true; LoadGallery(); } }
+            else if (e.Key == Key.Escape) { e.Handled = true; if (!finished) { finished = true; _isRenamingCard = false; LoadGallery(); } }
         };
         box.LostFocus += (_, _) => { if (!finished) { finished = true; CommitRename(); } };
 
         void CommitRename()
         {
+            _isRenamingCard = false;
             string newName = box.Text.Trim();
             if (!string.IsNullOrEmpty(newName) && newName != Path.GetFileNameWithoutExtension(file.Name))
             {
@@ -983,24 +1607,47 @@ public partial class MainWindow : Window
         }
     }
 
-    /// <summary>Real Undo: nothing actually happens to the file until the 5s toast expires unclicked -- Undo just stops the timer and leaves the clip untouched.</summary>
+    private void QueueDeleteWithUndo(FileInfo file)
+    {
+        string fullPath = Path.GetFullPath(file.FullName);
+        _pendingDeletePaths.Add(fullPath);
+        LoadGallery();
+
+        _toastOverlay.ShowDeleteUndo(file.Name,
+            onExpire: () =>
+            {
+                _pendingDeletePaths.Remove(fullPath);
+                if (!RecycleBin.Delete(fullPath))
+                {
+                    Dispatcher.BeginInvoke(() => MessageBox.Show(this, $"Couldn't delete \"{file.Name}\".", "Backtrack"));
+                }
+                Dispatcher.BeginInvoke(() =>
+                {
+                    if (GalleryPanel.Visibility == Visibility.Visible)
+                        LoadGallery();
+                    else
+                        _ = RefreshGalleryCountAsync();
+                });
+            },
+            onUndo: () =>
+            {
+                _pendingDeletePaths.Remove(fullPath);
+                Dispatcher.BeginInvoke(() => LoadGallery());
+            });
+    }
+
     private void DeleteClip(FileInfo file, Border card)
     {
-        if (!ConfirmDialog.Ask(this, $"Delete \"{file.Name}\"? You can undo this for a few seconds after.", "Delete"))
-            return;
-
-        _toastOverlay.ShowDeleteUndo(file.Name, onExpire: () =>
-        {
-            if (!RecycleBin.Delete(file.FullName))
-                Dispatcher.BeginInvoke(() => MessageBox.Show(this, "Couldn't delete that file.", "Backtrack"));
-            Dispatcher.BeginInvoke(() =>
+        ShowConfirmDialog(
+            $"Are you sure you want to delete \"{file.Name}\"? This will send it to your recycle bin.",
+            "Delete",
+            confirmed =>
             {
-                if (GalleryPanel.Visibility == Visibility.Visible)
-                    LoadGallery();
-                else
-                    _ = RefreshGalleryCountAsync();
+                if (confirmed)
+                {
+                    QueueDeleteWithUndo(file);
+                }
             });
-        });
     }
 
     // ----------------------------------------------------------------- player
@@ -1114,24 +1761,125 @@ public partial class MainWindow : Window
 
     private void UpdatePlayerSeekUi()
     {
-        if (_vlcPlayer is null || _seekDragging)
+        if (_vlcPlayer is null || _isScrubbing)
             return;
 
         long lengthMs = _vlcPlayer.Length;
         long timeMs = _vlcPlayer.Time;
-        PlayerSeek.Maximum = Math.Max(lengthMs, 1);
-        PlayerSeek.Value = Math.Clamp(timeMs, 0, PlayerSeek.Maximum);
+
+        if (lengthMs <= 0)
+            return;
+
         PlayerCurrentTime.Text = FormatDuration(Math.Max(timeMs, 0));
         PlayerDurationText.Text = FormatDuration(Math.Max(lengthMs, 0));
+
+        double ratio = Math.Clamp((double)timeMs / lengthMs, 0.0, 1.0);
+        double trackWidth = PlayerSeekTrack.ActualWidth;
+
+        if (trackWidth > 0)
+        {
+            PlayerSeekFill.Width = ratio * trackWidth;
+            PlayerSeekThumb.Margin = new Thickness(ratio * trackWidth - 7, 0, 0, 0);
+        }
     }
 
-    private void PlayerSeek_DragStarted(object sender, MouseButtonEventArgs e) => _seekDragging = true;
-
-    private void PlayerSeek_DragCompleted(object sender, MouseButtonEventArgs e)
+    private void PlayerSeekTrack_MouseEnter(object sender, MouseEventArgs e)
     {
-        _seekDragging = false;
-        if (_vlcPlayer is not null)
-            _vlcPlayer.Time = (long)PlayerSeek.Value;
+        _isHoveringSeekTrack = true;
+        PlayerSeekBg.Height = 8;
+        PlayerSeekFill.Height = 8;
+        PlayerSeekBuffer.Height = 8;
+        PlayerSeekThumb.Visibility = Visibility.Visible;
+    }
+
+    private void PlayerSeekTrack_MouseLeave(object sender, MouseEventArgs e)
+    {
+        _isHoveringSeekTrack = false;
+        if (!_isScrubbing)
+        {
+            PlayerSeekBg.Height = 4;
+            PlayerSeekFill.Height = 4;
+            PlayerSeekBuffer.Height = 4;
+            PlayerSeekThumb.Visibility = Visibility.Collapsed;
+            SeekTooltipPopup.IsOpen = false;
+        }
+    }
+
+    private void PlayerSeekTrack_MouseDown(object sender, MouseButtonEventArgs e)
+    {
+        _isScrubbing = true;
+        PlayerSeekTrack.CaptureMouse();
+        ProcessSeekInput(e.GetPosition(PlayerSeekTrack));
+    }
+
+    private void PlayerSeekTrack_MouseMove(object sender, MouseEventArgs e)
+    {
+        Point pos = e.GetPosition(PlayerSeekTrack);
+        double trackWidth = PlayerSeekTrack.ActualWidth;
+        if (trackWidth <= 0 || _vlcPlayer == null) return;
+
+        double ratio = Math.Clamp(pos.X / trackWidth, 0.0, 1.0);
+        long durationMs = Math.Max(1, _vlcPlayer.Length);
+        long hoverMs = (long)(ratio * durationMs);
+
+        SeekTooltipText.Text = FormatDuration(hoverMs);
+        SeekTooltipPopup.HorizontalOffset = pos.X - 15;
+        SeekTooltipPopup.VerticalOffset = -30;
+        SeekTooltipPopup.IsOpen = true;
+
+        if (_isScrubbing)
+        {
+            ProcessSeekInput(pos);
+        }
+    }
+
+    private void PlayerSeekTrack_MouseUp(object sender, MouseButtonEventArgs e)
+    {
+        if (_isScrubbing)
+        {
+            _isScrubbing = false;
+            PlayerSeekTrack.ReleaseMouseCapture();
+
+            if (!_isHoveringSeekTrack)
+            {
+                PlayerSeekBg.Height = 4;
+                PlayerSeekFill.Height = 4;
+                PlayerSeekBuffer.Height = 4;
+                PlayerSeekThumb.Visibility = Visibility.Collapsed;
+                SeekTooltipPopup.IsOpen = false;
+            }
+
+            ProcessSeekInput(e.GetPosition(PlayerSeekTrack), immediate: true);
+        }
+    }
+
+    private void ProcessSeekInput(Point mousePos, bool immediate = false)
+    {
+        if (_vlcPlayer == null) return;
+        double trackWidth = PlayerSeekTrack.ActualWidth;
+        if (trackWidth <= 0) return;
+
+        double ratio = Math.Clamp(mousePos.X / trackWidth, 0.0, 1.0);
+        long durationMs = Math.Max(1, _vlcPlayer.Length);
+        _targetSeekMs = (long)(ratio * durationMs);
+
+        PlayerSeekFill.Width = ratio * trackWidth;
+        PlayerSeekThumb.Margin = new Thickness(ratio * trackWidth - 7, 0, 0, 0);
+        PlayerCurrentTime.Text = FormatDuration(_targetSeekMs);
+
+        if (immediate)
+        {
+            _seekDebounceTimer.Stop();
+            if (_vlcPlayer.IsSeekable)
+            {
+                _vlcPlayer.Time = _targetSeekMs;
+            }
+        }
+        else
+        {
+            _seekDebounceTimer.Stop();
+            _seekDebounceTimer.Start();
+        }
     }
 
     private void StopPlayerPlayback()
@@ -1165,6 +1913,7 @@ public partial class MainWindow : Window
     {
         if (_currentPlayerFile is null)
             return;
+        _isPlayerRenaming = true;
         FileInfo file = _currentPlayerFile;
         bool finished = false;
 
@@ -1191,18 +1940,20 @@ public partial class MainWindow : Window
         box.KeyDown += (_, ke) =>
         {
             if (ke.Key == Key.Enter) { if (!finished) { finished = true; CommitRename(); } }
-            else if (ke.Key == Key.Escape) { if (!finished) { finished = true; RevertBox(); } }
+            else if (ke.Key == Key.Escape) { ke.Handled = true; if (!finished) { finished = true; RevertBox(); } }
         };
         box.LostFocus += (_, _) => { if (!finished) { finished = true; CommitRename(); } };
 
         void RevertBox()
         {
+            _isPlayerRenaming = false;
             stack.Children.Remove(box);
             stack.Children.Insert(index, PlayerTitle);
         }
 
         void CommitRename()
         {
+            _isPlayerRenaming = false;
             string newName = box.Text.Trim();
             if (!string.IsNullOrEmpty(newName) && newName != Path.GetFileNameWithoutExtension(file.Name))
             {
@@ -1231,25 +1982,22 @@ public partial class MainWindow : Window
     {
         if (_currentPlayerFile is null)
             return;
+
         FileInfo file = _currentPlayerFile;
 
-        if (!ConfirmDialog.Ask(this, $"Delete \"{file.Name}\"? You can undo this for a few seconds after.", "Delete"))
-            return;
-
-        StopPlayerPlayback();
-        ShowScreen(Screen.Gallery);
-        LoadGallery();
-
-        _toastOverlay.ShowDeleteUndo(file.Name, onExpire: () =>
-        {
-            if (!RecycleBin.Delete(file.FullName))
-                Dispatcher.BeginInvoke(() => MessageBox.Show(this, "Couldn't delete that file.", "Backtrack"));
-            Dispatcher.BeginInvoke(() =>
+        ShowConfirmDialog(
+            $"Are you sure you want to delete \"{file.Name}\"? This will send it to your recycle bin.",
+            "Delete",
+            confirmed =>
             {
-                if (GalleryPanel.Visibility == Visibility.Visible)
-                    LoadGallery();
+                if (confirmed)
+                {
+                    _currentPlayerFile = null;
+                    StopPlayerPlayback();
+                    ShowScreen(Screen.Gallery);
+                    QueueDeleteWithUndo(file);
+                }
             });
-        });
     }
 
     // ------------------------------------------------------------------ trim
@@ -1308,6 +2056,7 @@ public partial class MainWindow : Window
 
         string tempOut = Path.Combine(Path.GetTempPath(), $"cc_trim_{Guid.NewGuid():N}{sourceFile.Extension}");
 
+        _isTrimming = true;
         TrimReplaceButton.IsEnabled = false;
         TrimSaveNewButton.IsEnabled = false;
         TrimStatusText.Text = "Trimming...";
@@ -1326,7 +2075,13 @@ public partial class MainWindow : Window
 
             if (replaceOriginal)
             {
-                if (!ConfirmDialog.Ask(this, "Replace the original clip with this trimmed version? This can't be undone.", "Replace"))
+                bool? userConfirmed = null;
+                ShowConfirmDialog("Replace the original clip with this trimmed version? This can't be undone.", "Replace", c => userConfirmed = c);
+                while (!userConfirmed.HasValue && IsVisible)
+                {
+                    await Task.Delay(50);
+                }
+                if (userConfirmed != true)
                 {
                     File.Delete(tempOut);
                     OpenInPlayer(sourceFile);
@@ -1364,6 +2119,7 @@ public partial class MainWindow : Window
         }
         finally
         {
+            _isTrimming = false;
             TrimReplaceButton.IsEnabled = true;
             TrimSaveNewButton.IsEnabled = true;
         }
@@ -1570,6 +2326,65 @@ public partial class MainWindow : Window
         return new Border { BorderBrush = (Brush)FindResource("Hairline"), BorderThickness = new Thickness(0, 1, 0, 0), Padding = new Thickness(0, 8, 0, 8), Child = row };
     }
 
+    /// <summary>
+    /// Same pairing flow as a discovered device, just against a manually-typed
+    /// address instead of one found via LAN broadcast -- for Tailscale/VPN or any
+    /// network where UDP broadcast doesn't reach. Builds a synthetic DiscoveredPeer
+    /// so it can reuse PairingService.RequestPairingAsync unchanged; the handshake
+    /// itself is plain TCP, so it doesn't care how the address was obtained.
+    /// </summary>
+    private async void ManualPairButton_Click(object sender, RoutedEventArgs e)
+    {
+        string input = ManualPairAddressBox.Text.Trim();
+        if (string.IsNullOrEmpty(input))
+        {
+            ManualPairStatusText.Text = "Enter an address first.";
+            return;
+        }
+
+        string address = input;
+        int port = PairingService.DefaultPairingPort;
+        int colonIndex = input.LastIndexOf(':');
+        if (colonIndex > 0 && int.TryParse(input[(colonIndex + 1)..], out int parsedPort))
+        {
+            address = input[..colonIndex];
+            port = parsedPort;
+        }
+
+        var peer = new DiscoveredPeer(DeviceId: "manual", DeviceName: address, Address: address, PairingPort: port, LastSeen: DateTime.UtcNow);
+
+        ManualPairButton.IsEnabled = false;
+        var cts = new CancellationTokenSource(TimeSpan.FromSeconds(70));
+        try
+        {
+            PairingResult result = await _pairing.RequestPairingAsync(peer,
+                onCodeReceived: code => Dispatcher.BeginInvoke(() => ManualPairStatusText.Text = $"Code: {code}, waiting for approval..."),
+                cts.Token);
+
+            switch (result.Outcome)
+            {
+                case PairingOutcome.Approved:
+                    ManualPairStatusText.Text = "Paired!";
+                    RefreshPairingStatusUi();
+                    RenderDiscoveredDevices();
+                    return;
+                case PairingOutcome.Denied:
+                    ManualPairStatusText.Text = "Request denied.";
+                    break;
+                case PairingOutcome.TimedOut:
+                    ManualPairStatusText.Text = "Request timed out. Check the address and that the other PC has \"Share my clips\" on.";
+                    break;
+                default:
+                    ManualPairStatusText.Text = $"Failed: {result.Error}";
+                    break;
+            }
+        }
+        finally
+        {
+            ManualPairButton.IsEnabled = true;
+        }
+    }
+
     private void ApplyObsConnection_Click(object sender, RoutedEventArgs e)
     {
         try
@@ -1771,6 +2586,7 @@ public partial class MainWindow : Window
 
     protected override void OnClosed(EventArgs e)
     {
+        _trayManager.Dispose();
         StopPlayerPlayback();
         _libVlc?.Dispose();
         _hotkey?.Dispose();
