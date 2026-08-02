@@ -17,16 +17,20 @@ public partial class ScrimOverlay : Window
         Top = 0;
         Width = SystemParameters.PrimaryScreenWidth;
         Height = SystemParameters.PrimaryScreenHeight;
-        Loaded += (_, _) => ToolWindow.Enable(new WindowInteropHelper(this).Handle);
+        Loaded += (_, _) =>
+        {
+            IntPtr hwnd = new WindowInteropHelper(this).Handle;
+            ToolWindow.Enable(hwnd);
+            NoActivate.Enable(hwnd);
+        };
     }
 
-    // Any click on the dim area dismisses -- not just left. A right-click with
-    // no handler still activates this window at the OS level (any click does,
-    // regardless of whether an app-level handler consumes it), and since it's
-    // Topmost, that jumped it in front of MainWindow with nothing to put it
-    // back, leaving the dimmed background covering everything. Handling
-    // right-click the same as left-click sidesteps that: the window closes
-    // immediately either way, so there's no state left to get stuck in.
+    // Left-click only, by design -- right-click should do nothing at all, not
+    // dismiss. NoActivate.Enable (see constructor) is what actually stops
+    // right-click from breaking the z-order instead: it suppresses the OS-level
+    // window activation a click would otherwise trigger as a side effect, which
+    // is what was jumping this window in front of MainWindow. WPF's own mouse
+    // events aren't affected by that flag, so this handler still fires normally.
     private void Scrim_MouseDown(object sender, MouseButtonEventArgs e) => Dismissed?.Invoke();
 
     private void ExitButton_Click(object sender, RoutedEventArgs e) => Dismissed?.Invoke();
