@@ -996,7 +996,13 @@ public partial class MainWindow : Window
     private async Task<string?> EnsureThumbnailCachedAsync(FileInfo file)
     {
         string cachePath = GetThumbnailCachePath(file);
-        if (File.Exists(cachePath))
+        // Both need to exist, not just the jpg -- a thumbnail cached before the
+        // .duration sidecar existed (i.e. every clip already thumbnailed once
+        // this feature shipped) would otherwise short-circuit here forever and
+        // never pick up a duration, since generation only reruns when the cache
+        // is considered missing.
+        bool durationCached = File.Exists(GetDurationCachePath(file));
+        if (File.Exists(cachePath) && durationCached)
             return cachePath;
 
         if (_libVlc is null)
@@ -1005,7 +1011,7 @@ public partial class MainWindow : Window
         await ThumbnailGenerationLock.WaitAsync();
         try
         {
-            if (!File.Exists(cachePath))
+            if (!File.Exists(cachePath) || !File.Exists(GetDurationCachePath(file)))
                 await GenerateThumbnailAsync(file, cachePath);
         }
         finally
