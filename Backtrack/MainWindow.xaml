@@ -803,11 +803,11 @@
                                 <ColumnDefinition/>
                                 <ColumnDefinition Width="70"/>
                             </Grid.ColumnDefinitions>
-                            <TextBox x:Name="ObsHostBox" Background="#0BFFFFFF" Foreground="{StaticResource Text0}" BorderThickness="0" Padding="8,6"/>
-                            <TextBox x:Name="ObsPortBox" Grid.Column="1" Background="#0BFFFFFF" Foreground="{StaticResource Text0}" BorderThickness="0" Padding="8,6" Margin="6,0,0,0"/>
+                            <TextBox x:Name="ObsHostBox" Background="#0BFFFFFF" Foreground="{StaticResource Text0}" CaretBrush="{StaticResource Text0}" BorderThickness="0" Padding="8,6"/>
+                            <TextBox x:Name="ObsPortBox" Grid.Column="1" Background="#0BFFFFFF" Foreground="{StaticResource Text0}" CaretBrush="{StaticResource Text0}" BorderThickness="0" Padding="8,6" Margin="6,0,0,0"/>
                         </Grid>
                         <TextBlock Text="Password (from that PC's OBS: Tools &gt; WebSocket Server Settings &gt; Show Connect Info)" FontSize="11" FontWeight="Bold" Foreground="{StaticResource Text1}" Margin="0,0,0,4" TextWrapping="Wrap"/>
-                        <PasswordBox x:Name="ObsPasswordBox" Background="#0BFFFFFF" Foreground="{StaticResource Text0}" BorderThickness="0" Padding="8,6" Margin="0,0,0,8"/>
+                        <PasswordBox x:Name="ObsPasswordBox" Background="#0BFFFFFF" Foreground="{StaticResource Text0}" CaretBrush="{StaticResource Text0}" BorderThickness="0" Padding="8,6" Margin="0,0,0,8"/>
                         <Button Content="Save &amp; reconnect" Style="{StaticResource FlatButton}" HorizontalAlignment="Left" Click="ApplyObsConnection_Click"/>
                     </StackPanel>
 
@@ -854,7 +854,7 @@
                                             <ColumnDefinition/>
                                             <ColumnDefinition Width="Auto"/>
                                         </Grid.ColumnDefinitions>
-                                        <TextBox x:Name="ManualPairAddressBox" Background="#0BFFFFFF" Foreground="{StaticResource Text0}" BorderThickness="0" Padding="8,6" Margin="0,0,8,0"/>
+                                        <TextBox x:Name="ManualPairAddressBox" Background="#0BFFFFFF" Foreground="{StaticResource Text0}" CaretBrush="{StaticResource Text0}" BorderThickness="0" Padding="8,6" Margin="0,0,8,0"/>
                                         <Button x:Name="ManualPairButton" Grid.Column="1" Content="Connect" Style="{StaticResource FlatButton}" Click="ManualPairButton_Click"/>
                                     </Grid>
                                     <TextBlock x:Name="ManualPairStatusText" Text="" FontSize="10.5" Foreground="{StaticResource Text2}" Margin="0,6,0,0" TextWrapping="Wrap"/>
