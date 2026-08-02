@@ -65,7 +65,7 @@ static class Program
             using (RegistryKey key = Registry.CurrentUser.CreateSubKey(uninstallKeyPath))
             {
                 key.SetValue("DisplayName", "Backtrack");
-                key.SetValue("DisplayVersion", "0.1.3");
+                key.SetValue("DisplayVersion", "0.2.0");
                 key.SetValue("Publisher", "ilyambr");
                 key.SetValue("InstallLocation", installDir);
                 key.SetValue("DisplayIcon", exePath);
