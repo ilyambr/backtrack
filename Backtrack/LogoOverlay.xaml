@@ -22,20 +22,23 @@
          briefly, then hands off to Backtrack's, which stays visible afterward.
          Same beats as ilyambr/bams' own brandBug intro animation (see
          PlayIntro in the code-behind for the exact keyframe timing), ported to
-         a WPF Storyboard rather than CSS keyframes/JS class toggles. -->
+         a WPF Storyboard rather than CSS keyframes/JS class toggles.
+
+         Opacity-only, no scale/zoom: animating a ScaleTransform on top of a
+         Stretch="Uniform" brush sourced from a large image (ilyambr.png is
+         1747x710) forces WPF to re-rasterize the bitmap every single frame,
+         which was the actual cause of the animation looking laggy rather than
+         smooth. A pure opacity crossfade is just alpha blending, much
+         cheaper to render, and reads just as smooth for a logo handoff.
+         CachingHint tells WPF to cache each logo's rendered tile instead of
+         re-rendering it every frame purely because Opacity is animating. -->
     <Grid>
-        <Rectangle x:Name="IlyambrLogo" Width="160" Height="46" Opacity="0" RenderTransformOrigin="0.5,0.5">
-            <Rectangle.RenderTransform>
-                <ScaleTransform x:Name="IlyambrScale" ScaleX="0.96" ScaleY="0.96"/>
-            </Rectangle.RenderTransform>
+        <Rectangle x:Name="IlyambrLogo" Width="160" Height="46" Opacity="0" CacheMode="BitmapCache">
             <Rectangle.Fill>
-                <ImageBrush ImageSource="Assets/ilyambr.png" Stretch="Uniform"/>
+                <ImageBrush ImageSource="Assets/ilyambr.png" Stretch="Uniform" Opacity="0.7"/>
             </Rectangle.Fill>
         </Rectangle>
-        <Rectangle x:Name="BacktrackLogo" Width="160" Height="46" Opacity="0" RenderTransformOrigin="0.5,0.5">
-            <Rectangle.RenderTransform>
-                <ScaleTransform x:Name="BacktrackScale" ScaleX="0.98" ScaleY="0.98"/>
-            </Rectangle.RenderTransform>
+        <Rectangle x:Name="BacktrackLogo" Width="160" Height="46" Opacity="0" CacheMode="BitmapCache">
             <Rectangle.Fill>
                 <ImageBrush ImageSource="Assets/logo.png" Stretch="Uniform" Opacity="0.7"/>
             </Rectangle.Fill>

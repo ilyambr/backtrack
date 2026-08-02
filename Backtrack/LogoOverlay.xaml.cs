@@ -35,30 +35,21 @@ public partial class LogoOverlay : Window
     {
         var ease = new QuadraticEase();
 
-        // ilyambr: fades/scales in by 12%, holds fully visible through 62%, then
-        // fades/scales back out to hand off to the Backtrack logo.
-        Animate(IlyambrLogo, IlyambrScale, ease,
-            opacity: new (double, double)[] { (0, 0), (0.12, 1), (0.62, 1), (1.0, 0) },
-            scale: new (double, double)[] { (0, 0.96), (0.12, 1), (0.62, 1), (1.0, 0.98) });
+        // ilyambr: fades in by 12%, holds fully visible through 62%, then fades
+        // back out to hand off to the Backtrack logo. Opacity only -- no scale/
+        // zoom, since animating that on top of a large source image forced a
+        // re-rasterize every frame and was the actual cause of the choppiness.
+        IlyambrLogo.BeginAnimation(UIElement.OpacityProperty, BuildTimeline(ease,
+            (0, 0), (0.12, 1), (0.62, 1), (1.0, 0)));
 
-        // Backtrack: stays hidden until ilyambr starts its exit (58%), then
-        // fades/scales in the rest of the way and holds there (BeginAnimation's
-        // default FillBehavior keeps the final keyframe's value once it finishes).
-        Animate(BacktrackLogo, BacktrackScale, ease,
-            opacity: new (double, double)[] { (0, 0), (0.58, 0), (1.0, 1) },
-            scale: new (double, double)[] { (0, 0.98), (0.58, 0.98), (1.0, 1) });
+        // Backtrack: stays hidden until ilyambr starts its exit (58%), then fades
+        // in the rest of the way and holds there (BeginAnimation's default
+        // FillBehavior keeps the final keyframe's value once it finishes).
+        BacktrackLogo.BeginAnimation(UIElement.OpacityProperty, BuildTimeline(ease,
+            (0, 0), (0.58, 0), (1.0, 1)));
     }
 
-    private static void Animate(UIElement target, ScaleTransform scaleTransform, IEasingFunction ease,
-        (double time, double value)[] opacity, (double time, double value)[] scale)
-    {
-        target.BeginAnimation(UIElement.OpacityProperty, BuildTimeline(opacity, ease));
-        DoubleAnimationUsingKeyFrames scaleTimeline = BuildTimeline(scale, ease);
-        scaleTransform.BeginAnimation(ScaleTransform.ScaleXProperty, scaleTimeline);
-        scaleTransform.BeginAnimation(ScaleTransform.ScaleYProperty, scaleTimeline.Clone());
-    }
-
-    private static DoubleAnimationUsingKeyFrames BuildTimeline((double time, double value)[] points, IEasingFunction ease)
+    private static DoubleAnimationUsingKeyFrames BuildTimeline(IEasingFunction ease, params (double time, double value)[] points)
     {
         var timeline = new DoubleAnimationUsingKeyFrames();
         foreach ((double time, double value) in points)
