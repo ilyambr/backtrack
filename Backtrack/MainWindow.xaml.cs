@@ -200,76 +200,85 @@ public partial class MainWindow : Window
     /// Checks and silently applies updates for Backtrack itself and for both
     /// companion OBS plugins -- no confirmation prompt by design. Each check is
     /// independent and swallows its own failures (no network, repo has no
-    /// releases yet, etc.) so one failing never blocks the others.
+    /// releases yet, etc.) so one failing never blocks the others. Updates the
+    /// Settings SHARING rows directly (dot + version) regardless of whether that
+    /// screen is currently visible -- harmless when it isn't, and means the
+    /// display is already current next time it's opened.
     /// </summary>
     private async Task CheckForUpdatesAsync()
     {
-        await CheckForUpdatesAsync(statusCallback: null);
-    }
-
-    /// <summary>
-    /// Runs all three checks and, if given a callback (the manual Settings button),
-    /// reports a per-component status line for each -- not just a single pass/fail,
-    /// since "nothing happened" is ambiguous with three independent components and
-    /// the user should be able to see all three actually got checked.
-    /// </summary>
-    private async Task CheckForUpdatesAsync(Action<string>? statusCallback)
-    {
-        string backtrack = await CheckAndApplySelfUpdateAsync();
-        string replaySlider = await CheckAndApplyPluginUpdateAsync("obs-replay-slider", "Replay Slider", "replay-slider.dll",
+        await CheckAndApplySelfUpdateAsync();
+        await CheckAndApplyPluginUpdateAsync("obs-replay-slider", "Replay Slider", "replay-slider.dll", ReplaySliderStatusDot, ReplaySliderVersionText,
             name => name.Contains("windows", StringComparison.OrdinalIgnoreCase) && name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase));
-        string sourceRecord = await CheckAndApplyPluginUpdateAsync("obs-source-record", "Source Record", "source-record.dll",
+        await CheckAndApplyPluginUpdateAsync("obs-source-record", "Source Record", "source-record.dll", SourceRecordStatusDot, SourceRecordVersionText,
             name => name.Contains("windows-installer", StringComparison.OrdinalIgnoreCase) && name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase));
-
-        statusCallback?.Invoke($"Backtrack: {backtrack} Â· Replay Slider: {replaySlider} Â· Source Record: {sourceRecord}");
     }
 
-    private async Task<string> CheckAndApplyPluginUpdateAsync(string repo, string displayName, string dllFileName, Func<string, bool> assetPredicate)
+    /// <summary>Green = confirmed current (already was, or just got updated); red = couldn't confirm (check failed); grey = not checked yet this session.</summary>
+    private void SetUpdateStatus(System.Windows.Shapes.Ellipse dot, TextBlock versionText, string version, bool? ok)
     {
+        dot.Fill = (Brush)FindResource(ok switch { true => "Green", false => "Rec", null => "Text2" });
+        versionText.Text = version;
+    }
+
+    private async Task CheckAndApplyPluginUpdateAsync(string repo, string displayName, string dllFileName, System.Windows.Shapes.Ellipse dot, TextBlock versionText, Func<string, bool> assetPredicate)
+    {
+        Version installed = _updates.GetInstalledPluginVersion(dllFileName);
         try
         {
             ReleaseInfo? release = await _updates.GetLatestReleaseAsync("ilyambr", repo, assetPredicate);
             if (release?.DownloadUrl is null)
-                return "check failed";
+            {
+                SetUpdateStatus(dot, versionText, installed.ToString(3), ok: false);
+                return;
+            }
 
-            Version installed = _updates.GetInstalledPluginVersion(dllFileName);
             if (!UpdateService.IsNewer(release.Version, installed))
-                return "up to date";
+            {
+                SetUpdateStatus(dot, versionText, installed.ToString(3), ok: true);
+                return;
+            }
 
             await _updates.InstallPluginUpdateAsync(release.DownloadUrl);
-            _ = Dispatcher.BeginInvoke(() => _toastOverlay.ShowUpdateApplied(displayName, release.Version));
-            return $"updated to {release.Version}";
+            _toastOverlay.ShowUpdateApplied(displayName, release.Version);
+            SetUpdateStatus(dot, versionText, release.Version, ok: true);
         }
         catch (Exception ex)
         {
             Debug.WriteLine($"Update check/apply failed for {repo}: {ex.Message}");
-            return "check failed";
+            SetUpdateStatus(dot, versionText, installed.ToString(3), ok: false);
         }
     }
 
-    private async Task<string> CheckAndApplySelfUpdateAsync()
+    private async Task CheckAndApplySelfUpdateAsync()
     {
+        Version installed = UpdateService.CurrentAppVersion;
         try
         {
             ReleaseInfo? release = await _updates.GetLatestReleaseAsync("ilyambr", "backtrack",
                 name => name.Contains("windows", StringComparison.OrdinalIgnoreCase) && name.EndsWith(".zip", StringComparison.OrdinalIgnoreCase));
             if (release?.DownloadUrl is null)
-                return "check failed";
+            {
+                SetUpdateStatus(BacktrackStatusDot, BacktrackVersionText, installed.ToString(3), ok: false);
+                return;
+            }
 
-            if (!UpdateService.IsNewer(release.Version, UpdateService.CurrentAppVersion))
-                return "up to date";
+            if (!UpdateService.IsNewer(release.Version, installed))
+            {
+                SetUpdateStatus(BacktrackStatusDot, BacktrackVersionText, installed.ToString(3), ok: true);
+                return;
+            }
 
             await _updates.ApplySelfUpdateAsync(release.DownloadUrl);
+            SetUpdateStatus(BacktrackStatusDot, BacktrackVersionText, release.Version, ok: true);
             // The helper script above is now waiting for this process to exit --
-            // shut down cleanly so it can finish the swap and relaunch. Whatever
-            // called this never actually sees this return value in that case.
-            _ = Dispatcher.BeginInvoke(() => Application.Current.Shutdown());
-            return $"updated to {release.Version}, restarting";
+            // shut down cleanly so it can finish the swap and relaunch.
+            Application.Current.Shutdown();
         }
         catch (Exception ex)
         {
             Debug.WriteLine($"Self-update check/apply failed: {ex.Message}");
-            return "check failed";
+            SetUpdateStatus(BacktrackStatusDot, BacktrackVersionText, installed.ToString(3), ok: false);
         }
     }
 
@@ -1403,6 +1412,14 @@ public partial class MainWindow : Window
         RefreshShareClipsStatusText();
         RefreshPairingStatusUi();
         RenderDiscoveredDevices();
+
+        // Shows what's actually installed immediately (no network needed), with a
+        // neutral grey dot until a real check (manual or the hourly background
+        // one) confirms green/red -- better than the rows sitting blank/stale
+        // the moment Settings opens.
+        SetUpdateStatus(BacktrackStatusDot, BacktrackVersionText, UpdateService.CurrentAppVersion.ToString(3), ok: null);
+        SetUpdateStatus(ReplaySliderStatusDot, ReplaySliderVersionText, _updates.GetInstalledPluginVersion("replay-slider.dll").ToString(3), ok: null);
+        SetUpdateStatus(SourceRecordStatusDot, SourceRecordVersionText, _updates.GetInstalledPluginVersion("source-record.dll").ToString(3), ok: null);
     }
 
     private void ObsRemoteToggle_Click(object sender, RoutedEventArgs e)
@@ -1420,11 +1437,11 @@ public partial class MainWindow : Window
         }
         else if (!string.IsNullOrEmpty(_settings.AuthorizedClientName))
         {
-            ShareClipsStatusText.Text = $"Sharing as \"{Environment.MachineName}\" â€” authorized: {_settings.AuthorizedClientName}";
+            ShareClipsStatusText.Text = $"Sharing as \"{Environment.MachineName}\", authorized: {_settings.AuthorizedClientName}";
         }
         else
         {
-            ShareClipsStatusText.Text = $"Sharing as \"{Environment.MachineName}\" â€” waiting for a PC to pair";
+            ShareClipsStatusText.Text = $"Sharing as \"{Environment.MachineName}\", waiting for a PC to pair";
         }
     }
 
@@ -1523,7 +1540,7 @@ public partial class MainWindow : Window
             try
             {
                 PairingResult result = await _pairing.RequestPairingAsync(peer,
-                    onCodeReceived: code => Dispatcher.BeginInvoke(() => statusText.Text = $"Code: {code} â€” waiting for approval..."),
+                    onCodeReceived: code => Dispatcher.BeginInvoke(() => statusText.Text = $"Code: {code}, waiting for approval..."),
                     cts.Token);
 
                 switch (result.Outcome)
@@ -1658,14 +1675,9 @@ public partial class MainWindow : Window
     private async void CheckUpdatesButton_Click(object sender, RoutedEventArgs e)
     {
         CheckUpdatesButton.IsEnabled = false;
-        UpdateStatusText.Text = "Checking Backtrack, Replay Slider, and Source Record...";
         try
         {
-            await CheckForUpdatesAsync(status => UpdateStatusText.Text = status);
-        }
-        catch (Exception ex)
-        {
-            UpdateStatusText.Text = $"Update check failed: {ex.Message}";
+            await CheckForUpdatesAsync();
         }
         finally
         {

@@ -700,6 +700,7 @@
                         </Grid>
                     </Border>
                     <Border Style="{StaticResource SettingsRow}">
+                        <StackPanel>
                         <Grid>
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition/>
@@ -707,10 +708,43 @@
                             </Grid.ColumnDefinitions>
                             <StackPanel>
                                 <TextBlock Text="Check for updates" FontSize="13" FontWeight="Bold" Foreground="{StaticResource Text0}"/>
-                                <TextBlock x:Name="UpdateStatusText" Text="Backtrack, Replay Slider, and Source Record all check automatically every hour" FontSize="10.5" Foreground="{StaticResource Text2}" TextWrapping="Wrap" Margin="0,2,0,0"/>
+                                <TextBlock Text="Checks automatically every hour" FontSize="10.5" Foreground="{StaticResource Text2}" Margin="0,2,0,0"/>
                             </StackPanel>
                             <Button x:Name="CheckUpdatesButton" Grid.Column="1" Content="Check now" Style="{StaticResource FlatButton}" Click="CheckUpdatesButton_Click"/>
                         </Grid>
+                        <StackPanel Margin="0,12,0,0">
+                            <Grid Margin="0,0,0,8">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <Ellipse x:Name="BacktrackStatusDot" Grid.Column="0" Width="8" Height="8" Fill="{StaticResource Text2}" VerticalAlignment="Center" Margin="0,0,10,0"/>
+                                <TextBlock Grid.Column="1" Text="Backtrack" FontSize="12" FontWeight="Bold" Foreground="{StaticResource Text0}" VerticalAlignment="Center"/>
+                                <TextBlock x:Name="BacktrackVersionText" Grid.Column="2" Text="—" FontSize="11.5" Foreground="{StaticResource Text2}" VerticalAlignment="Center"/>
+                            </Grid>
+                            <Grid Margin="0,0,0,8">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <Ellipse x:Name="ReplaySliderStatusDot" Grid.Column="0" Width="8" Height="8" Fill="{StaticResource Text2}" VerticalAlignment="Center" Margin="0,0,10,0"/>
+                                <TextBlock Grid.Column="1" Text="Replay Slider" FontSize="12" FontWeight="Bold" Foreground="{StaticResource Text0}" VerticalAlignment="Center"/>
+                                <TextBlock x:Name="ReplaySliderVersionText" Grid.Column="2" Text="—" FontSize="11.5" Foreground="{StaticResource Text2}" VerticalAlignment="Center"/>
+                            </Grid>
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <Ellipse x:Name="SourceRecordStatusDot" Grid.Column="0" Width="8" Height="8" Fill="{StaticResource Text2}" VerticalAlignment="Center" Margin="0,0,10,0"/>
+                                <TextBlock Grid.Column="1" Text="Source Record" FontSize="12" FontWeight="Bold" Foreground="{StaticResource Text0}" VerticalAlignment="Center"/>
+                                <TextBlock x:Name="SourceRecordVersionText" Grid.Column="2" Text="—" FontSize="11.5" Foreground="{StaticResource Text2}" VerticalAlignment="Center"/>
+                            </Grid>
+                        </StackPanel>
+                        </StackPanel>
                     </Border>
                     <Border Style="{StaticResource SettingsRow}">
                         <Grid>
