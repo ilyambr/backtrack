@@ -155,7 +155,14 @@ public partial class MainWindow : Window
             _toastOverlay.ShowReplaySaved(label, path);
             _ = RefreshGalleryCountAsync();
         });
-        _obs.StateChanged += () => Dispatcher.BeginInvoke(() => _ = PrefetchRowLabelsAsync());
+        _obs.StateChanged += () => Dispatcher.BeginInvoke(() =>
+        {
+            _ = PrefetchRowLabelsAsync();
+            // Covers OBS (re)starting after Backtrack already mounted the RAM disk,
+            // or OBS itself restarting mid-session -- not just the initial mount.
+            if (_settings.RamDiskEnabled && RamDisk.IsMounted(_settings.RamDiskDriveLetter))
+                _ = PushRamDiskDestDirAsync();
+        });
 
         _pollTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
         _pollTimer.Tick += async (_, _) => await RefreshStatusAsync();
@@ -245,6 +252,9 @@ public partial class MainWindow : Window
         // Starts generating/caching thumbnails immediately at launch, well before
         // the user has any reason to open Gallery -- see PrewarmGalleryThumbnailsAsync.
         _ = PrewarmGalleryThumbnailsAsync();
+        // Tied to this app's own lifetime, not OBS's -- mounted here, unmounted in
+        // OnClosed. No-ops immediately if the feature isn't enabled in Settings.
+        _ = InitializeRamDiskAsync();
 
         // Self-heals the startup task if Settings says it should exist -- if the
         // app was ever renamed or moved (the exe path baked into the task's /TR
@@ -325,8 +335,13 @@ public partial class MainWindow : Window
         Version installed = UpdateService.CurrentAppVersion;
         try
         {
+            // "win", not "windows" -- the automated release script's actual asset
+            // name is "Backtrack-v{version}-win-x64.zip", which the old
+            // "windows"-substring check never matched, so this always fell
+            // through to the red/not-found branch below regardless of whether
+            // the installed version actually was current.
             ReleaseInfo? release = await _updates.GetLatestReleaseAsync("ilyambr", "backtrack",
-                name => name.Contains("windows", StringComparison.OrdinalIgnoreCase) && name.EndsWith(".zip", StringComparison.OrdinalIgnoreCase));
+                name => name.Contains("win", StringComparison.OrdinalIgnoreCase) && name.EndsWith(".zip", StringComparison.OrdinalIgnoreCase));
             if (release?.DownloadUrl is null)
             {
                 SetUpdateStatus(BacktrackStatusDot, BacktrackVersionText, installed.ToString(3), ok: false);
@@ -350,6 +365,177 @@ public partial class MainWindow : Window
             Debug.WriteLine($"Self-update check/apply failed: {ex.Message}");
             SetUpdateStatus(BacktrackStatusDot, BacktrackVersionText, installed.ToString(3), ok: false);
         }
+    }
+
+    // ------------------------------------------------------------- RAM disk
+
+    /// <summary>
+    /// Installs the ImDisk driver if it isn't already present (one UAC prompt,
+    /// only ever needed once), then mounts the RAM disk. Safe to call more than
+    /// once (e.g. from the Settings toggle mid-session, not just at startup) --
+    /// Mount() itself re-mounts cleanly if something's already sitting on that
+    /// drive letter. Returns immediately as a no-op if the feature is off.
+    /// </summary>
+    private async Task InitializeRamDiskAsync()
+    {
+        if (!_settings.RamDiskEnabled)
+            return;
+
+        (bool ok, string? error) = await Task.Run(EnsureRamDiskReady);
+        RefreshRamDiskStatusText();
+
+        if (!ok)
+        {
+            // Was silently swallowed into Debug output only, so a failure here
+            // looked indistinguishable from success -- "nothing happened" from the
+            // user's side, with no indication anything had even been attempted.
+            Debug.WriteLine($"RAM disk setup failed: {error}");
+            MessageBox.Show(this, $"Couldn't set up the RAM disk: {error}", "Backtrack");
+            return;
+        }
+
+        // OBS has no API to set the Replay Buffer's own output path -- this is a
+        // one-time nudge to point it at the mounted drive by hand, not something
+        // shown on every launch once the user's already done it.
+        if (!_settings.RamDiskInstructionShown)
+        {
+            _settings.RamDiskInstructionShown = true;
+            _settings.Save();
+            MessageBox.Show(this,
+                $"RAM disk mounted at {_settings.RamDiskDriveLetter}:\\.\n\n" +
+                "One-time step: in OBS, go to Settings > Output > Replay Buffer and set its output path to that drive letter. " +
+                "OBS doesn't expose a way for Backtrack to do this part for you automatically.",
+                "Backtrack");
+        }
+
+        if (_obs.IsConnected)
+            _ = PushRamDiskDestDirAsync();
+    }
+
+    private (bool Success, string? Error) EnsureRamDiskReady()
+    {
+        if (!RamDisk.IsDriverInstalled())
+        {
+            (bool installed, string? installError) = RamDisk.InstallDriverElevated();
+            if (!installed)
+                return (false, installError);
+        }
+
+        return RamDisk.Mount(_settings.RamDiskDriveLetter, _settings.RamDiskSizeMb);
+    }
+
+    /// <summary>Tells replay-slider's dock to move trimmed clips off the RAM disk onto wherever this app's own clips actually live.</summary>
+    private async Task PushRamDiskDestDirAsync()
+    {
+        try
+        {
+            await _obs.SetReplayDestDirAsync(_settings.ClipsFolder);
+        }
+        catch
+        {
+            // Needs the plugin's set_dest_dir bridge request -- an older plugin
+            // build just fails this call harmlessly; the dock's own "Move clips
+            // to:" field still works as a one-time manual fallback either way.
+        }
+    }
+
+    private void RefreshRamDiskStatusText()
+    {
+        if (!_settings.RamDiskEnabled)
+        {
+            RamDiskStatusText.Text = "Off";
+        }
+        else if (!RamDisk.IsDriverInstalled())
+        {
+            RamDiskStatusText.Text = "Enabled -- driver not installed yet (installs on next apply, needs one admin prompt)";
+        }
+        else if (RamDisk.IsMounted(_settings.RamDiskDriveLetter))
+        {
+            RamDiskStatusText.Text = $"Mounted at {_settings.RamDiskDriveLetter}:\\ ({_settings.RamDiskSizeMb} MB)";
+        }
+        else
+        {
+            RamDiskStatusText.Text = "Enabled, but not currently mounted";
+        }
+    }
+
+    private async void RamDiskToggle_Click(object sender, RoutedEventArgs e)
+    {
+        bool enabled = RamDiskToggle.IsChecked == true;
+        RamDiskFields.Visibility = enabled ? Visibility.Visible : Visibility.Collapsed;
+        _settings.RamDiskEnabled = enabled;
+        _settings.Save();
+
+        if (enabled)
+        {
+            await InitializeRamDiskAsync();
+        }
+        else
+        {
+            // Off the UI thread -- Mount/Unmount shell out to imdisk.exe and
+            // block on it, which used to freeze the whole window if that process
+            // took any real time (or hit the redirect-read deadlock; see RunImDisk).
+            char drive = _settings.RamDiskDriveLetter;
+            await Task.Run(() =>
+            {
+                if (RamDisk.IsMounted(drive))
+                    RamDisk.Unmount(drive);
+            });
+        }
+
+        RefreshRamDiskStatusText();
+    }
+
+    private async void ApplyRamDiskSettings_Click(object sender, RoutedEventArgs e)
+    {
+        string driveText = RamDiskDriveBox.Text.Trim().TrimEnd(':');
+        if (driveText.Length != 1 || !char.IsLetter(driveText[0]))
+        {
+            MessageBox.Show(this, "Drive letter must be a single letter, e.g. R.", "Backtrack");
+            return;
+        }
+        if (!int.TryParse(RamDiskSizeBox.Text.Trim(), out int sizeMb) || sizeMb < 256)
+        {
+            MessageBox.Show(this, "Size must be a number of megabytes, at least 256.", "Backtrack");
+            return;
+        }
+
+        char oldDrive = _settings.RamDiskDriveLetter;
+        await Task.Run(() =>
+        {
+            if (RamDisk.IsMounted(oldDrive))
+                RamDisk.Unmount(oldDrive);
+        });
+
+        _settings.RamDiskDriveLetter = char.ToUpperInvariant(driveText[0]);
+        _settings.RamDiskSizeMb = sizeMb;
+        _settings.Save();
+        RamDiskDriveBox.Text = _settings.RamDiskDriveLetter.ToString();
+
+        if (_settings.RamDiskEnabled)
+            await InitializeRamDiskAsync();
+    }
+
+    private void SuggestRamDiskSize_Click(object sender, RoutedEventArgs e)
+    {
+        if (!int.TryParse(RamDiskTargetMinutesBox.Text.Trim(), out int minutes) || minutes <= 0)
+        {
+            MessageBox.Show(this, "Enter a number of minutes first.", "Backtrack");
+            return;
+        }
+
+        ReplayBufferSizing.Estimate? estimate = ReplayBufferSizing.TryEstimate(minutes);
+        if (estimate is null)
+        {
+            MessageBox.Show(this, "Couldn't read OBS's config to estimate this -- enter a size manually.", "Backtrack");
+            return;
+        }
+
+        RamDiskSizeBox.Text = estimate.Value.SuggestedSizeMb.ToString();
+        MessageBox.Show(this,
+            $"Suggested {estimate.Value.SuggestedSizeMb} MB for a {minutes}-minute buffer, based on {estimate.Value.Source} (~{estimate.Value.AssumedBitrateKbps} kbps).\n\n" +
+            "Click \"Save & apply\" to actually use it.",
+            "Backtrack");
     }
 
     private void RegisterHotkeyFromSettings()
@@ -2169,6 +2355,12 @@ public partial class MainWindow : Window
         RefreshPairingStatusUi();
         RenderDiscoveredDevices();
 
+        RamDiskToggle.IsChecked = _settings.RamDiskEnabled;
+        RamDiskFields.Visibility = _settings.RamDiskEnabled ? Visibility.Visible : Visibility.Collapsed;
+        RamDiskDriveBox.Text = _settings.RamDiskDriveLetter.ToString();
+        RamDiskSizeBox.Text = _settings.RamDiskSizeMb.ToString();
+        RefreshRamDiskStatusText();
+
         // Shows what's actually installed immediately (no network needed), with a
         // neutral grey dot until a real check (manual or the hourly background
         // one) confirms green/red -- better than the rows sitting blank/stale
@@ -2590,6 +2782,10 @@ public partial class MainWindow : Window
         StopPlayerPlayback();
         _libVlc?.Dispose();
         _hotkey?.Dispose();
+        // Tied to this app's own lifetime, not left mounted independent of it --
+        // see InitializeRamDiskAsync. No-op if it was never mounted.
+        if (_settings.RamDiskEnabled)
+            RamDisk.Unmount(_settings.RamDiskDriveLetter);
         base.OnClosed(e);
     }
 }

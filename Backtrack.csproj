@@ -8,7 +8,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>Backtrack</AssemblyName>
     <RootNamespace>Backtrack</RootNamespace>
-    <Version>0.1.3</Version>
+    <Version>0.2.0</Version>
     <!-- The OBS link itself is still a hand-rolled obs-websocket v5 client over
          System.Net.WebSockets, no package needed. LibVLC below is the one
          exception, since WPF's own MediaElement is built on the legacy Windows
@@ -25,9 +25,20 @@
   </ItemGroup>
 
   <ItemGroup>
+    <Compile Remove="installer\**" />
+    <EmbeddedResource Remove="installer\**" />
+    <None Remove="installer\**" />
     <Resource Include="Assets\logo.png" />
     <Resource Include="Assets\ilyambr.png" />
     <None Update="Assets\backtrack_tray.png">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <!-- ImDisk Virtual Disk Driver (ltr-data.se), redistributed unmodified per its
+         license: used to install/mount the optional RAM disk. Only the amd64
+         binaries are actually run (this app only ships x64), but the whole
+         official package tree is kept intact rather than cherry-picked, so
+         install.cmd/imdisk.inf still find files exactly where they expect them. -->
+    <None Update="ThirdParty\ImDisk\**">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
   </ItemGroup>

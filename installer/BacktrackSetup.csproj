@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>Backtrack-Setup-v0.2.0</AssemblyName>
+    <RootNamespace>BacktrackSetup</RootNamespace>
+    <!-- A framework-dependent apphost .exe is just a tiny native stub that
+         loads its real code from a sibling .dll sitting next to it: the
+         release script only ever uploaded the .exe, never that .dll, so the
+         published installer silently failed to even start (no managed
+         assembly to load = no MessageBox, nothing) for anyone who downloaded
+         just the one file, which is the whole point of a "Setup.exe". Publishing
+         self-contained + single-file means everything (including the payload.zip
+         resource) is embedded directly in the one .exe, so it has no external
+         dependency to go missing. -->
+    <SelfContained>true</SelfContained>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <PublishSingleFile>true</PublishSingleFile>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="payload.zip" />
+  </ItemGroup>
+
+</Project>

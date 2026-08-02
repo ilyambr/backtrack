@@ -8,6 +8,7 @@ using System.Net.Http.Headers;
 using System.Reflection;
 using System.Text.Json;
 using System.Threading.Tasks;
+using Microsoft.Win32;
 
 namespace Backtrack.Updates;
 
@@ -22,9 +23,61 @@ public sealed record ReleaseInfo(string Version, string? DownloadUrl);
 /// </summary>
 public sealed class UpdateService
 {
-    private const string ObsInstallDir = @"C:\Program Files\obs-studio";
-    private const string ObsPluginsDir = ObsInstallDir + @"\obs-plugins\64bit";
-    private const string Obs64Path = ObsInstallDir + @"\bin\64bit\obs64.exe";
+    // Not hardcoded -- see ResolveObsInstallDir. Cached once resolved with real
+    // confidence (registry or a currently-running OBS), but NOT cached when it
+    // falls all the way through to the bare default guess, so a later call
+    // (e.g. once OBS actually starts) still gets a chance to find the real path
+    // instead of being stuck on a wrong guess for the rest of the session.
+    private static string? _cachedObsInstallDir;
+    private static string ObsInstallDir => _cachedObsInstallDir ?? ResolveObsInstallDir();
+    private static string ObsPluginsDir => Path.Combine(ObsInstallDir, "obs-plugins", "64bit");
+    private static string Obs64Path => Path.Combine(ObsInstallDir, "bin", "64bit", "obs64.exe");
+
+    /// <summary>
+    /// OBS's own (Inno Setup) installer writes its install directory to
+    /// HKLM\SOFTWARE\OBS Studio's default value -- confirmed directly against a
+    /// real install -- so reading that instead of assuming the common default
+    /// path is what actually survives someone installing to a different drive.
+    /// Portable installs never touch the registry at all, so those fall back to
+    /// deriving the path from obs64.exe's own location if it happens to be
+    /// running right now (".../bin/64bit/obs64.exe" -> three levels up). If
+    /// neither source has an answer yet, falls back to the old hardcoded
+    /// default so callers always get *something* rather than null.
+    /// </summary>
+    private static string ResolveObsInstallDir()
+    {
+        try
+        {
+            if (Registry.LocalMachine.OpenSubKey(@"SOFTWARE\OBS Studio")?.GetValue(null) is string regPath
+                && Directory.Exists(regPath))
+            {
+                _cachedObsInstallDir = regPath;
+                return regPath;
+            }
+        }
+        catch
+        {
+            // Key missing, access denied, etc. -- fall through to the next source.
+        }
+
+        try
+        {
+            string? exePath = Process.GetProcessesByName("obs64").FirstOrDefault()?.MainModule?.FileName;
+            string? installDir = exePath is null ? null : Directory.GetParent(exePath)?.Parent?.Parent?.FullName;
+            if (installDir is not null && Directory.Exists(installDir))
+            {
+                _cachedObsInstallDir = installDir;
+                return installDir;
+            }
+        }
+        catch
+        {
+            // Process/module inspection can throw (e.g. access denied on a
+            // 32-bit/64-bit module mismatch) -- fall through either way.
+        }
+
+        return @"C:\Program Files\obs-studio";
+    }
 
     // Inno Setup's standard unattended flags: no UI, no "reboot now?" prompt, and
     // /SP- skips the "This will install... Do you wish to continue?" prompt too.
