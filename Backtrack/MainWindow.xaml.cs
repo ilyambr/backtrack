@@ -813,6 +813,14 @@ public partial class MainWindow : Window
             files = Directory.EnumerateFiles(_settings.ClipsFolder)
                 .Where(f => VideoExtensions.Contains(Path.GetExtension(f).ToLowerInvariant()))
                 .Select(f => new FileInfo(f))
+                // Filters out obviously-invalid/glitched recordings (e.g. a save
+                // triggered right as OBS started, or a buffer barely armed before
+                // saving) -- only when the duration is actually known already
+                // (cached from a prior thumbnail pass); a clip that hasn't been
+                // probed yet shows optimistically rather than being hidden on a
+                // guess, and gets filtered retroactively once its real duration
+                // comes back (see BuildClipCard).
+                .Where(f => TryGetCachedDurationMs(f) is not (> 0 and < 2000))
                 .OrderByDescending(f => f.LastWriteTime)
                 .ToList();
         }
@@ -855,7 +863,6 @@ public partial class MainWindow : Window
         thumb.Child = thumbImage;
         // Clicking the thumbnail plays the clip directly -- no separate Play button.
         thumb.MouseLeftButtonUp += (_, _) => OpenInPlayer(file);
-        _ = LoadThumbnailAsync(file, thumbImage);
 
         var title = new TextBlock
         {
@@ -874,10 +881,33 @@ public partial class MainWindow : Window
             : modified.ToString("MMM d, h:mm tt");
         var sub = new TextBlock { Text = subText, FontSize = 11, Foreground = (Brush)FindResource("Text2") };
 
+        // Duration on the opposite side of the date, same row. Filled in right
+        // away if already cached (from a prior thumbnail pass); otherwise left
+        // blank and picked up by LoadThumbnailAsync once generation finishes.
+        var durationText = new TextBlock
+        {
+            FontSize = 11,
+            Foreground = (Brush)FindResource("Text2"),
+            HorizontalAlignment = HorizontalAlignment.Right,
+        };
+        long? knownDurationMs = TryGetCachedDurationMs(file);
+        if (knownDurationMs is long ms)
+            durationText.Text = FormatDuration(ms);
+
+        var subRow = new Grid();
+        subRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        subRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        Grid.SetColumn(sub, 0);
+        Grid.SetColumn(durationText, 1);
+        subRow.Children.Add(sub);
+        subRow.Children.Add(durationText);
+
         var content = new StackPanel();
         content.Children.Add(thumb);
         content.Children.Add(title);
-        content.Children.Add(sub);
+        content.Children.Add(subRow);
+
+        _ = LoadThumbnailAsync(file, thumbImage, knownDurationMs is null ? durationText : null);
 
         // No margin needed here -- GalleryGrid's ItemWidth/ItemHeight (264x212 vs. this
         // card's 240-wide, ~186-tall content) already reserve the gutter uniformly on
@@ -934,6 +964,25 @@ public partial class MainWindow : Window
         string key = $"{file.FullName}|{file.LastWriteTimeUtc.Ticks}|{file.Length}";
         string hash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(key)));
         return Path.Combine(cacheDir, $"{hash}.jpg");
+    }
+
+    // A tiny sidecar next to the thumbnail (same hash, so it invalidates together
+    // with it) holding the clip's length in milliseconds -- captured for free from
+    // player.Length during thumbnail generation, which already has to briefly play
+    // the file anyway, rather than running a whole separate probe pass.
+    private static string GetDurationCachePath(FileInfo file) => Path.ChangeExtension(GetThumbnailCachePath(file), ".duration");
+
+    private static long? TryGetCachedDurationMs(FileInfo file)
+    {
+        try
+        {
+            string path = GetDurationCachePath(file);
+            return File.Exists(path) && long.TryParse(File.ReadAllText(path), out long ms) ? ms : null;
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     /// <summary>
@@ -998,9 +1047,16 @@ public partial class MainWindow : Window
             await EnsureThumbnailCachedAsync(file);
     }
 
-    private async Task LoadThumbnailAsync(FileInfo file, Image target)
+    private async Task LoadThumbnailAsync(FileInfo file, Image target, TextBlock? durationTarget = null)
     {
         string? cachePath = await EnsureThumbnailCachedAsync(file);
+
+        // Generation (if it ran) also drops the duration sidecar as a side
+        // effect, so a card built before that duration was known gets it
+        // filled in here once thumbnailing catches up.
+        if (durationTarget is not null && TryGetCachedDurationMs(file) is long ms)
+            durationTarget.Text = FormatDuration(ms);
+
         if (cachePath is null)
             return;
 
@@ -1047,6 +1103,11 @@ public partial class MainWindow : Window
                     player.Stop();
                     return;
                 }
+
+                // Free to capture here -- already have a real, playing MediaPlayer for
+                // the snapshot itself, no separate probe needed.
+                try { File.WriteAllText(Path.ChangeExtension(cachePath, ".duration"), player.Length.ToString()); }
+                catch { /* not worth failing the thumbnail over */ }
 
                 long seekTarget = Math.Min(2000, Math.Max(player.Length / 4, 0));
                 if (seekTarget > 0)
