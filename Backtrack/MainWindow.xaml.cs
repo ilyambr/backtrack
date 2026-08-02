@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
@@ -11,6 +12,7 @@ using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
+using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using Backtrack.Interop;
 using Backtrack.Obs;
@@ -70,6 +72,7 @@ public partial class MainWindow : Window
     private FileInfo? _currentPlayerFile;
     private readonly DispatcherTimer _seekTimer;
     private bool _seekDragging;
+    private IntPtr _thumbnailSinkHwnd;
 
     // Hotkey capture (Settings)
     private bool _capturingHotkey;
@@ -162,6 +165,15 @@ public partial class MainWindow : Window
             // ever drawn into it on machines/VMs where GPU decode acceleration isn't
             // reliably available -- software decode is slower but actually paints frames.
             _libVlc = new LibVlc.LibVLC("--no-video-title-show", "--avcodec-hw=none");
+
+            // A real HWND for thumbnail-generation MediaPlayers to render into, never
+            // shown (EnsureHandle creates the native window without Show() ever being
+            // called, same trick MainWindow itself uses for the hotkey's HWND). Without
+            // an explicit render target, libvlc creates its own floating window to
+            // render into instead -- which is exactly what looked like "VLC opening in
+            // the background" for every single clip while generating thumbnails.
+            var thumbnailSink = new Window { Width = 2, Height = 2, WindowStyle = WindowStyle.None, ShowInTaskbar = false, Left = -10000, Top = -10000 };
+            _thumbnailSinkHwnd = new WindowInteropHelper(thumbnailSink).EnsureHandle();
         }
         catch (Exception ex)
         {
@@ -175,6 +187,9 @@ public partial class MainWindow : Window
         ShowScreen(Screen.Idle);
         _ = RefreshGalleryCountAsync();
         _ = PrefetchRowLabelsAsync();
+        // Starts generating/caching thumbnails immediately at launch, well before
+        // the user has any reason to open Gallery -- see PrewarmGalleryThumbnailsAsync.
+        _ = PrewarmGalleryThumbnailsAsync();
 
         // Self-heals the startup task if Settings says it should exist -- if the
         // app was ever renamed or moved (the exe path baked into the task's /TR
@@ -826,29 +841,21 @@ public partial class MainWindow : Window
 
     private Border BuildClipCard(FileInfo file)
     {
-        // Deterministic placeholder color per file -- there's no ffmpeg available
-        // to pull a real video frame, so this is an honest stand-in, not a fake thumbnail.
-        int hash = file.Name.GetHashCode();
-        var thumbColor = Color.FromRgb(
-            (byte)(40 + Math.Abs(hash) % 60),
-            (byte)(40 + Math.Abs(hash / 7) % 60),
-            (byte)(50 + Math.Abs(hash / 13) % 70));
-
+        // Neutral placeholder shown until the real frame loads in behind it
+        // (LoadThumbnailAsync, kicked off below) -- not a fake thumbnail like the
+        // old per-file color, just what's visible during the brief async load.
         var thumb = new Border
         {
-            Background = new SolidColorBrush(thumbColor),
-            Height = 84,
+            Background = new SolidColorBrush(Color.FromRgb(24, 26, 30)),
+            Height = 148,
             Cursor = Cursors.Hand,
+            ClipToBounds = true,
         };
-        thumb.Child = new TextBlock
-        {
-            Text = "â–¶",
-            FontSize = 20,
-            Foreground = new SolidColorBrush(Color.FromArgb(120, 255, 255, 255)),
-            HorizontalAlignment = HorizontalAlignment.Center,
-            VerticalAlignment = VerticalAlignment.Center,
-        };
+        var thumbImage = new Image { Stretch = Stretch.UniformToFill };
+        thumb.Child = thumbImage;
+        // Clicking the thumbnail plays the clip directly -- no separate Play button.
         thumb.MouseLeftButtonUp += (_, _) => OpenInPlayer(file);
+        _ = LoadThumbnailAsync(file, thumbImage);
 
         var title = new TextBlock
         {
@@ -858,6 +865,7 @@ public partial class MainWindow : Window
             Foreground = (Brush)FindResource("Text0"),
             TextTrimming = TextTrimming.CharacterEllipsis,
             Margin = new Thickness(0, 7, 0, 1),
+            Cursor = Cursors.IBeam,
         };
 
         DateTime modified = file.LastWriteTime;
@@ -866,52 +874,192 @@ public partial class MainWindow : Window
             : modified.ToString("MMM d, h:mm tt");
         var sub = new TextBlock { Text = subText, FontSize = 11, Foreground = (Brush)FindResource("Text2") };
 
-        var playBtn = new Button { Content = "Play", Style = (Style)FindResource("IconButton") };
-        playBtn.Click += (_, _) => OpenInPlayer(file);
-
-        var folderBtn = new Button { Content = "Folder", Style = (Style)FindResource("IconButton") };
-        folderBtn.Click += (_, _) => Process.Start(new ProcessStartInfo("explorer.exe", $"/select,\"{file.FullName}\"") { UseShellExecute = true });
-
-        var renameBtn = new Button { Content = "Rename", Style = (Style)FindResource("IconButton") };
-        var deleteBtn = new Button { Content = "Delete", Style = (Style)FindResource("IconButton") };
-
-        var actions = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 6, 0, 0) };
-        actions.Children.Add(playBtn);
-        actions.Children.Add(renameBtn);
-        actions.Children.Add(folderBtn);
-        actions.Children.Add(deleteBtn);
-
-        // Only worth showing when the clip isn't already local -- this is the
-        // "bring it from the stream PC to this one" action.
-        if (IsNetworkPath(_settings.ClipsFolder))
-        {
-            var copyBtn = new Button { Content = "Copy here", Style = (Style)FindResource("IconButton"), Margin = new Thickness(0) };
-            copyBtn.Click += async (_, _) => await CopyToThisPcAsync(file, copyBtn);
-            actions.Children.Add(copyBtn);
-        }
-        else
-        {
-            deleteBtn.Margin = new Thickness(0);
-        }
-
         var content = new StackPanel();
         content.Children.Add(thumb);
         content.Children.Add(title);
         content.Children.Add(sub);
-        content.Children.Add(actions);
 
-        var card = new Border { Width = 190, Margin = new Thickness(0, 0, 14, 14), Child = content };
+        var card = new Border { Width = 240, Margin = new Thickness(0, 0, 14, 14), Child = content };
 
-        // Extracted, unguarded rename-commit helper: LostFocus fires a second time
-        // when the TextBox is removed from the tree to restore the label (removing a
-        // focused element fires its own LostFocus), which would otherwise re-run a
-        // guarded "commit" a second time against a stale FileInfo. Guarding this exact
-        // method would also skip the real work on the legitimate first call, so instead
-        // BeginRename installs a `finished` flag around the two call sites, not inside this helper.
-        renameBtn.Click += (_, _) => BeginRename(card, title, file);
-        deleteBtn.Click += (_, _) => DeleteClip(file, card);
+        // Only worth showing when the clip isn't already local -- this is the
+        // "bring it from the stream PC to this one" action. Everything else
+        // (rename, delete, open folder) moved to double-click/right-click, so
+        // this is the one remaining action row, and only appears when relevant.
+        if (IsNetworkPath(_settings.ClipsFolder))
+        {
+            var copyBtn = new Button { Content = "Copy here", Style = (Style)FindResource("IconButton"), Margin = new Thickness(0, 6, 0, 0) };
+            copyBtn.Click += async (_, _) => await CopyToThisPcAsync(file, copyBtn);
+            content.Children.Add(copyBtn);
+        }
+
+        // Double-click the title to rename, instead of a separate button.
+        // Extracted, unguarded rename-commit helper inside BeginRename: LostFocus
+        // fires a second time when the TextBox is removed from the tree to restore
+        // the label (removing a focused element fires its own LostFocus), which
+        // would otherwise re-run a guarded "commit" a second time against a stale
+        // FileInfo. Guarding BeginRename itself would also skip the real work on
+        // the legitimate first call, so the `finished` flag lives at the two call
+        // sites inside it instead.
+        title.MouseLeftButtonDown += (_, e) =>
+        {
+            if (e.ClickCount == 2)
+                BeginRename(card, title, file);
+        };
+
+        var contextMenu = new ContextMenu { Style = (Style)FindResource("DarkContextMenu") };
+        var openFolderItem = new MenuItem { Header = "Open file location", Style = (Style)FindResource("DarkMenuItem") };
+        openFolderItem.Click += (_, _) => Process.Start(new ProcessStartInfo("explorer.exe", $"/select,\"{file.FullName}\"") { UseShellExecute = true });
+        var deleteItem = new MenuItem { Header = "Delete", Style = (Style)FindResource("DarkMenuItem") };
+        deleteItem.Click += (_, _) => DeleteClip(file, card);
+        contextMenu.Items.Add(openFolderItem);
+        contextMenu.Items.Add(deleteItem);
+        thumb.ContextMenu = contextMenu;
 
         return card;
+    }
+
+    private static readonly SemaphoreSlim ThumbnailGenerationLock = new(1, 1);
+
+    private static string GetThumbnailCachePath(FileInfo file)
+    {
+        string cacheDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Backtrack", "thumbnails");
+        Directory.CreateDirectory(cacheDir);
+        // Keyed on path + last-write-time + size, not just the path, so a
+        // replaced file (e.g. Trim's "replace original") gets a fresh thumbnail
+        // instead of showing the old clip's frame forever.
+        string key = $"{file.FullName}|{file.LastWriteTimeUtc.Ticks}|{file.Length}";
+        string hash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(key)));
+        return Path.Combine(cacheDir, $"{hash}.jpg");
+    }
+
+    /// <summary>
+    /// Grabs a real frame from partway into the clip via a headless LibVLC
+    /// player + TakeSnapshot, caches it to disk, and loads it into the given
+    /// Image once ready. Serialized through one semaphore (not run in parallel
+    /// per card) -- generating several of these at once is heavy CPU/decode
+    /// work, and this app is already forced onto software decode in some
+    /// environments (see --avcodec-hw=none).
+    /// </summary>
+    private async Task<string?> EnsureThumbnailCachedAsync(FileInfo file)
+    {
+        string cachePath = GetThumbnailCachePath(file);
+        if (File.Exists(cachePath))
+            return cachePath;
+
+        if (_libVlc is null)
+            return null;
+
+        await ThumbnailGenerationLock.WaitAsync();
+        try
+        {
+            if (!File.Exists(cachePath))
+                await GenerateThumbnailAsync(file, cachePath);
+        }
+        finally
+        {
+            ThumbnailGenerationLock.Release();
+        }
+
+        return File.Exists(cachePath) ? cachePath : null;
+    }
+
+    /// <summary>
+    /// Generates and caches thumbnails for every clip in the background,
+    /// starting right at launch -- by the time the user actually opens Gallery,
+    /// most/all of them should already be sitting on disk, so it loads
+    /// instantly instead of visibly generating them on demand. Sequential
+    /// (shares the same semaphore as LoadThumbnailAsync), so it never competes
+    /// with a thumbnail the user is actually looking at right now.
+    /// </summary>
+    private async Task PrewarmGalleryThumbnailsAsync()
+    {
+        if (_libVlc is null || !Directory.Exists(_settings.ClipsFolder))
+            return;
+
+        List<FileInfo> files;
+        try
+        {
+            files = Directory.EnumerateFiles(_settings.ClipsFolder)
+                .Where(f => VideoExtensions.Contains(Path.GetExtension(f).ToLowerInvariant()))
+                .Select(f => new FileInfo(f))
+                .OrderByDescending(f => f.LastWriteTime) // newest first -- most likely to be looked at soonest
+                .ToList();
+        }
+        catch
+        {
+            return;
+        }
+
+        foreach (FileInfo file in files)
+            await EnsureThumbnailCachedAsync(file);
+    }
+
+    private async Task LoadThumbnailAsync(FileInfo file, Image target)
+    {
+        string? cachePath = await EnsureThumbnailCachedAsync(file);
+        if (cachePath is null)
+            return;
+
+        try
+        {
+            var bitmap = new BitmapImage();
+            bitmap.BeginInit();
+            bitmap.CacheOption = BitmapCacheOption.OnLoad;
+            bitmap.UriSource = new Uri(cachePath);
+            bitmap.EndInit();
+            bitmap.Freeze();
+            target.Source = bitmap;
+        }
+        catch
+        {
+            // Cached file is somehow unreadable -- leave the neutral placeholder.
+        }
+    }
+
+    private async Task GenerateThumbnailAsync(FileInfo file, string cachePath)
+    {
+        // This LibVLCSharp version (3.10.0) doesn't expose a dedicated
+        // thumbnailer API -- TakeSnapshot via a real (briefly) playing
+        // MediaPlayer is the only option it actually has. What made the first
+        // attempt bad wasn't TakeSnapshot itself, it was two real bugs: no
+        // render target meant libvlc opened its own floating window per clip
+        // (fixed below via _thumbnailSinkHwnd), and audio was left on, so each
+        // one was audible too (fixed via :no-audio).
+        await Task.Run(() =>
+        {
+            try
+            {
+                using var media = new LibVlc.Media(_libVlc!, new Uri(file.FullName));
+                media.AddOption(":no-audio");
+                using var player = new LibVlc.MediaPlayer(media) { Hwnd = _thumbnailSinkHwnd, Mute = true };
+                using var playingSignal = new ManualResetEventSlim(false);
+
+                player.Playing += (_, _) => playingSignal.Set();
+                player.EncounteredError += (_, _) => playingSignal.Set();
+
+                player.Play();
+                if (!playingSignal.Wait(TimeSpan.FromSeconds(5)))
+                {
+                    player.Stop();
+                    return;
+                }
+
+                long seekTarget = Math.Min(2000, Math.Max(player.Length / 4, 0));
+                if (seekTarget > 0)
+                    player.Time = seekTarget;
+                Thread.Sleep(150);
+
+                player.TakeSnapshot(0, cachePath, 480, 0);
+                for (int i = 0; i < 15 && !File.Exists(cachePath); i++)
+                    Thread.Sleep(100);
+
+                player.Stop();
+            }
+            catch
+            {
+                // No thumbnail this time -- the placeholder stays, not worth surfacing an error for.
+            }
+        });
     }
 
     private void BeginRename(Border card, TextBlock title, FileInfo file)
