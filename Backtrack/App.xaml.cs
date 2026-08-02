@@ -1,4 +1,6 @@
-﻿using System.Windows;
+﻿using System.Linq;
+using System.Windows;
+using System.Windows.Threading;
 
 namespace Backtrack;
 
@@ -51,5 +53,18 @@ public partial class App : Application
         // is never Shown until the hotkey is pressed -- it's a summonable overlay,
         // not a normal always-visible window.
         _main = new MainWindow(_status, _toasts, _scrim, _disclaimer, _logo, _pairingRequest);
+
+        // Set by UpdateService.ApplySelfUpdateAsync's relaunch command. A toast
+        // shown from the OLD process right before it self-updates would close
+        // with that window before anyone could see it, so the new process
+        // announces it instead -- a moment after Show() so the toast window's
+        // own layout has actually settled first.
+        string? updatedVersion = e.Args
+            .FirstOrDefault(a => a.StartsWith("--updated=", System.StringComparison.Ordinal))
+            ?.Substring("--updated=".Length);
+        if (!string.IsNullOrEmpty(updatedVersion))
+        {
+            Dispatcher.BeginInvoke(() => _toasts.ShowUpdateApplied("Backtrack", updatedVersion), DispatcherPriority.Loaded);
+        }
     }
 }

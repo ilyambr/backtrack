@@ -184,8 +184,14 @@ public sealed class UpdateService
     /// mirrors the new files over the current install directory, and relaunches --
     /// a running .exe can't overwrite itself directly, so a detached helper script
     /// does the actual file swap after Backtrack has exited.
+    ///
+    /// Passes the new version as a --updated= argument to the relaunched process,
+    /// since this process is about to exit (Application.Current.Shutdown() runs
+    /// right after this returns) -- a toast shown here would close with the window
+    /// before anyone could see it. The freshly-launched process reads that arg on
+    /// startup and shows the toast itself instead (see App.xaml.cs).
     /// </summary>
-    public async Task ApplySelfUpdateAsync(string downloadUrl)
+    public async Task ApplySelfUpdateAsync(string downloadUrl, string version)
     {
         string installDir = AppContext.BaseDirectory.TrimEnd('\\');
         string exePath = Environment.ProcessPath ?? Path.Combine(installDir, "Backtrack.exe");
@@ -215,7 +221,7 @@ public sealed class UpdateService
              robocopy "{extractDir}" "{installDir}" /E /IS /IT
              del "{zipPath}"
              rmdir /S /Q "{extractDir}"
-             start "" "{exePath}"
+             start "" "{exePath}" --updated={version}
              del "%~f0"
              """);
 
