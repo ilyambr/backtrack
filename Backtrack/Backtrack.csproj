@@ -8,7 +8,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>Backtrack</AssemblyName>
     <RootNamespace>Backtrack</RootNamespace>
-    <Version>0.1.1</Version>
+    <Version>0.1.2</Version>
     <!-- The OBS link itself is still a hand-rolled obs-websocket v5 client over
          System.Net.WebSockets, no package needed. LibVLC below is the one
          exception, since WPF's own MediaElement is built on the legacy Windows
