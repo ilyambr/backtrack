@@ -879,7 +879,7 @@ public partial class MainWindow : Window
         content.Children.Add(title);
         content.Children.Add(sub);
 
-        var card = new Border { Width = 240, Margin = new Thickness(0, 0, 14, 14), Child = content };
+        var card = new Border { Width = 240, Margin = new Thickness(0, 0, 20, 24), Child = content };
 
         // Only worth showing when the clip isn't already local -- this is the
         // "bring it from the stream PC to this one" action. Everything else
