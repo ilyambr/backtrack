@@ -38,7 +38,11 @@ public sealed class UpdateService
         // GitHub's API rejects requests with no User-Agent.
         client.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("Backtrack", "1.0"));
         client.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/vnd.github+json"));
-        client.Timeout = TimeSpan.FromSeconds(15);
+        // This same client is also used to download release assets (the self-update
+        // zip is 200MB+), not just lightweight API calls -- a 15s timeout meant for
+        // the latter silently killed every download attempt well before it could
+        // finish, which looked like the update check just doing nothing.
+        client.Timeout = TimeSpan.FromMinutes(10);
         return client;
     }
 
@@ -189,7 +193,14 @@ public sealed class UpdateService
         string zipPath = Path.Combine(Path.GetTempPath(), $"backtrack_update_{Guid.NewGuid():N}.zip");
         string extractDir = Path.Combine(Path.GetTempPath(), $"backtrack_update_{Guid.NewGuid():N}");
         await DownloadFileAsync(downloadUrl, zipPath);
-        ZipFile.ExtractToDirectory(zipPath, extractDir);
+        // ZipFile.ExtractToDirectory is fully synchronous -- since none of the
+        // awaits above use ConfigureAwait(false), the continuation after them
+        // resumes on the UI thread by default, so calling it directly here froze
+        // the whole app (including the Check Now button) for as long as
+        // extracting a 200MB+ self-contained build took. Task.Run moves the
+        // actual CPU/IO-bound work off the UI thread; awaiting it still keeps
+        // this method's own async flow correct.
+        await Task.Run(() => ZipFile.ExtractToDirectory(zipPath, extractDir));
 
         string scriptPath = Path.Combine(Path.GetTempPath(), $"backtrack_apply_update_{Guid.NewGuid():N}.bat");
         File.WriteAllText(scriptPath,
