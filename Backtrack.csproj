@@ -33,6 +33,14 @@
     <None Update="Assets\backtrack_tray.png">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
+    <!-- ImDisk Virtual Disk Driver (ltr-data.se), redistributed unmodified per its
+         license: used to install/mount the optional RAM disk. Only the amd64
+         binaries are actually run (this app only ships x64), but the whole
+         official package tree is kept intact rather than cherry-picked, so
+         install.cmd/imdisk.inf still find files exactly where they expect them. -->
+    <None Update="ThirdParty\ImDisk\**">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
   </ItemGroup>
 
 </Project>

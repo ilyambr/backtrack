@@ -299,4 +299,22 @@ public sealed class ObsService
             ["requestData"] = new Dictionary<string, object?> { ["key"] = key, ["seconds"] = seconds },
         });
     }
+
+    /// <summary>
+    /// Points the dock's "Move clips to:" destination folder at a path -- used to
+    /// tell it to move trimmed clips off the RAM disk (see Interop/RamDisk.cs)
+    /// onto persistent storage the moment trimming finishes. Needs the
+    /// set-dest-dir bridge PR merged into the plugin; older builds just error
+    /// here harmlessly, leaving the dock's own manual "Move clips to:" field as
+    /// the fallback.
+    /// </summary>
+    public async Task SetReplayDestDirAsync(string path)
+    {
+        await _client.RequestAsync("CallVendorRequest", new Dictionary<string, object?>
+        {
+            ["vendorName"] = "replay-buffer-slider",
+            ["requestType"] = "set_dest_dir",
+            ["requestData"] = new Dictionary<string, object?> { ["path"] = path },
+        });
+    }
 }

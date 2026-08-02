@@ -59,6 +59,23 @@ public sealed class AppSettings
     public string? AuthorizedClientName { get; set; }
     public string? AuthorizedClientSecret { get; set; }
 
+    // RAM disk for OBS's replay buffer output (via ImDisk): mounted on Backtrack
+    // startup and unmounted on exit, not left mounted independent of this app --
+    // opt-in and off by default since it installs a kernel driver the first time
+    // it's turned on. Size starts at a conservative flat default rather than
+    // whatever a full buffer-duration estimate would compute to (that number can
+    // get large -- see Obs/ReplayBufferSizing.cs), and is meant to be raised by
+    // hand once the feature is confirmed working.
+    public bool RamDiskEnabled { get; set; }
+    public char RamDiskDriveLetter { get; set; } = 'R';
+    public int RamDiskSizeMb { get; set; } = 2048;
+
+    // Shown once, the first time the RAM disk is actually mounted -- OBS has no
+    // API to set the Replay Buffer output path, so this is a one-time manual
+    // step in OBS's own Settings > Output > Replay Buffer, not something
+    // Backtrack can do for the user on every launch.
+    public bool RamDiskInstructionShown { get; set; }
+
     private static string FilePath => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Backtrack", "settings.json");
 

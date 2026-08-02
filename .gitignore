@@ -5,6 +5,7 @@ dist/
 *.zip
 *.exe
 !Assets/*.exe
+!ThirdParty/ImDisk/**/*.exe
 installer/bin/
 installer/obj/
 installer/payload.zip
