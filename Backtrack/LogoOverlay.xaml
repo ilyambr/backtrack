@@ -1,0 +1,44 @@
+﻿<Window x:Class="Backtrack.LogoOverlay"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Backtrack Logo"
+        Width="160" Height="46"
+        WindowStyle="None"
+        AllowsTransparency="True"
+        Background="Transparent"
+        Topmost="True"
+        ShowInTaskbar="False"
+        ResizeMode="NoResize">
+    <!--
+      A fixed screen position, independent of MainWindow's own size/position:
+      MainWindow resizes and moves a lot (compact pill vs. the big Gallery/Player
+      panel), and the logo used to live inside it, so it dragged around and
+      resized along with every screen change instead of staying put. Shown/hidden
+      in lockstep with the HUD's own open/close state (see MainWindow.ToggleVisible/
+      CloseOverlay), same as the Scrim and Disclaimer, not an always-on fixture
+      like the Status/Toast overlays.
+    -->
+    <!-- Two logos, crossfading on each reveal: ilyambr's own brand mark holds
+         briefly, then hands off to Backtrack's, which stays visible afterward.
+         Same beats as ilyambr/bams' own brandBug intro animation (see
+         PlayIntro in the code-behind for the exact keyframe timing), ported to
+         a WPF Storyboard rather than CSS keyframes/JS class toggles. -->
+    <Grid>
+        <Rectangle x:Name="IlyambrLogo" Width="160" Height="46" Opacity="0" RenderTransformOrigin="0.5,0.5">
+            <Rectangle.RenderTransform>
+                <ScaleTransform x:Name="IlyambrScale" ScaleX="0.96" ScaleY="0.96"/>
+            </Rectangle.RenderTransform>
+            <Rectangle.Fill>
+                <ImageBrush ImageSource="Assets/ilyambr.png" Stretch="Uniform"/>
+            </Rectangle.Fill>
+        </Rectangle>
+        <Rectangle x:Name="BacktrackLogo" Width="160" Height="46" Opacity="0" RenderTransformOrigin="0.5,0.5">
+            <Rectangle.RenderTransform>
+                <ScaleTransform x:Name="BacktrackScale" ScaleX="0.98" ScaleY="0.98"/>
+            </Rectangle.RenderTransform>
+            <Rectangle.Fill>
+                <ImageBrush ImageSource="Assets/logo.png" Stretch="Uniform" Opacity="0.7"/>
+            </Rectangle.Fill>
+        </Rectangle>
+    </Grid>
+</Window>
