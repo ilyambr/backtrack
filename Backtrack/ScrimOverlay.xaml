@@ -9,7 +9,7 @@
         ShowInTaskbar="False"
         ResizeMode="NoResize"
         Visibility="Hidden"
-        MouseLeftButtonDown="Scrim_MouseLeftButtonDown">
+        MouseDown="Scrim_MouseDown">
     <!--
       Sits behind MainWindow, in front of everything else, whenever the HUD is
       summoned, dimming the desktop; and since it isn't click-through, unlike
