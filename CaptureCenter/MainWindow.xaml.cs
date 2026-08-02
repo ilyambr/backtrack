@@ -49,6 +49,7 @@ public partial class MainWindow : Window
     private readonly UpdateService _updates = new();
     private readonly DispatcherTimer _updateTimer;
     private readonly PairingService _pairing;
+    private readonly DispatcherTimer _recenterDebounce = new() { Interval = TimeSpan.FromMilliseconds(90) };
     private readonly Dictionary<string, string> _rowLabels = new();
     private List<ReplayRow> _lastReplayRows = new();
     private GlobalHotkey? _hotkey;
@@ -148,7 +149,23 @@ public partial class MainWindow : Window
         // layout runs, so trying to precompute it upfront (transport bar + trim panel,
         // whose visibility toggles) kept drifting off-center. Same fix as DisclaimerOverlay
         // uses for its own bottom positioning.
-        SizeChanged += (_, _) => RecenterIfBig();
+        //
+        // Debounced, not called directly on every SizeChanged: Gallery/Player's content
+        // (WrapPanel of clip cards, the video surface) can settle across a couple of
+        // layout passes, each firing SizeChanged with a slightly different intermediate
+        // ActualHeight. Repositioning the real OS window on every one of those was
+        // visibly jittery -- waiting for a short quiet period with no further size
+        // changes means it only actually moves once, after things have truly settled.
+        _recenterDebounce.Tick += (_, _) =>
+        {
+            _recenterDebounce.Stop();
+            RecenterIfBig();
+        };
+        SizeChanged += (_, _) =>
+        {
+            _recenterDebounce.Stop();
+            _recenterDebounce.Start();
+        };
 
         RegisterHotkeyFromSettings();
 
@@ -382,13 +399,10 @@ public partial class MainWindow : Window
 
         if (big)
         {
+            // The debounced SizeChanged handler (see constructor) picks up the real
+            // recenter once layout settles -- no need to also force one here, and
+            // doing both was exactly what caused the double-reposition jitter.
             ApplyBigScreenSize();
-            // A single SizeChanged firing during this transition can catch an
-            // intermediate, not-yet-settled ActualHeight (most visible on the first
-            // compact-to-big jump, a big size delta) -- scheduling one more recenter
-            // after the dispatcher finishes this layout pass catches that case
-            // instead of leaving it looking centered only after a second transition.
-            Dispatcher.BeginInvoke(RecenterIfBig, DispatcherPriority.ContextIdle);
         }
         else
         {
@@ -431,11 +445,12 @@ public partial class MainWindow : Window
         PlayerVideoHost.Height = contentHeight;
         GalleryScrollHost.MaxHeight = contentHeight;
 
-        // Real vertical centering happens in RecenterIfBig, once ActualHeight is
-        // actually known -- guessing the total window height up front (transport
-        // bar + trim panel, which toggles) kept drifting off. This is just a
-        // reasonable placeholder until that first layout pass lands.
-        Top = 30;
+        // Top is deliberately left untouched here -- the debounced SizeChanged
+        // handler (see constructor) sets it once, from the real ActualHeight, after
+        // layout settles. Assigning a placeholder Top here too (guessing at the
+        // total window height up front) meant the window visibly hopped twice per
+        // transition: once to the wrong placeholder position, then again to the
+        // real one a moment later. Leaving it alone means only one real move.
     }
 
     private void RecenterIfBig()
