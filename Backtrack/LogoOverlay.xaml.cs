@@ -10,6 +10,7 @@ namespace Backtrack;
 public partial class LogoOverlay : Window
 {
     private const double IntroSeconds = 1.25;
+    private bool _hasPlayedIntro;
 
     public LogoOverlay()
     {
@@ -24,11 +25,24 @@ public partial class LogoOverlay : Window
         };
     }
 
-    /// <summary>Shows the window and plays the ilyambr -> Backtrack crossfade -- called every time the HUD opens, matching how the reference plays it on each fresh reveal rather than once per app lifetime.</summary>
+    /// <summary>
+    /// Shows the window, playing the ilyambr -> Backtrack crossfade only the
+    /// first time this is called since the app launched -- every later HUD open
+    /// this session just shows the Backtrack logo directly, already settled.
+    /// </summary>
     public void ShowWithIntro()
     {
         Show();
-        PlayIntro();
+        if (!_hasPlayedIntro)
+        {
+            _hasPlayedIntro = true;
+            PlayIntro();
+        }
+        else
+        {
+            IlyambrLogo.Opacity = 0;
+            BacktrackLogo.Opacity = 1;
+        }
     }
 
     private void PlayIntro()
