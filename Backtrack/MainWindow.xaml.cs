@@ -879,7 +879,11 @@ public partial class MainWindow : Window
         content.Children.Add(title);
         content.Children.Add(sub);
 
-        var card = new Border { Width = 240, Margin = new Thickness(0, 0, 20, 24), Child = content };
+        // No margin needed here -- GalleryGrid's ItemWidth/ItemHeight (264x212 vs. this
+        // card's 240-wide, ~186-tall content) already reserve the gutter uniformly on
+        // every cell, top-left aligned by default, so the leftover space itself becomes
+        // the gap to the next card without needing a per-card Margin to also add one.
+        var card = new Border { Width = 240, Child = content };
 
         // Only worth showing when the clip isn't already local -- this is the
         // "bring it from the stream PC to this one" action. Everything else

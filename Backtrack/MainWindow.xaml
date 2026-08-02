@@ -589,7 +589,12 @@
                     </Button>
                 </Grid>
                 <ScrollViewer x:Name="GalleryScrollHost" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-                    <WrapPanel x:Name="GalleryGrid"/>
+                    <!-- ItemWidth/ItemHeight, not just each card's own Margin: a plain
+                         WrapPanel sizes every row to its tallest child, so if any card's
+                         title/date text rendered even slightly differently, that row's
+                         gap to the next one would shift; fixing the cell size itself
+                         guarantees every row and column lines up exactly the same. -->
+                    <WrapPanel x:Name="GalleryGrid" ItemWidth="264" ItemHeight="212"/>
                 </ScrollViewer>
             </DockPanel>
 
