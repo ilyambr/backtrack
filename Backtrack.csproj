@@ -25,6 +25,9 @@
   </ItemGroup>
 
   <ItemGroup>
+    <Compile Remove="installer\**" />
+    <EmbeddedResource Remove="installer\**" />
+    <None Remove="installer\**" />
     <Resource Include="Assets\logo.png" />
     <Resource Include="Assets\ilyambr.png" />
     <None Update="Assets\backtrack_tray.png">
