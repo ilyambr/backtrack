@@ -164,6 +164,33 @@ public partial class MainWindow : Window
                 _ = PushRamDiskDestDirAsync();
         });
 
+        // Lets a paired receiver PC's Backtrack read/change RAM disk settings on
+        // THIS instance over the network -- only meaningful/reachable when this PC
+        // is the one actually running OBS. See PairingService's remote RAM disk
+        // control section for the request handling and auth.
+        _pairing.GetRamDiskSnapshot = () => new RamDiskSnapshot(
+            _settings.RamDiskEnabled, _settings.RamDiskDriveLetter, _settings.RamDiskSizeMb,
+            RamDisk.IsMounted(_settings.RamDiskDriveLetter));
+        _pairing.ApplyRamDiskSnapshot = ApplyRamDiskConfigAsync;
+
+        // Same reasoning as RAM disk above -- plugin version checks/updates read
+        // and write C:\Program Files\obs-studio on THIS machine (see
+        // UpdateService), so a paired receiver PC needs this run here, not on
+        // itself. Dispatcher.InvokeAsync because incoming pairing requests are
+        // handled on PairingService's own network thread, not the UI thread, and
+        // CheckAndApplyPluginUpdateAsync touches UI elements (dot/version text)
+        // directly.
+        _pairing.CheckAndApplyPluginUpdatesRemotely = async () =>
+        {
+            PluginVersionInfo replaySlider = await await Dispatcher.InvokeAsync(() =>
+                CheckAndApplyPluginUpdateAsync("obs-replay-slider", "Replay Slider", "replay-slider.dll", ReplaySliderStatusDot, ReplaySliderVersionText,
+                    name => name.Contains("windows", StringComparison.OrdinalIgnoreCase) && name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)));
+            PluginVersionInfo sourceRecord = await await Dispatcher.InvokeAsync(() =>
+                CheckAndApplyPluginUpdateAsync("obs-source-record", "Source Record", "source-record.dll", SourceRecordStatusDot, SourceRecordVersionText,
+                    name => name.Contains("windows-installer", StringComparison.OrdinalIgnoreCase) && name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)));
+            return new PluginVersionsSnapshot(replaySlider, sourceRecord);
+        };
+
         _pollTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
         _pollTimer.Tick += async (_, _) => await RefreshStatusAsync();
 
@@ -301,7 +328,7 @@ public partial class MainWindow : Window
         versionText.Text = version;
     }
 
-    private async Task CheckAndApplyPluginUpdateAsync(string repo, string displayName, string dllFileName, System.Windows.Shapes.Ellipse dot, TextBlock versionText, Func<string, bool> assetPredicate)
+    private async Task<PluginVersionInfo> CheckAndApplyPluginUpdateAsync(string repo, string displayName, string dllFileName, System.Windows.Shapes.Ellipse dot, TextBlock versionText, Func<string, bool> assetPredicate)
     {
         Version installed = _updates.GetInstalledPluginVersion(dllFileName);
         try
@@ -310,23 +337,25 @@ public partial class MainWindow : Window
             if (release?.DownloadUrl is null)
             {
                 SetUpdateStatus(dot, versionText, installed.ToString(3), ok: false);
-                return;
+                return new PluginVersionInfo(installed.ToString(3), false);
             }
 
             if (!UpdateService.IsNewer(release.Version, installed))
             {
                 SetUpdateStatus(dot, versionText, installed.ToString(3), ok: true);
-                return;
+                return new PluginVersionInfo(installed.ToString(3), true);
             }
 
             await _updates.InstallPluginUpdateAsync(release.DownloadUrl);
             _toastOverlay.ShowUpdateApplied(displayName, release.Version);
             SetUpdateStatus(dot, versionText, release.Version, ok: true);
+            return new PluginVersionInfo(release.Version, true);
         }
         catch (Exception ex)
         {
             Debug.WriteLine($"Update check/apply failed for {repo}: {ex.Message}");
             SetUpdateStatus(dot, versionText, installed.ToString(3), ok: false);
+            return new PluginVersionInfo(installed.ToString(3), false);
         }
     }
 
@@ -462,28 +491,7 @@ public partial class MainWindow : Window
     private async void RamDiskToggle_Click(object sender, RoutedEventArgs e)
     {
         bool enabled = RamDiskToggle.IsChecked == true;
-        RamDiskFields.Visibility = enabled ? Visibility.Visible : Visibility.Collapsed;
-        _settings.RamDiskEnabled = enabled;
-        _settings.Save();
-
-        if (enabled)
-        {
-            await InitializeRamDiskAsync();
-        }
-        else
-        {
-            // Off the UI thread -- Mount/Unmount shell out to imdisk.exe and
-            // block on it, which used to freeze the whole window if that process
-            // took any real time (or hit the redirect-read deadlock; see RunImDisk).
-            char drive = _settings.RamDiskDriveLetter;
-            await Task.Run(() =>
-            {
-                if (RamDisk.IsMounted(drive))
-                    RamDisk.Unmount(drive);
-            });
-        }
-
-        RefreshRamDiskStatusText();
+        await ApplyRamDiskConfigAsync(enabled, _settings.RamDiskDriveLetter, _settings.RamDiskSizeMb);
     }
 
     private async void ApplyRamDiskSettings_Click(object sender, RoutedEventArgs e)
@@ -500,20 +508,75 @@ public partial class MainWindow : Window
             return;
         }
 
-        char oldDrive = _settings.RamDiskDriveLetter;
-        await Task.Run(() =>
-        {
-            if (RamDisk.IsMounted(oldDrive))
-                RamDisk.Unmount(oldDrive);
-        });
+        await ApplyRamDiskConfigAsync(_settings.RamDiskEnabled, char.ToUpperInvariant(driveText[0]), sizeMb);
+    }
 
-        _settings.RamDiskDriveLetter = char.ToUpperInvariant(driveText[0]);
+    /// <summary>
+    /// Applies a full RAM disk configuration: unmounts if the drive/size actually
+    /// changed (or it's being turned off), saves, re-mounts if enabled, and pushes
+    /// the result to OBS. Shared by the two local UI handlers above AND by
+    /// PairingService's remote RAM disk control (see the constructor's
+    /// _pairing.ApplyRamDiskSnapshot wiring), which invokes this directly from its
+    /// own network-handling thread rather than a UI event -- hence the explicit
+    /// Dispatcher hops around every UI touch instead of assuming we're already on it.
+    /// </summary>
+    private async Task<(bool Success, string? Error)> ApplyRamDiskConfigAsync(bool enabled, char driveLetter, int sizeMb)
+    {
+        char oldDrive = _settings.RamDiskDriveLetter;
+        bool driveOrSizeChanged = oldDrive != driveLetter || sizeMb != _settings.RamDiskSizeMb;
+
+        // Off the UI thread -- Mount/Unmount shell out to imdisk.exe and block on
+        // it, which used to freeze the whole window if that process took any real
+        // time (or hit the redirect-read deadlock; see RunImDisk).
+        if ((!enabled || driveOrSizeChanged) && RamDisk.IsMounted(oldDrive))
+            await Task.Run(() => RamDisk.Unmount(oldDrive));
+
+        _settings.RamDiskEnabled = enabled;
+        _settings.RamDiskDriveLetter = driveLetter;
         _settings.RamDiskSizeMb = sizeMb;
         _settings.Save();
-        RamDiskDriveBox.Text = _settings.RamDiskDriveLetter.ToString();
 
-        if (_settings.RamDiskEnabled)
-            await InitializeRamDiskAsync();
+        Dispatcher.Invoke(() =>
+        {
+            RamDiskToggle.IsChecked = enabled;
+            RamDiskFields.Visibility = enabled ? Visibility.Visible : Visibility.Collapsed;
+            RamDiskDriveBox.Text = driveLetter.ToString();
+            RamDiskSizeBox.Text = sizeMb.ToString();
+        });
+
+        (bool ok, string? error) = enabled ? await Task.Run(EnsureRamDiskReady) : (true, null);
+
+        Dispatcher.Invoke(() =>
+        {
+            RefreshRamDiskStatusText();
+            RefreshBufferDurationUi();
+        });
+
+        if (enabled && !ok)
+        {
+            Debug.WriteLine($"RAM disk setup failed: {error}");
+            Dispatcher.Invoke(() => MessageBox.Show(this, $"Couldn't set up the RAM disk: {error}", "Backtrack"));
+            return (false, error);
+        }
+
+        if (enabled && ok)
+        {
+            if (!_settings.RamDiskInstructionShown)
+            {
+                _settings.RamDiskInstructionShown = true;
+                _settings.Save();
+                Dispatcher.Invoke(() => MessageBox.Show(this,
+                    $"RAM disk mounted at {driveLetter}:\\.\n\n" +
+                    "One-time step: in OBS, go to Settings > Output > Replay Buffer and set its output path to that drive letter. " +
+                    "OBS doesn't expose a way for Backtrack to do this part for you automatically.",
+                    "Backtrack"));
+            }
+
+            if (_obs.IsConnected)
+                _ = PushRamDiskDestDirAsync();
+        }
+
+        return (true, null);
     }
 
     private void SuggestRamDiskSize_Click(object sender, RoutedEventArgs e)
@@ -536,6 +599,62 @@ public partial class MainWindow : Window
             $"Suggested {estimate.Value.SuggestedSizeMb} MB for a {minutes}-minute buffer, based on {estimate.Value.Source} (~{estimate.Value.AssumedBitrateKbps} kbps).\n\n" +
             "Click \"Save & apply\" to actually use it.",
             "Backtrack");
+    }
+
+    private void BufferDurationSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e) => RefreshBufferDurationUi();
+
+    /// <summary>
+    /// Updates the value label and, using the same bitrate-estimate logic as
+    /// the RAM disk size suggester, warns if a full flush at this length
+    /// likely won't fit the *currently configured* RAM disk size. This is an
+    /// estimate based on OBS's main output bitrate config, not each Source
+    /// Record filter's own (possibly different) encoder settings -- it can be
+    /// off for a filter with an unusually high or low bitrate of its own.
+    /// </summary>
+    private void RefreshBufferDurationUi()
+    {
+        // The Slider's Minimum/Maximum being set during InitializeComponent()
+        // coerces its Value and fires ValueChanged immediately -- before the
+        // constructor body below InitializeComponent() has assigned _settings.
+        if (_settings is null)
+            return;
+
+        int minutes = (int)BufferDurationSlider.Value;
+        BufferDurationValueText.Text = $"{minutes:00}:00";
+
+        if (!_settings.RamDiskEnabled)
+        {
+            BufferDurationWarningText.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        ReplayBufferSizing.Estimate? estimate = ReplayBufferSizing.TryEstimate(minutes);
+        if (estimate is null || estimate.Value.SuggestedSizeMb <= _settings.RamDiskSizeMb)
+        {
+            BufferDurationWarningText.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        BufferDurationWarningText.Text =
+            $"⚠ A full flush at {minutes} min is estimated at ~{estimate.Value.SuggestedSizeMb} MB (~{estimate.Value.AssumedBitrateKbps} kbps), " +
+            $"more than your {_settings.RamDiskSizeMb} MB RAM disk. Saves at this length risk failing outright -- shorten this or grow the RAM disk first.";
+        BufferDurationWarningText.Visibility = Visibility.Visible;
+    }
+
+    private async void ApplyBufferDuration_Click(object sender, RoutedEventArgs e)
+    {
+        int minutes = (int)BufferDurationSlider.Value;
+        _settings.ReplayBufferMinutes = minutes;
+        _settings.Save();
+
+        try
+        {
+            await _obs.SetReplayBufferDurationAsync(minutes * 60);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, $"Couldn't reach the Replay Slider bridge: {ex.Message}", "Backtrack");
+        }
     }
 
     private void RegisterHotkeyFromSettings()
@@ -786,6 +905,13 @@ public partial class MainWindow : Window
         }
     }
 
+    /// <summary>Circle = idle (matches the universal "record" glyph); red square = recording (matches "stop").</summary>
+    private void SetRecordIcon(bool active)
+    {
+        RecordDot.Visibility = active ? Visibility.Collapsed : Visibility.Visible;
+        RecordSquare.Visibility = active ? Visibility.Visible : Visibility.Collapsed;
+    }
+
     private async Task RefreshStatusAsync()
     {
         _trayManager?.UpdateStatus(_obs.IsConnected, _statusOverlay.IsVisible);
@@ -799,7 +925,7 @@ public partial class MainWindow : Window
                 : _obs.LastError is null ? "Not connected to OBS" : $"OBS: {_obs.LastError}";
             RecordLabel.Text = "Start Recording";
             RecordStatusText.Text = "--:--";
-            RecordDot.Fill = (Brush)FindResource("Text1");
+            SetRecordIcon(active: false);
             ReplayStatus.Text = "Off";
             ReplayStatus.Foreground = (Brush)FindResource("Text2");
             SaveReplayIcon.Foreground = (Brush)FindResource("Text0");
@@ -817,20 +943,28 @@ public partial class MainWindow : Window
         {
             RecordStatus recStatus = await _obs.GetRecordStatusAsync();
             RecordLabel.Text = recStatus.Active ? "Stop Recording" : "Start Recording";
-            RecordDot.Fill = (Brush)FindResource(recStatus.Active ? "Rec" : "Text1");
+            SetRecordIcon(recStatus.Active);
             RecordStatusText.Text = recStatus.Active ? FormatDuration(recStatus.DurationMs) : "--:--";
             _statusOverlay.SetRecording(recStatus.Active);
 
             // Not just OBS's single global replay-buffer flag: obs-replay-slider (and
             // obs-source-record, exposed through the same bridge) can each have their
-            // own buffer armed independently of it, so a row showing green (Status != 0)
+            // own buffer armed independently of it, so a row showing green (Status == 1)
             // must count as "on" here too -- otherwise this pill can say "Off" while a
             // buffer row is visibly active, which is exactly backwards.
+            //
+            // Status == 2 is a row in an ERROR state (e.g. a buffer that failed to
+            // save), not merely inactive -- lumping it into "anything nonzero counts as
+            // on" makes an errored buffer show as green "On", hiding the exact thing
+            // this pill exists to surface. Error must outrank active, which outranks off.
             bool replayBufferActive = await _obs.GetReplayBufferActiveAsync();
             bool anyRowActive = false;
+            bool anyRowError = false;
             try
             {
-                anyRowActive = (await _obs.ListReplayRowsAsync()).Any(r => r.Status != 0);
+                List<ReplayRow> rows = await _obs.ListReplayRowsAsync();
+                anyRowActive = rows.Any(r => r.Status == 1);
+                anyRowError = rows.Any(r => r.Status == 2);
             }
             catch
             {
@@ -838,10 +972,11 @@ public partial class MainWindow : Window
             }
             bool replayActive = replayBufferActive || anyRowActive;
 
-            ReplayStatus.Text = replayActive ? "On" : "Off";
-            ReplayStatus.Foreground = (Brush)FindResource(replayActive ? "Green" : "Text2");
-            SaveReplayIcon.Foreground = (Brush)FindResource(replayActive ? "Green" : "Text0");
-            _statusOverlay.SetReplayOnline(replayActive);
+            string replayStateColor = anyRowError ? "Rec" : replayActive ? "Green" : "Text2";
+            ReplayStatus.Text = anyRowError ? "Error" : replayActive ? "On" : "Off";
+            ReplayStatus.Foreground = (Brush)FindResource(replayStateColor);
+            SaveReplayIcon.Foreground = (Brush)FindResource(anyRowError ? "Rec" : replayActive ? "Green" : "Text0");
+            _statusOverlay.SetReplayOnline(replayActive && !anyRowError);
         }
         catch
         {
@@ -892,6 +1027,9 @@ public partial class MainWindow : Window
     {
         ShowScreen(Screen.Settings);
         LoadSettingsUi();
+        _ = LoadBufferVisibilityUi();
+        RefreshRamDiskRemoteGating();
+        RefreshPluginStatusRemoteGating();
     }
 
     private void ToggleFullscreen_Click(object sender, RoutedEventArgs e)
@@ -935,13 +1073,85 @@ public partial class MainWindow : Window
         foreach (ReplayRow row in rows)
             _rowLabels[row.Key] = row.Label;
 
-        _lastReplayRows = rows;
+        // Still tracked (above) for save notifications even while hidden -- a
+        // buffer saved via its own OBS hotkey should still announce a real
+        // name, hiding it here only means "don't show it as a button to save
+        // from," not "pretend it doesn't exist."
+        List<ReplayRow> visibleRows = rows.Where(r => !_settings.HiddenBufferLabels.Contains(r.Label)).ToList();
+        _lastReplayRows = visibleRows;
+
+        if (visibleRows.Count == 0)
+        {
+            AddInfoLine(BufRowsPanel, "All buffers are hidden -- unhide one in Settings > Buffers.");
+            return;
+        }
 
         // Online (armed) buffers first -- everything else keeps its original order after them.
-        foreach (ReplayRow row in rows.OrderBy(r => r.Status == 1 ? 0 : 1))
+        foreach (ReplayRow row in visibleRows.OrderBy(r => r.Status == 1 ? 0 : 1))
             BufRowsPanel.Children.Add(BuildRowButton(row));
 
-        BufRowsPanel.Children.Add(BuildSharedClipLengthControl(rows));
+        BufRowsPanel.Children.Add(BuildSharedClipLengthControl(visibleRows));
+    }
+
+    /// <summary>
+    /// Settings > Buffers: one toggle row per buffer the bridge currently
+    /// reports, independent of whether it's presently hidden -- a hidden
+    /// buffer still needs to show up here so it can be turned back on.
+    /// </summary>
+    private async Task LoadBufferVisibilityUi()
+    {
+        BufferVisibilityPanel.Children.Clear();
+
+        if (!_obs.IsConnected)
+        {
+            AddInfoLine(BufferVisibilityPanel, "Not connected to OBS.");
+            return;
+        }
+
+        List<ReplayRow> rows;
+        try
+        {
+            rows = await _obs.ListReplayRowsAsync();
+        }
+        catch (Exception ex)
+        {
+            AddInfoLine(BufferVisibilityPanel, $"Could not reach the Replay Slider bridge: {ex.Message}");
+            return;
+        }
+
+        if (rows.Count == 0)
+        {
+            AddInfoLine(BufferVisibilityPanel, "No replay buffers found.");
+            return;
+        }
+
+        foreach (ReplayRow row in rows)
+            BufferVisibilityPanel.Children.Add(BuildBufferVisibilityRow(row.Label));
+    }
+
+    private Border BuildBufferVisibilityRow(string label)
+    {
+        var toggle = new ToggleButton { Style = (Style)FindResource("AppToggle"), VerticalAlignment = VerticalAlignment.Center };
+        toggle.IsChecked = !_settings.HiddenBufferLabels.Contains(label);
+        toggle.Click += (_, _) =>
+        {
+            if (toggle.IsChecked == true)
+                _settings.HiddenBufferLabels.Remove(label);
+            else
+                _settings.HiddenBufferLabels.Add(label);
+            _settings.Save();
+        };
+
+        var grid = new Grid();
+        grid.ColumnDefinitions.Add(new ColumnDefinition());
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        var name = new TextBlock { Text = label, FontSize = 13, FontWeight = FontWeights.Bold, Foreground = (Brush)FindResource("Text0"), VerticalAlignment = VerticalAlignment.Center };
+        Grid.SetColumn(name, 0);
+        Grid.SetColumn(toggle, 1);
+        grid.Children.Add(name);
+        grid.Children.Add(toggle);
+
+        return new Border { Style = (Style)FindResource("SettingsRow"), Child = grid };
     }
 
     private Button BuildRowButton(ReplayRow row)
@@ -2340,6 +2550,8 @@ public partial class MainWindow : Window
     {
         LaunchWithWindowsToggle.IsChecked = _settings.LaunchWithWindows;
         ClipsFolderText.Text = _settings.ClipsFolder;
+        BufferDurationSlider.Value = _settings.ReplayBufferMinutes;
+        RefreshBufferDurationUi();
 
         ObsRemoteToggle.IsChecked = _settings.ObsIsRemote;
         ObsRemoteFields.Visibility = _settings.ObsIsRemote ? Visibility.Visible : Visibility.Collapsed;
@@ -2597,10 +2809,135 @@ public partial class MainWindow : Window
             (string url, string? password, _serverEnabledAtStartup) = ResolveObsConnection();
             _obs.Reconfigure(url, password);
             _ = RefreshStatusAsync();
+            RefreshRamDiskRemoteGating();
+            RefreshPluginStatusRemoteGating();
         }
         catch (Exception ex)
         {
             MessageBox.Show(this, $"Couldn't apply that OBS connection: {ex.Message}", "Backtrack");
+        }
+    }
+
+    /// <summary>
+    /// RAM disk is the one setting that's genuinely local to whichever PC runs
+    /// OBS -- unlike buffer duration/hidden buffers, which already work fine
+    /// remotely since they're just obs-websocket calls. Greys out the local
+    /// section (mounting a drive here would be a silent no-op if OBS is remote)
+    /// and shows the transmitter-control panel instead.
+    /// </summary>
+    private void RefreshRamDiskRemoteGating()
+    {
+        bool remote = _settings.ObsIsRemote;
+        RamDiskRemoteNotice.Visibility = remote ? Visibility.Visible : Visibility.Collapsed;
+        LocalRamDiskSection.IsEnabled = !remote;
+        RemoteRamDiskSection.Visibility = remote ? Visibility.Visible : Visibility.Collapsed;
+
+        if (remote)
+            _ = LoadRemoteRamDiskUi();
+    }
+
+    private async Task LoadRemoteRamDiskUi()
+    {
+        if (string.IsNullOrEmpty(_settings.PairedPeerSecret))
+        {
+            RemoteRamDiskStatusText.Text = "Not paired with a transmitter PC yet -- pair with it first (below, in OBS section).";
+            RemoteRamDiskFields.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        RemoteRamDiskStatusText.Text = $"Loading from {_settings.PairedPeerName}...";
+        RemoteRamDiskFields.Visibility = Visibility.Collapsed;
+
+        RamDiskSnapshot? snapshot = await _pairing.GetRemoteRamDiskSettingsAsync();
+        if (snapshot is null)
+        {
+            RemoteRamDiskStatusText.Text = $"Couldn't reach {_settings.PairedPeerName}'s Backtrack -- make sure it's running and re-open Settings to retry.";
+            return;
+        }
+
+        RemoteRamDiskStatusText.Text = snapshot.Enabled
+            ? (snapshot.Mounted
+                ? $"Mounted at {snapshot.DriveLetter}:\\ ({snapshot.SizeMb} MB) on {_settings.PairedPeerName}"
+                : $"Enabled on {_settings.PairedPeerName}, but not currently mounted")
+            : $"Off on {_settings.PairedPeerName}";
+        RemoteRamDiskFields.Visibility = Visibility.Visible;
+        RemoteRamDiskToggle.IsChecked = snapshot.Enabled;
+        RemoteRamDiskDriveBox.Text = snapshot.DriveLetter.ToString();
+        RemoteRamDiskSizeBox.Text = snapshot.SizeMb.ToString();
+    }
+
+    private async void ApplyRemoteRamDiskSettings_Click(object sender, RoutedEventArgs e)
+    {
+        string driveText = RemoteRamDiskDriveBox.Text.Trim().TrimEnd(':');
+        if (driveText.Length != 1 || !char.IsLetter(driveText[0]))
+        {
+            MessageBox.Show(this, "Drive letter must be a single letter, e.g. R.", "Backtrack");
+            return;
+        }
+        if (!int.TryParse(RemoteRamDiskSizeBox.Text.Trim(), out int sizeMb) || sizeMb < 256)
+        {
+            MessageBox.Show(this, "Size must be a number of megabytes, at least 256.", "Backtrack");
+            return;
+        }
+
+        bool enabled = RemoteRamDiskToggle.IsChecked == true;
+        (bool success, string? error) = await _pairing.SetRemoteRamDiskSettingsAsync(enabled, char.ToUpperInvariant(driveText[0]), sizeMb);
+        if (!success)
+        {
+            MessageBox.Show(this, $"Couldn't apply on the transmitter PC: {error}", "Backtrack");
+            return;
+        }
+
+        await LoadRemoteRamDiskUi();
+    }
+
+    /// <summary>See RefreshRamDiskRemoteGating's comment -- same reasoning, different setting.</summary>
+    private void RefreshPluginStatusRemoteGating()
+    {
+        bool remote = _settings.ObsIsRemote;
+        LocalPluginStatusRows.IsEnabled = !remote;
+        PluginStatusRemoteNotice.Visibility = remote ? Visibility.Visible : Visibility.Collapsed;
+        RemotePluginSection.Visibility = remote ? Visibility.Visible : Visibility.Collapsed;
+
+        if (remote)
+            RefreshRemotePluginStatusText();
+    }
+
+    private void RefreshRemotePluginStatusText()
+    {
+        RemotePluginStatusText.Text = string.IsNullOrEmpty(_settings.PairedPeerSecret)
+            ? "Not paired with a transmitter PC yet -- pair with it first (below, in OBS section)."
+            : $"Paired with {_settings.PairedPeerName}. Click \"Check & update\" to check its plugin versions.";
+    }
+
+    private async void CheckRemotePluginsButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (string.IsNullOrEmpty(_settings.PairedPeerSecret))
+        {
+            RefreshRemotePluginStatusText();
+            return;
+        }
+
+        CheckRemotePluginsButton.IsEnabled = false;
+        RemotePluginStatusText.Text = $"Checking on {_settings.PairedPeerName}...";
+        try
+        {
+            PluginVersionsSnapshot? snapshot = await _pairing.CheckRemotePluginUpdatesAsync();
+            if (snapshot is null)
+            {
+                RemotePluginStatusText.Text = $"Couldn't reach {_settings.PairedPeerName}'s Backtrack -- make sure it's running.";
+                RemotePluginRows.Visibility = Visibility.Collapsed;
+                return;
+            }
+
+            RemotePluginStatusText.Text = $"Checked on {_settings.PairedPeerName}.";
+            RemotePluginRows.Visibility = Visibility.Visible;
+            SetUpdateStatus(RemoteReplaySliderStatusDot, RemoteReplaySliderVersionText, snapshot.ReplaySlider.InstalledVersion, snapshot.ReplaySlider.Ok);
+            SetUpdateStatus(RemoteSourceRecordStatusDot, RemoteSourceRecordVersionText, snapshot.SourceRecord.InstalledVersion, snapshot.SourceRecord.Ok);
+        }
+        finally
+        {
+            CheckRemotePluginsButton.IsEnabled = true;
         }
     }
 

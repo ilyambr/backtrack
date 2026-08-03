@@ -4,6 +4,7 @@ using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
+using System.Windows.Shapes;
 using System.Windows.Threading;
 using Backtrack.Interop;
 
@@ -46,16 +47,35 @@ public partial class ToastOverlay : Window
         }
     }
 
-    public void ShowRecording(bool started, string? resolvedPath) =>
-        Show(started ? "\u25cf" : "\u25a0", started ? Rec : Text2,
-            started ? "Recording started" : "Recording saved",
+    public void ShowRecording(bool started, string? resolvedPath)
+    {
+        // A real shape instead of a bigger text glyph for the "started" dot --
+        // matching the record tile's own Ellipse gives pixel-exact size and
+        // centering, where a bigger font glyph (tried first) doesn't reliably
+        // center against a TextBlock's line and inflates the row's own height
+        // to fit its larger em-box. Explicit Width/Height keeps it fixed at 10px
+        // regardless of the row's height, so it can't grow the toast at all.
+        UIElement icon = started
+            ? new Ellipse { Width = 10, Height = 10, Fill = Rec, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 10, 0) }
+            : GlyphIcon("\u25a0", Text2);
+        Show(icon, started ? Rec : Text2, started ? "Recording started" : "Recording saved",
             resolvedPath is null ? null : $"Saved at '{resolvedPath}'");
+    }
 
     public void ShowReplaySaved(string label, string resolvedPath) =>
-        Show("\u21bb", Green, $"{label} saved", $"Saved at '{resolvedPath}'");
+        Show(GlyphIcon("\u21bb", Green), Green, $"{label} saved", $"Saved at '{resolvedPath}'");
 
     public void ShowUpdateApplied(string component, string version) =>
-        Show("\u2b06", Green, $"{component} updated", $"Now on version {version}");
+        Show(GlyphIcon("\u2b06", Green), Green, $"{component} updated", $"Now on version {version}");
+
+    private static TextBlock GlyphIcon(string glyph, Brush color) => new()
+    {
+        Text = glyph,
+        FontSize = 14,
+        Foreground = color,
+        Margin = new Thickness(0, 1, 10, 0),
+        VerticalAlignment = VerticalAlignment.Top,
+    };
 
     /// <summary>Shows a 5-second toast with sliding status indicator and Undo button; calls onExpire only if not undone.</summary>
     public void ShowDeleteUndo(string clipName, Action onExpire, Action? onUndo = null)
@@ -168,22 +188,13 @@ public partial class ToastOverlay : Window
         timer.Start();
     }
 
-    private void Show(string icon, Brush iconColor, string message, string? subMessage)
+    private void Show(UIElement icon, Brush accentColor, string message, string? subMessage)
     {
         IntPtr hwnd = new WindowInteropHelper(this).Handle;
         if (hwnd != IntPtr.Zero)
         {
             WindowZOrder.BringToFrontWithoutActivating(hwnd);
         }
-
-        var iconBlock = new TextBlock
-        {
-            Text = icon,
-            FontSize = 14,
-            Foreground = iconColor,
-            Margin = new Thickness(0, 1, 10, 0),
-            VerticalAlignment = VerticalAlignment.Top
-        };
 
         var msg = new TextBlock { Text = message, FontWeight = FontWeights.Bold, FontSize = 12.5, Foreground = Text0 };
         var body = new StackPanel();
@@ -202,12 +213,12 @@ public partial class ToastOverlay : Window
         }
 
         var row = new StackPanel { Orientation = Orientation.Horizontal };
-        row.Children.Add(iconBlock);
+        row.Children.Add(icon);
         row.Children.Add(body);
 
         // Sliding Status Indicator (Progress Bar at Bottom)
         var progressTrack = new Grid { Height = 3, Background = new SolidColorBrush(Color.FromArgb(40, 255, 255, 255)), VerticalAlignment = VerticalAlignment.Bottom };
-        var progressFill = new Border { Background = iconColor, HorizontalAlignment = HorizontalAlignment.Left };
+        var progressFill = new Border { Background = accentColor, HorizontalAlignment = HorizontalAlignment.Left };
         progressTrack.Children.Add(progressFill);
 
         var cardContent = new StackPanel();

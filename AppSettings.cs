@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Text.Json;
 
@@ -75,6 +76,22 @@ public sealed class AppSettings
     // step in OBS's own Settings > Output > Replay Buffer, not something
     // Backtrack can do for the user on every launch.
     public bool RamDiskInstructionShown { get; set; }
+
+    // Pushed to every Source Record filter's own replay_duration via the
+    // replay-slider bridge (set_buffer_duration) -- this is the buffer that
+    // actually gets flushed to disk (the RAM disk, if enabled) on every save,
+    // not the trimmed clip length. 30 min default; UI allows up to 60 min
+    // with a RAM allocation warning since a full flush at that length can
+    // exceed a modest RAM disk's size.
+    public int ReplayBufferMinutes { get; set; } = 30;
+
+    // Buffers hidden from the "Save which buffer?" screen -- keyed by the row's
+    // Label (e.g. "Replay Buffer", "elgato - Source Record"), not its Key. A
+    // row's Key is that filter object's in-memory address for this OBS session
+    // (see the plugin's RefreshAll -- there's no stable UUID to use instead),
+    // so it changes every OBS restart; the Label is what's actually stable
+    // across restarts as long as the source/filter itself isn't renamed.
+    public HashSet<string> HiddenBufferLabels { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 
     private static string FilePath => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Backtrack", "settings.json");

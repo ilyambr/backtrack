@@ -511,6 +511,8 @@
                             <Grid Width="20" Height="20" Margin="0,0,0,6" HorizontalAlignment="Center">
                                 <Ellipse x:Name="RecordDot" Width="14" Height="14" Fill="{StaticResource Text1}"
                                          HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                <Rectangle x:Name="RecordSquare" Width="12" Height="12" Fill="{StaticResource Rec}"
+                                           Visibility="Collapsed" HorizontalAlignment="Center" VerticalAlignment="Center"/>
                             </Grid>
                             <TextBlock x:Name="RecordLabel" Text="Start Recording" Style="{StaticResource TileLabel}"/>
                             <TextBlock x:Name="RecordStatusText" Text=" " Style="{StaticResource TileStatus}"/>
@@ -850,29 +852,79 @@
                                         <TextBlock Grid.Column="1" Text="Backtrack" FontSize="12" FontWeight="Bold" Foreground="{StaticResource Text0}" VerticalAlignment="Center"/>
                                         <TextBlock x:Name="BacktrackVersionText" Grid.Column="2" Text="—" FontSize="11.5" Foreground="{StaticResource Text2}" VerticalAlignment="Center"/>
                                     </Grid>
-                                    <Grid Margin="0,0,0,10">
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="Auto"/>
-                                            <ColumnDefinition/>
-                                            <ColumnDefinition Width="Auto"/>
-                                        </Grid.ColumnDefinitions>
-                                        <Ellipse x:Name="ReplaySliderStatusDot" Grid.Column="0" Width="8" Height="8" Fill="{StaticResource Text2}" VerticalAlignment="Center" Margin="0,0,10,0"/>
-                                        <TextBlock Grid.Column="1" Text="Replay Slider" FontSize="12" FontWeight="Bold" Foreground="{StaticResource Text0}" VerticalAlignment="Center"/>
-                                        <TextBlock x:Name="ReplaySliderVersionText" Grid.Column="2" Text="—" FontSize="11.5" Foreground="{StaticResource Text2}" VerticalAlignment="Center"/>
-                                    </Grid>
-                                    <Grid Margin="0,0,0,4">
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="Auto"/>
-                                            <ColumnDefinition/>
-                                            <ColumnDefinition Width="Auto"/>
-                                        </Grid.ColumnDefinitions>
-                                        <Ellipse x:Name="SourceRecordStatusDot" Grid.Column="0" Width="8" Height="8" Fill="{StaticResource Text2}" VerticalAlignment="Center" Margin="0,0,10,0"/>
-                                        <TextBlock Grid.Column="1" Text="Source Record" FontSize="12" FontWeight="Bold" Foreground="{StaticResource Text0}" VerticalAlignment="Center"/>
-                                        <TextBlock x:Name="SourceRecordVersionText" Grid.Column="2" Text="—" FontSize="11.5" Foreground="{StaticResource Text2}" VerticalAlignment="Center"/>
-                                    </Grid>
+                                    <!-- Grey, not hidden, when OBS is remote: these two read/write
+                                         C:\Program Files\obs-studio on THIS machine, which is the
+                                         wrong PC's OBS install when remote. Backtrack's own row
+                                         above stays active since self-update is per-instance either way. -->
+                                    <StackPanel x:Name="LocalPluginStatusRows">
+                                        <Grid Margin="0,0,0,10">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="Auto"/>
+                                                <ColumnDefinition/>
+                                                <ColumnDefinition Width="Auto"/>
+                                            </Grid.ColumnDefinitions>
+                                            <Ellipse x:Name="ReplaySliderStatusDot" Grid.Column="0" Width="8" Height="8" Fill="{StaticResource Text2}" VerticalAlignment="Center" Margin="0,0,10,0"/>
+                                            <TextBlock Grid.Column="1" Text="Replay Slider" FontSize="12" FontWeight="Bold" Foreground="{StaticResource Text0}" VerticalAlignment="Center"/>
+                                            <TextBlock x:Name="ReplaySliderVersionText" Grid.Column="2" Text="—" FontSize="11.5" Foreground="{StaticResource Text2}" VerticalAlignment="Center"/>
+                                        </Grid>
+                                        <Grid Margin="0,0,0,4">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="Auto"/>
+                                                <ColumnDefinition/>
+                                                <ColumnDefinition Width="Auto"/>
+                                            </Grid.ColumnDefinitions>
+                                            <Ellipse x:Name="SourceRecordStatusDot" Grid.Column="0" Width="8" Height="8" Fill="{StaticResource Text2}" VerticalAlignment="Center" Margin="0,0,10,0"/>
+                                            <TextBlock Grid.Column="1" Text="Source Record" FontSize="12" FontWeight="Bold" Foreground="{StaticResource Text0}" VerticalAlignment="Center"/>
+                                            <TextBlock x:Name="SourceRecordVersionText" Grid.Column="2" Text="—" FontSize="11.5" Foreground="{StaticResource Text2}" VerticalAlignment="Center"/>
+                                        </Grid>
+                                    </StackPanel>
+                                    <TextBlock x:Name="PluginStatusRemoteNotice" Visibility="Collapsed"
+                                               Text="OBS is on a different PC -- these two check/update the PC this Backtrack is running on, not the transmitter. See &quot;Transmitter's plugins&quot; below instead."
+                                               FontSize="10.5" Foreground="{StaticResource Rec}" TextWrapping="Wrap" Margin="0,0,0,4"/>
                                 </StackPanel>
                             </StackPanel>
                         </Border>
+
+                        <StackPanel x:Name="RemotePluginSection" Visibility="Collapsed" Margin="0,0,0,4">
+                            <Border Style="{StaticResource SettingsRow}">
+                                <StackPanel>
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel VerticalAlignment="Center">
+                                            <TextBlock Text="Transmitter's plugins" FontSize="13" FontWeight="Bold" Foreground="{StaticResource Text0}"/>
+                                            <TextBlock x:Name="RemotePluginStatusText" Text="Not paired with a transmitter PC yet." FontSize="11" Foreground="{StaticResource Text2}" Margin="0,3,0,0" TextWrapping="Wrap"/>
+                                        </StackPanel>
+                                        <Button x:Name="CheckRemotePluginsButton" Grid.Column="1" Content="Check &amp; update" Style="{StaticResource FlatButton}" VerticalAlignment="Center" Click="CheckRemotePluginsButton_Click"/>
+                                    </Grid>
+                                    <StackPanel x:Name="RemotePluginRows" Visibility="Collapsed" Margin="0,14,0,4">
+                                        <Grid Margin="0,0,0,10">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="Auto"/>
+                                                <ColumnDefinition/>
+                                                <ColumnDefinition Width="Auto"/>
+                                            </Grid.ColumnDefinitions>
+                                            <Ellipse x:Name="RemoteReplaySliderStatusDot" Grid.Column="0" Width="8" Height="8" Fill="{StaticResource Text2}" VerticalAlignment="Center" Margin="0,0,10,0"/>
+                                            <TextBlock Grid.Column="1" Text="Replay Slider" FontSize="12" FontWeight="Bold" Foreground="{StaticResource Text0}" VerticalAlignment="Center"/>
+                                            <TextBlock x:Name="RemoteReplaySliderVersionText" Grid.Column="2" Text="—" FontSize="11.5" Foreground="{StaticResource Text2}" VerticalAlignment="Center"/>
+                                        </Grid>
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="Auto"/>
+                                                <ColumnDefinition/>
+                                                <ColumnDefinition Width="Auto"/>
+                                            </Grid.ColumnDefinitions>
+                                            <Ellipse x:Name="RemoteSourceRecordStatusDot" Grid.Column="0" Width="8" Height="8" Fill="{StaticResource Text2}" VerticalAlignment="Center" Margin="0,0,10,0"/>
+                                            <TextBlock Grid.Column="1" Text="Source Record" FontSize="12" FontWeight="Bold" Foreground="{StaticResource Text0}" VerticalAlignment="Center"/>
+                                            <TextBlock x:Name="RemoteSourceRecordVersionText" Grid.Column="2" Text="—" FontSize="11.5" Foreground="{StaticResource Text2}" VerticalAlignment="Center"/>
+                                        </Grid>
+                                    </StackPanel>
+                                </StackPanel>
+                            </Border>
+                        </StackPanel>
+
                         <Border Style="{StaticResource SettingsRow}">
                             <Grid>
                                 <Grid.ColumnDefinitions>
@@ -898,56 +950,103 @@
                                 <Button Grid.Column="1" Content="Change" Style="{StaticResource FlatButton}" VerticalAlignment="Center" Click="ChangeClipsFolder_Click"/>
                             </Grid>
                         </Border>
-                        <Border Style="{StaticResource SettingsRow}">
-                            <Grid>
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition/>
-                                    <ColumnDefinition Width="Auto"/>
-                                </Grid.ColumnDefinitions>
-                                <TextBlock Text="Max clip length" FontSize="13" FontWeight="Bold" Foreground="{StaticResource Text0}" VerticalAlignment="Center"/>
-                                <TextBlock Grid.Column="1" Text="60:00 (fixed by Replay Slider)" FontSize="11" Foreground="{StaticResource Text2}" VerticalAlignment="Center"/>
-                            </Grid>
-                        </Border>
-
-                        <TextBlock Text="RAM DISK" Style="{StaticResource SettingsSectionHeader}"/>
                         <Border Style="{StaticResource SettingsRow}" BorderThickness="0">
                             <Grid>
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition/>
                                     <ColumnDefinition Width="Auto"/>
                                 </Grid.ColumnDefinitions>
-                                <StackPanel VerticalAlignment="Center">
-                                    <TextBlock Text="Mount a RAM disk for OBS's replay buffer" FontSize="13" FontWeight="Bold" Foreground="{StaticResource Text0}"/>
-                                    <TextBlock x:Name="RamDiskStatusText" Text="Off" FontSize="11" Foreground="{StaticResource Text2}" Margin="0,3,0,0" TextWrapping="Wrap"/>
-                                </StackPanel>
-                                <ToggleButton x:Name="RamDiskToggle" Grid.Column="1" Style="{StaticResource AppToggle}" VerticalAlignment="Center" Click="RamDiskToggle_Click"/>
+                                <TextBlock Text="Replay buffer length" FontSize="13" FontWeight="Bold" Foreground="{StaticResource Text0}" VerticalAlignment="Center"/>
+                                <TextBlock x:Name="BufferDurationValueText" Grid.Column="1" Text="30:00" FontSize="11" Foreground="{StaticResource Text2}" VerticalAlignment="Center"/>
                             </Grid>
                         </Border>
-                        <StackPanel x:Name="RamDiskFields" Visibility="Collapsed" Margin="0,14,0,6">
-                            <TextBlock Text="Uses ImDisk (free, open source) to create a virtual RAM drive. Point OBS's Replay Buffer output path (Settings &gt; Output &gt; Replay Buffer) at the drive letter below -- that's a one-time manual step, since OBS has no API for Backtrack to set it automatically."
+                        <StackPanel Margin="0,0,0,10">
+                            <TextBlock Text="How much footage each Source Record filter keeps armed and flushes to disk in one shot on every save -- not the same as the trimmed clip length below. Longer reaches back further but writes more all at once; 30 min is a safe default, up to 60 min if your RAM disk (and its actual encoder bitrate) can take it."
+                                       FontSize="11" Foreground="{StaticResource Text2}" TextWrapping="Wrap" Margin="0,0,0,8"/>
+                            <Slider x:Name="BufferDurationSlider" Minimum="1" Maximum="60" TickFrequency="1" IsSnapToTickEnabled="True" ValueChanged="BufferDurationSlider_ValueChanged"/>
+                            <TextBlock x:Name="BufferDurationWarningText" FontSize="10.5" Foreground="{StaticResource Rec}" TextWrapping="Wrap" Visibility="Collapsed" Margin="0,6,0,0"/>
+                            <Button Content="Save &amp; apply" Style="{StaticResource FlatButton}" HorizontalAlignment="Left" Margin="0,10,0,0" Click="ApplyBufferDuration_Click"/>
+                        </StackPanel>
+
+                        <TextBlock Text="BUFFERS" Style="{StaticResource SettingsSectionHeader}"/>
+                        <StackPanel Margin="0,0,0,10">
+                            <TextBlock Text="Hide a buffer to drop it from the &quot;Save which buffer?&quot; screen -- it keeps buffering and can still be saved from its own OBS hotkey, it just won't show as a button here until you turn it back on."
                                        FontSize="11" Foreground="{StaticResource Text2}" TextWrapping="Wrap" Margin="0,0,0,10"/>
-                            <TextBlock Text="Drive letter and size (MB)" FontSize="11" FontWeight="Bold" Foreground="{StaticResource Text1}" Margin="0,0,0,6"/>
-                            <Grid Margin="0,0,0,6">
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="60"/>
-                                    <ColumnDefinition Width="10"/>
-                                    <ColumnDefinition/>
-                                </Grid.ColumnDefinitions>
-                                <TextBox x:Name="RamDiskDriveBox" Background="#0BFFFFFF" Foreground="{StaticResource Text0}" CaretBrush="{StaticResource Text0}" BorderThickness="0" Padding="10,8" MaxLength="1" TextAlignment="Center"/>
-                                <TextBox x:Name="RamDiskSizeBox" Grid.Column="2" Background="#0BFFFFFF" Foreground="{StaticResource Text0}" CaretBrush="{StaticResource Text0}" BorderThickness="0" Padding="10,8"/>
-                            </Grid>
-                            <TextBlock Text="Start small and raise it once you've confirmed OBS is actually writing there -- a full buffer at high bitrate can need several GB."
-                                       FontSize="10.5" Foreground="{StaticResource Text2}" TextWrapping="Wrap" Margin="0,0,0,10"/>
-                            <Grid Margin="0,0,0,10">
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="70"/>
-                                    <ColumnDefinition Width="8"/>
-                                    <ColumnDefinition/>
-                                </Grid.ColumnDefinitions>
-                                <TextBox x:Name="RamDiskTargetMinutesBox" Background="#0BFFFFFF" Foreground="{StaticResource Text0}" CaretBrush="{StaticResource Text0}" BorderThickness="0" Padding="10,8" Text="10"/>
-                                <Button Grid.Column="2" Content="Suggest size (minutes above) from OBS's settings" Style="{StaticResource FlatButton}" HorizontalAlignment="Left" Click="SuggestRamDiskSize_Click"/>
-                            </Grid>
-                            <Button Content="Save &amp; apply" Style="{StaticResource FlatButton}" HorizontalAlignment="Left" Click="ApplyRamDiskSettings_Click"/>
+                            <StackPanel x:Name="BufferVisibilityPanel"/>
+                        </StackPanel>
+
+                        <TextBlock Text="RAM DISK" Style="{StaticResource SettingsSectionHeader}"/>
+                        <TextBlock x:Name="RamDiskRemoteNotice" Visibility="Collapsed"
+                                   Text="OBS is on a different PC right now, so a RAM disk mounted here wouldn't be the one OBS actually writes to. This section is disabled -- use &quot;Transmitter's RAM disk&quot; below instead, which controls it on the PC that's actually running OBS."
+                                   FontSize="11" Foreground="{StaticResource Rec}" TextWrapping="Wrap" Margin="0,0,0,10"/>
+                        <StackPanel x:Name="LocalRamDiskSection">
+                            <Border Style="{StaticResource SettingsRow}" BorderThickness="0">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel VerticalAlignment="Center">
+                                        <TextBlock Text="Mount a RAM disk for OBS's replay buffer" FontSize="13" FontWeight="Bold" Foreground="{StaticResource Text0}"/>
+                                        <TextBlock x:Name="RamDiskStatusText" Text="Off" FontSize="11" Foreground="{StaticResource Text2}" Margin="0,3,0,0" TextWrapping="Wrap"/>
+                                    </StackPanel>
+                                    <ToggleButton x:Name="RamDiskToggle" Grid.Column="1" Style="{StaticResource AppToggle}" VerticalAlignment="Center" Click="RamDiskToggle_Click"/>
+                                </Grid>
+                            </Border>
+                            <StackPanel x:Name="RamDiskFields" Visibility="Collapsed" Margin="0,14,0,6">
+                                <TextBlock Text="Uses ImDisk (free, open source) to create a virtual RAM drive. Point OBS's Replay Buffer output path (Settings &gt; Output &gt; Replay Buffer) at the drive letter below -- that's a one-time manual step, since OBS has no API for Backtrack to set it automatically."
+                                           FontSize="11" Foreground="{StaticResource Text2}" TextWrapping="Wrap" Margin="0,0,0,10"/>
+                                <TextBlock Text="Drive letter and size (MB)" FontSize="11" FontWeight="Bold" Foreground="{StaticResource Text1}" Margin="0,0,0,6"/>
+                                <Grid Margin="0,0,0,6">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="60"/>
+                                        <ColumnDefinition Width="10"/>
+                                        <ColumnDefinition/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBox x:Name="RamDiskDriveBox" Background="#0BFFFFFF" Foreground="{StaticResource Text0}" CaretBrush="{StaticResource Text0}" BorderThickness="0" Padding="10,8" MaxLength="1" TextAlignment="Center"/>
+                                    <TextBox x:Name="RamDiskSizeBox" Grid.Column="2" Background="#0BFFFFFF" Foreground="{StaticResource Text0}" CaretBrush="{StaticResource Text0}" BorderThickness="0" Padding="10,8"/>
+                                </Grid>
+                                <TextBlock Text="Start small and raise it once you've confirmed OBS is actually writing there -- a full buffer at high bitrate can need several GB."
+                                           FontSize="10.5" Foreground="{StaticResource Text2}" TextWrapping="Wrap" Margin="0,0,0,10"/>
+                                <Grid Margin="0,0,0,10">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="70"/>
+                                        <ColumnDefinition Width="8"/>
+                                        <ColumnDefinition/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBox x:Name="RamDiskTargetMinutesBox" Background="#0BFFFFFF" Foreground="{StaticResource Text0}" CaretBrush="{StaticResource Text0}" BorderThickness="0" Padding="10,8" Text="10"/>
+                                    <Button Grid.Column="2" Content="Suggest size (minutes above) from OBS's settings" Style="{StaticResource FlatButton}" HorizontalAlignment="Left" Click="SuggestRamDiskSize_Click"/>
+                                </Grid>
+                                <Button Content="Save &amp; apply" Style="{StaticResource FlatButton}" HorizontalAlignment="Left" Click="ApplyRamDiskSettings_Click"/>
+                            </StackPanel>
+                        </StackPanel>
+
+                        <StackPanel x:Name="RemoteRamDiskSection" Visibility="Collapsed" Margin="0,0,0,10">
+                            <TextBlock Text="TRANSMITTER'S RAM DISK" Style="{StaticResource SettingsSectionHeader}"/>
+                            <TextBlock x:Name="RemoteRamDiskStatusText" Text="Not paired with a transmitter PC yet." FontSize="11" Foreground="{StaticResource Text2}" TextWrapping="Wrap" Margin="0,0,0,10"/>
+                            <StackPanel x:Name="RemoteRamDiskFields" Visibility="Collapsed">
+                                <Grid Margin="0,0,0,6">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Text="Enabled" FontSize="13" FontWeight="Bold" Foreground="{StaticResource Text0}" VerticalAlignment="Center"/>
+                                    <ToggleButton x:Name="RemoteRamDiskToggle" Grid.Column="1" Style="{StaticResource AppToggle}" VerticalAlignment="Center"/>
+                                </Grid>
+                                <TextBlock Text="Drive letter and size (MB)" FontSize="11" FontWeight="Bold" Foreground="{StaticResource Text1}" Margin="0,6,0,6"/>
+                                <Grid Margin="0,0,0,10">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="60"/>
+                                        <ColumnDefinition Width="10"/>
+                                        <ColumnDefinition/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBox x:Name="RemoteRamDiskDriveBox" Background="#0BFFFFFF" Foreground="{StaticResource Text0}" CaretBrush="{StaticResource Text0}" BorderThickness="0" Padding="10,8" MaxLength="1" TextAlignment="Center"/>
+                                    <TextBox x:Name="RemoteRamDiskSizeBox" Grid.Column="2" Background="#0BFFFFFF" Foreground="{StaticResource Text0}" CaretBrush="{StaticResource Text0}" BorderThickness="0" Padding="10,8"/>
+                                </Grid>
+                                <!-- One shared "apply everything at once" button, unlike the local section's
+                                     immediate-toggle: avoids a second round-trip just for the enabled flag. -->
+                                <Button Content="Save &amp; apply on transmitter" Style="{StaticResource FlatButton}" HorizontalAlignment="Left" Click="ApplyRemoteRamDiskSettings_Click"/>
+                            </StackPanel>
                         </StackPanel>
 
                         <TextBlock Text="OBS" Style="{StaticResource SettingsSectionHeader}"/>

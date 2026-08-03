@@ -305,8 +305,8 @@ public sealed class ObsService
     /// tell it to move trimmed clips off the RAM disk (see Interop/RamDisk.cs)
     /// onto persistent storage the moment trimming finishes. Needs the
     /// set-dest-dir bridge PR merged into the plugin; older builds just error
-    /// here harmlessly, leaving the dock's own manual "Move clips to:" field as
-    /// the fallback.
+    /// here harmlessly. There's no manual fallback UI for this in the dock
+    /// itself (removed) since this app is the only thing that ever sets it.
     /// </summary>
     public async Task SetReplayDestDirAsync(string path)
     {
@@ -315,6 +315,23 @@ public sealed class ObsService
             ["vendorName"] = "replay-buffer-slider",
             ["requestType"] = "set_dest_dir",
             ["requestData"] = new Dictionary<string, object?> { ["path"] = path },
+        });
+    }
+
+    /// <summary>
+    /// Pushes a new replay_duration (seconds) onto every Source Record filter
+    /// the plugin is currently tracking -- this is the buffer that gets
+    /// flushed to disk in full on every save, not the trimmed clip length (see
+    /// SetReplayRowLengthAsync for that). Needs the set-buffer-duration bridge
+    /// PR merged into the plugin; older builds just error here harmlessly.
+    /// </summary>
+    public async Task SetReplayBufferDurationAsync(int seconds)
+    {
+        await _client.RequestAsync("CallVendorRequest", new Dictionary<string, object?>
+        {
+            ["vendorName"] = "replay-buffer-slider",
+            ["requestType"] = "set_buffer_duration",
+            ["requestData"] = new Dictionary<string, object?> { ["seconds"] = seconds },
         });
     }
 }
