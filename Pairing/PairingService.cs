@@ -18,6 +18,15 @@ public enum PairingOutcome { Approved, Denied, TimedOut, Failed }
 
 public sealed record PairingResult(PairingOutcome Outcome, string? Secret = null, string? Error = null);
 
+/// <summary>A snapshot of one instance's RAM disk config, sent over the wire so a paired PC can view/change it remotely.</summary>
+public sealed record RamDiskSnapshot(bool Enabled, char DriveLetter, int SizeMb, bool Mounted);
+
+/// <summary>Ok: true = confirmed current (already was, or just got updated); false = check/update failed; null = not checked yet.</summary>
+public sealed record PluginVersionInfo(string InstalledVersion, bool? Ok);
+
+/// <summary>Result of a remote-triggered check-and-apply for both companion OBS plugins.</summary>
+public sealed record PluginVersionsSnapshot(PluginVersionInfo ReplaySlider, PluginVersionInfo SourceRecord);
+
 /// <summary>
 /// Discovery + pairing handshake between two Backtrack installs on the same LAN.
 /// Deliberately plain TCP/UDP sockets with a tiny newline-delimited JSON protocol,
@@ -215,6 +224,9 @@ public sealed class PairingService : IDisposable
                 {
                     "pair_request" => HandlePairRequest(doc.RootElement),
                     "pair_status" => HandlePairStatus(doc.RootElement),
+                    "get_ramdisk_settings" => HandleGetRamDiskSettings(doc.RootElement),
+                    "set_ramdisk_settings" => await HandleSetRamDiskSettingsAsync(doc.RootElement),
+                    "check_plugin_updates" => await HandleCheckPluginUpdatesAsync(doc.RootElement),
                     _ => JsonSerializer.Serialize(new { error = "unknown request type" }),
                 };
 
@@ -251,6 +263,181 @@ public sealed class PairingService : IDisposable
 
         _pendingRequests.TryRemove(requestId, out _);
         return JsonSerializer.Serialize(new PairStatusResponse(pending.Approved ? "approved" : "denied", pending.Secret));
+    }
+
+    // ------------------------------------------------ host: remote RAM disk control
+    //
+    // RAM disk is the one Backtrack setting that's genuinely local to whichever PC
+    // runs OBS -- unlike everything else in Settings (buffer duration, hidden
+    // buffers, etc.), which already works fine remotely since it's just an
+    // obs-websocket call that doesn't care which machine it's talking to. A paired
+    // receiver PC needs an actual channel to read/change it on the transmitter, so
+    // this reuses the same paired-client secret the "Share my clips" handshake
+    // already established, rather than inventing a second trust mechanism.
+
+    /// <summary>Set by MainWindow so an authenticated request can read this instance's live RAM disk state.</summary>
+    public Func<RamDiskSnapshot>? GetRamDiskSnapshot { get; set; }
+
+    /// <summary>Set by MainWindow so an authenticated request can actually apply a new configuration (mount/unmount, save, push to OBS).</summary>
+    public Func<bool, char, int, Task<(bool Success, string? Error)>>? ApplyRamDiskSnapshot { get; set; }
+
+    private string HandleGetRamDiskSettings(JsonElement request)
+    {
+        if (!IsAuthorizedClient(request))
+            return JsonSerializer.Serialize(new { error = "Not authorized -- pair with this PC first." });
+
+        RamDiskSnapshot? snapshot = GetRamDiskSnapshot?.Invoke();
+        if (snapshot is null)
+            return JsonSerializer.Serialize(new { error = "RAM disk control isn't wired up on this instance." });
+
+        return JsonSerializer.Serialize(snapshot);
+    }
+
+    private async Task<string> HandleSetRamDiskSettingsAsync(JsonElement request)
+    {
+        if (!IsAuthorizedClient(request))
+            return JsonSerializer.Serialize(new { success = false, error = "Not authorized -- pair with this PC first." });
+
+        if (ApplyRamDiskSnapshot is null)
+            return JsonSerializer.Serialize(new { success = false, error = "RAM disk control isn't wired up on this instance." });
+
+        bool enabled = request.TryGetProperty("enabled", out JsonElement e) && e.GetBoolean();
+        string driveText = request.TryGetProperty("driveLetter", out JsonElement d) ? d.GetString() ?? "R" : "R";
+        char driveLetter = driveText.Length > 0 ? char.ToUpperInvariant(driveText[0]) : 'R';
+        int sizeMb = request.TryGetProperty("sizeMb", out JsonElement s) ? s.GetInt32() : 2048;
+
+        (bool success, string? error) = await ApplyRamDiskSnapshot(enabled, driveLetter, sizeMb);
+        return JsonSerializer.Serialize(new { success, error });
+    }
+
+    /// <summary>
+    /// Constant-time compare against this instance's own AuthorizedClientSecret --
+    /// that field only gets set once a human on this PC has actually clicked
+    /// "Allow" on a pairing request (see ApproveRequest), so it doubles as "is
+    /// anyone even paired with this PC" and "does this caller know the secret."
+    /// </summary>
+    private bool IsAuthorizedClient(JsonElement request)
+    {
+        if (string.IsNullOrEmpty(_settings.AuthorizedClientSecret))
+            return false;
+
+        string secret = request.TryGetProperty("secret", out JsonElement s) ? s.GetString() ?? "" : "";
+        return CryptographicOperations.FixedTimeEquals(
+            Encoding.UTF8.GetBytes(secret), Encoding.UTF8.GetBytes(_settings.AuthorizedClientSecret));
+    }
+
+    // ---------------------------------------------- client: remote RAM disk control
+
+    /// <summary>Fetches the paired transmitter PC's current RAM disk configuration. Null if not paired, unreachable, or denied.</summary>
+    public async Task<RamDiskSnapshot?> GetRemoteRamDiskSettingsAsync()
+    {
+        if (string.IsNullOrEmpty(_settings.PairedPeerHost) || string.IsNullOrEmpty(_settings.PairedPeerSecret))
+            return null;
+
+        try
+        {
+            using var client = new TcpClient();
+            await client.ConnectAsync(_settings.PairedPeerHost, _settings.PairedPeerPort);
+            string request = JsonSerializer.Serialize(new { type = "get_ramdisk_settings", secret = _settings.PairedPeerSecret });
+            await WriteLineAsync(client.GetStream(), request);
+            string? responseLine = await ReadLineAsync(client.GetStream());
+            if (responseLine is null)
+                return null;
+
+            using JsonDocument doc = JsonDocument.Parse(responseLine);
+            if (doc.RootElement.TryGetProperty("error", out _))
+                return null;
+
+            return JsonSerializer.Deserialize<RamDiskSnapshot>(responseLine);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    /// <summary>Asks the paired transmitter PC to apply a new RAM disk configuration.</summary>
+    public async Task<(bool Success, string? Error)> SetRemoteRamDiskSettingsAsync(bool enabled, char driveLetter, int sizeMb)
+    {
+        if (string.IsNullOrEmpty(_settings.PairedPeerHost) || string.IsNullOrEmpty(_settings.PairedPeerSecret))
+            return (false, "Not paired with a transmitter PC.");
+
+        try
+        {
+            using var client = new TcpClient();
+            await client.ConnectAsync(_settings.PairedPeerHost, _settings.PairedPeerPort);
+            string request = JsonSerializer.Serialize(new
+            {
+                type = "set_ramdisk_settings",
+                secret = _settings.PairedPeerSecret,
+                enabled,
+                driveLetter = driveLetter.ToString(),
+                sizeMb,
+            });
+            await WriteLineAsync(client.GetStream(), request);
+            string? responseLine = await ReadLineAsync(client.GetStream());
+            if (responseLine is null)
+                return (false, "No response from the transmitter PC.");
+
+            using JsonDocument doc = JsonDocument.Parse(responseLine);
+            bool success = doc.RootElement.TryGetProperty("success", out JsonElement s) && s.GetBoolean();
+            string? error = doc.RootElement.TryGetProperty("error", out JsonElement er) ? er.GetString() : null;
+            return (success, error);
+        }
+        catch (Exception ex)
+        {
+            return (false, ex.Message);
+        }
+    }
+
+    // -------------------------------------------- host/client: remote plugin updates
+    //
+    // Same shape as RAM disk above: obs-replay-slider/obs-source-record version
+    // checking and auto-updating reads/writes a hardcoded local OBS install path
+    // (see UpdateService), so it's just as wrong to run from a receiver PC as
+    // mounting a RAM disk there is. Reuses the same paired-client secret.
+
+    /// <summary>Set by MainWindow so an authenticated request can trigger the real check-and-apply on this instance and get the result back.</summary>
+    public Func<Task<PluginVersionsSnapshot>>? CheckAndApplyPluginUpdatesRemotely { get; set; }
+
+    private async Task<string> HandleCheckPluginUpdatesAsync(JsonElement request)
+    {
+        if (!IsAuthorizedClient(request))
+            return JsonSerializer.Serialize(new { error = "Not authorized -- pair with this PC first." });
+
+        if (CheckAndApplyPluginUpdatesRemotely is null)
+            return JsonSerializer.Serialize(new { error = "Plugin update control isn't wired up on this instance." });
+
+        PluginVersionsSnapshot snapshot = await CheckAndApplyPluginUpdatesRemotely();
+        return JsonSerializer.Serialize(snapshot);
+    }
+
+    /// <summary>Triggers a real check-and-apply of both OBS plugins on the paired transmitter PC. Null if not paired, unreachable, or denied.</summary>
+    public async Task<PluginVersionsSnapshot?> CheckRemotePluginUpdatesAsync()
+    {
+        if (string.IsNullOrEmpty(_settings.PairedPeerHost) || string.IsNullOrEmpty(_settings.PairedPeerSecret))
+            return null;
+
+        try
+        {
+            using var client = new TcpClient();
+            await client.ConnectAsync(_settings.PairedPeerHost, _settings.PairedPeerPort);
+            string request = JsonSerializer.Serialize(new { type = "check_plugin_updates", secret = _settings.PairedPeerSecret });
+            await WriteLineAsync(client.GetStream(), request);
+            string? responseLine = await ReadLineAsync(client.GetStream());
+            if (responseLine is null)
+                return null;
+
+            using JsonDocument doc = JsonDocument.Parse(responseLine);
+            if (doc.RootElement.TryGetProperty("error", out _))
+                return null;
+
+            return JsonSerializer.Deserialize<PluginVersionsSnapshot>(responseLine);
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     /// <summary>Called from the PairingRequestOverlay's Allow button.</summary>
