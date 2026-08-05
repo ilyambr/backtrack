@@ -371,7 +371,7 @@
                                 </Grid>
                             </Border>
 
-                            <Popup x:Name="Popup" IsOpen="{TemplateBinding IsDropDownOpen}" AllowsTransparency="True" Placement="Bottom" PopupAnimation="None">
+                            <Popup x:Name="Popup" IsOpen="{TemplateBinding IsDropDownOpen}" AllowsTransparency="True" Placement="Bottom" PopupAnimation="Fade">
                                 <Border Background="{StaticResource PanelBg}" BorderBrush="{StaticResource Hairline}" BorderThickness="1"
                                         MinWidth="{Binding ActualWidth, RelativeSource={RelativeSource TemplatedParent}}">
                                     <ItemsPresenter/>
@@ -826,6 +826,20 @@
                                 </Grid.ColumnDefinitions>
                                 <TextBlock Text="Show alpha disclaimer" FontSize="13" FontWeight="Bold" Foreground="{StaticResource Text0}" VerticalAlignment="Center"/>
                                 <ToggleButton x:Name="ShowDisclaimerToggle" Grid.Column="1" Style="{StaticResource AppToggle}" VerticalAlignment="Center" Click="ShowDisclaimerToggle_Click"/>
+                            </Grid>
+                        </Border>
+                        <Border Style="{StaticResource SettingsRow}">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <StackPanel VerticalAlignment="Center">
+                                    <TextBlock Text="Display" FontSize="13" FontWeight="Bold" Foreground="{StaticResource Text0}"/>
+                                    <TextBlock Text="Which monitor the overlay (and its toasts/status HUD) shows up on." FontSize="11" Foreground="{StaticResource Text2}" Margin="0,3,0,0" TextWrapping="Wrap"/>
+                                </StackPanel>
+                                <ComboBox x:Name="DisplaySelector" Grid.Column="1" Width="200" Style="{StaticResource ModernComboBox}"
+                                          DisplayMemberPath="Name" SelectedValuePath="DeviceName" SelectionChanged="DisplaySelector_SelectionChanged"/>
                             </Grid>
                         </Border>
                         <Border Style="{StaticResource SettingsRow}">

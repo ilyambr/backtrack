@@ -5,7 +5,7 @@ using System.Threading.Tasks;
 
 namespace Backtrack.Obs;
 
-public sealed record ReplayRow(string Key, string Label, string Hotkey, int Status, int LengthSeconds);
+public sealed record ReplayRow(string Key, string Label, string Hotkey, int Status, int LengthSeconds, string DestDir);
 
 public sealed record RecordStatus(bool Active, long DurationMs);
 
@@ -273,7 +273,8 @@ public sealed class ObsService
                     item.GetProperty("label").GetString() ?? "",
                     item.TryGetProperty("hotkey", out JsonElement hk) ? hk.GetString() ?? "" : "",
                     item.TryGetProperty("status", out JsonElement st) ? st.GetInt32() : 0,
-                    item.TryGetProperty("length_seconds", out JsonElement ls) ? ls.GetInt32() : 60));
+                    item.TryGetProperty("length_seconds", out JsonElement ls) ? ls.GetInt32() : 60,
+                    item.TryGetProperty("dest_dir", out JsonElement dd) ? dd.GetString() ?? "" : ""));
             }
         }
         return rows;
@@ -297,6 +298,22 @@ public sealed class ObsService
             ["vendorName"] = "replay-buffer-slider",
             ["requestType"] = "set_row_length",
             ["requestData"] = new Dictionary<string, object?> { ["key"] = key, ["seconds"] = seconds },
+        });
+    }
+
+    /// <summary>
+    /// Per-row override of SetReplayDestDirAsync below -- lets one specific
+    /// buffer's clips land in their own subfolder instead of the shared clips
+    /// folder. Empty path clears the override. Needs the set-row-dest-dir
+    /// bridge PR merged into the plugin; older builds just error here harmlessly.
+    /// </summary>
+    public async Task SetReplayRowDestDirAsync(string key, string path)
+    {
+        await _client.RequestAsync("CallVendorRequest", new Dictionary<string, object?>
+        {
+            ["vendorName"] = "replay-buffer-slider",
+            ["requestType"] = "set_row_dest_dir",
+            ["requestData"] = new Dictionary<string, object?> { ["key"] = key, ["path"] = path },
         });
     }
 

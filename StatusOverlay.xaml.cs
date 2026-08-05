@@ -20,8 +20,7 @@ public partial class StatusOverlay : Window
         InitializeComponent();
         Loaded += (_, _) =>
         {
-            Left = SystemParameters.PrimaryScreenWidth - Width - 5;
-            Top = 6;
+            Reposition();
             IntPtr hwnd = new WindowInteropHelper(this).Handle;
             ClickThrough.Enable(hwnd);
             ToolWindow.Enable(hwnd);
@@ -29,6 +28,14 @@ public partial class StatusOverlay : Window
             _fadeTimer.Tick += (_, _) => UpdateFadeByProximity();
             _fadeTimer.Start();
         };
+    }
+
+    /// <summary>Re-reads the configured display -- called again from Settings if the user changes which monitor Backtrack shows on mid-session.</summary>
+    public void Reposition()
+    {
+        Rect screenBounds = DisplayMonitors.ResolveBoundsDiu(AppSettings.Load().DisplayDeviceName);
+        Left = screenBounds.X + screenBounds.Width - Width - 5;
+        Top = screenBounds.Y + 6;
     }
 
     /// <summary>Eases Opacity toward a target based on cursor distance each tick, instead of snapping Visibility on enter/leave.</summary>

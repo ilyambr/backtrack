@@ -29,8 +29,9 @@ public partial class PairingRequestOverlay : Window
         CodeText.Text = string.Join(" ", code.ToCharArray());
 
         Show();
-        Left = (SystemParameters.PrimaryScreenWidth - ActualWidth) / 2;
-        Top = (SystemParameters.PrimaryScreenHeight - ActualHeight) / 2;
+        Rect bounds = DisplayMonitors.ResolveBoundsDiu(AppSettings.Load().DisplayDeviceName);
+        Left = bounds.X + (bounds.Width - ActualWidth) / 2;
+        Top = bounds.Y + (bounds.Height - ActualHeight) / 2;
         Activate();
 
         _secondsRemaining = 60;

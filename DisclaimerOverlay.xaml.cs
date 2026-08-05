@@ -21,12 +21,16 @@ public partial class DisclaimerOverlay : Window
         // fire Loaded before its first real layout pass finishes, leaving
         // ActualWidth/Height at 0 and positioning this off-screen. SizeChanged
         // fires again once the real (wrapped-text) size is known, self-correcting.
-        SizeChanged += (_, _) =>
-        {
-            Left = (SystemParameters.PrimaryScreenWidth - ActualWidth) / 2;
-            Top = SystemParameters.PrimaryScreenHeight - ActualHeight - 14;
-        };
+        SizeChanged += (_, _) => Reposition();
         Loaded += (_, _) => ToolWindow.Enable(new WindowInteropHelper(this).Handle);
+    }
+
+    /// <summary>Re-reads the configured display -- called again from Settings if the user changes which monitor Backtrack shows on mid-session.</summary>
+    public void Reposition()
+    {
+        Rect bounds = DisplayMonitors.ResolveBoundsDiu(AppSettings.Load().DisplayDeviceName);
+        Left = bounds.X + (bounds.Width - ActualWidth) / 2;
+        Top = bounds.Y + bounds.Height - ActualHeight - 14;
     }
 
     private void Hyperlink_RequestNavigate(object sender, RequestNavigateEventArgs e)

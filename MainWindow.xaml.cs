@@ -46,6 +46,9 @@ public partial class MainWindow : Window
     private const string RunKeyName = "Backtrack";
     private const string ScheduledTaskName = "BacktrackAutostart";
 
+    /// <summary>Re-resolved on every access (cheap: one EnumDisplayMonitors call) so a display change in Settings takes effect on the next reposition without an app restart.</summary>
+    private Rect TargetScreenBounds => DisplayMonitors.ResolveBoundsDiu(_settings.DisplayDeviceName);
+
     private readonly ObsService _obs;
     private bool _serverEnabledAtStartup;
     private readonly DispatcherTimer _pollTimer;
@@ -214,8 +217,8 @@ public partial class MainWindow : Window
         // acrylic blur, but must never actually appear until the hotkey is
         // pressed -- EnsureHandle() creates it without calling Show().
         IntPtr hwnd = new WindowInteropHelper(this).EnsureHandle();
-        Left = (SystemParameters.PrimaryScreenWidth - Width) / 2;
-        Top = CompactTop;
+        Left = TargetScreenBounds.X + (TargetScreenBounds.Width - Width) / 2;
+        Top = TargetScreenBounds.Y + CompactTop;
         Acrylic.TryEnableBlurBehind(hwnd, 16, 17, 19, 205);
         // This is a hotkey-summoned HUD, not an independent app window -- it and
         // every auxiliary overlay window (Status/Toast/Scrim/Disclaimer/Logo) were
@@ -823,13 +826,14 @@ public partial class MainWindow : Window
 
         bool big = screen is Screen.Gallery or Screen.Player;
         Width = screen == Screen.Settings ? WideWidth : big ? BigWidth() : CompactWidth;
-        Left = (SystemParameters.PrimaryScreenWidth - Width) / 2;
+        Rect targetBounds = TargetScreenBounds;
+        Left = targetBounds.X + (targetBounds.Width - Width) / 2;
 
         if (screen == Screen.Settings)
         {
-            double maxScrollHeight = Math.Max(SystemParameters.PrimaryScreenHeight - 260, 450);
+            double maxScrollHeight = Math.Max(targetBounds.Height - 260, 450);
             SettingsScrollHost.MaxHeight = maxScrollHeight;
-            Top = Math.Max((SystemParameters.PrimaryScreenHeight - (maxScrollHeight + 80)) / 2, 85);
+            Top = targetBounds.Y + Math.Max((targetBounds.Height - (maxScrollHeight + 80)) / 2, 85);
         }
         else if (big)
         {
@@ -837,7 +841,7 @@ public partial class MainWindow : Window
         }
         else
         {
-            Top = CompactTop;
+            Top = targetBounds.Y + CompactTop;
         }
 
         PlayerOverlayPopup.IsOpen = screen == Screen.Player;
@@ -864,7 +868,7 @@ public partial class MainWindow : Window
     /// the actual on-screen height is driven by content, not a Window.Height
     /// set here.
     /// </summary>
-    private double BigWidth() => Math.Min(SystemParameters.PrimaryScreenWidth * 0.78, 1500);
+    private double BigWidth() => Math.Min(TargetScreenBounds.Width * 0.78, 1500);
 
     private void ApplyBigScreenSize()
     {
@@ -881,7 +885,7 @@ public partial class MainWindow : Window
         // the same size panel, not different sizes depending on which you're on.
         PlayerVideoHost.Height = contentHeight;
         GalleryScrollHost.MaxHeight = contentHeight;
-        Top = BigTop;
+        Top = TargetScreenBounds.Y + BigTop;
     }
 
     private void BackToIdle_Click(object sender, MouseButtonEventArgs e) => ShowScreen(Screen.Idle);
@@ -954,9 +958,11 @@ public partial class MainWindow : Window
             // buffer row is visibly active, which is exactly backwards.
             //
             // Status == 2 is a row in an ERROR state (e.g. a buffer that failed to
-            // save), not merely inactive -- lumping it into "anything nonzero counts as
-            // on" makes an errored buffer show as green "On", hiding the exact thing
-            // this pill exists to surface. Error must outrank active, which outranks off.
+            // save), not merely inactive. Active must outrank error, though, not the
+            // other way around -- with multiple buffers, one being broken doesn't mean
+            // replay saving as a whole is down if another one is still working; saying
+            // "Error" while a buffer is visibly green and armed is just as backwards as
+            // saying "Off" was. Error only wins when NOTHING is currently active.
             bool replayBufferActive = await _obs.GetReplayBufferActiveAsync();
             bool anyRowActive = false;
             bool anyRowError = false;
@@ -971,12 +977,13 @@ public partial class MainWindow : Window
                 // Bridge unreachable this tick -- fall back to just the base OBS flag.
             }
             bool replayActive = replayBufferActive || anyRowActive;
+            bool showError = anyRowError && !replayActive;
 
-            string replayStateColor = anyRowError ? "Rec" : replayActive ? "Green" : "Text2";
-            ReplayStatus.Text = anyRowError ? "Error" : replayActive ? "On" : "Off";
+            string replayStateColor = replayActive ? "Green" : showError ? "Rec" : "Text2";
+            ReplayStatus.Text = replayActive ? "On" : showError ? "Error" : "Off";
             ReplayStatus.Foreground = (Brush)FindResource(replayStateColor);
-            SaveReplayIcon.Foreground = (Brush)FindResource(anyRowError ? "Rec" : replayActive ? "Green" : "Text0");
-            _statusOverlay.SetReplayOnline(replayActive && !anyRowError);
+            SaveReplayIcon.Foreground = (Brush)FindResource(replayActive ? "Green" : showError ? "Rec" : "Text0");
+            _statusOverlay.SetReplayOnline(replayActive);
         }
         catch
         {
@@ -1126,11 +1133,12 @@ public partial class MainWindow : Window
         }
 
         foreach (ReplayRow row in rows)
-            BufferVisibilityPanel.Children.Add(BuildBufferVisibilityRow(row.Label));
+            BufferVisibilityPanel.Children.Add(BuildBufferVisibilityRow(row));
     }
 
-    private Border BuildBufferVisibilityRow(string label)
+    private Border BuildBufferVisibilityRow(ReplayRow row)
     {
+        string label = row.Label;
         var toggle = new ToggleButton { Style = (Style)FindResource("AppToggle"), VerticalAlignment = VerticalAlignment.Center };
         toggle.IsChecked = !_settings.HiddenBufferLabels.Contains(label);
         toggle.Click += (_, _) =>
@@ -1142,16 +1150,101 @@ public partial class MainWindow : Window
             _settings.Save();
         };
 
-        var grid = new Grid();
-        grid.ColumnDefinitions.Add(new ColumnDefinition());
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        var topGrid = new Grid();
+        topGrid.ColumnDefinitions.Add(new ColumnDefinition());
+        topGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         var name = new TextBlock { Text = label, FontSize = 13, FontWeight = FontWeights.Bold, Foreground = (Brush)FindResource("Text0"), VerticalAlignment = VerticalAlignment.Center };
         Grid.SetColumn(name, 0);
         Grid.SetColumn(toggle, 1);
-        grid.Children.Add(name);
-        grid.Children.Add(toggle);
+        topGrid.Children.Add(name);
+        topGrid.Children.Add(toggle);
 
-        return new Border { Style = (Style)FindResource("SettingsRow"), Child = grid };
+        var folderLabel = new TextBlock
+        {
+            Text = DescribeRowDestDir(row.DestDir),
+            FontSize = 11,
+            Foreground = (Brush)FindResource("Text2"),
+            VerticalAlignment = VerticalAlignment.Center,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+        };
+        var folderButton = new Button { Content = "Folder", Style = (Style)FindResource("FlatButton"), VerticalAlignment = VerticalAlignment.Center };
+        folderButton.Click += async (_, _) => await PickBufferDestFolderAsync(row.Key, folderLabel);
+
+        var bottomGrid = new Grid { Margin = new Thickness(0, 8, 0, 0) };
+        bottomGrid.ColumnDefinitions.Add(new ColumnDefinition());
+        bottomGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        Grid.SetColumn(folderLabel, 0);
+        Grid.SetColumn(folderButton, 1);
+        bottomGrid.Children.Add(folderLabel);
+        bottomGrid.Children.Add(folderButton);
+
+        var container = new StackPanel();
+        container.Children.Add(topGrid);
+        container.Children.Add(bottomGrid);
+
+        return new Border { Style = (Style)FindResource("SettingsRow"), Child = container };
+    }
+
+    private string DescribeRowDestDir(string destDir)
+    {
+        if (string.IsNullOrEmpty(destDir))
+            return "Not set -- clips stay wherever this buffer writes them";
+        return IsWithinClipsFolder(destDir, out string relative)
+            ? (relative.Length == 0 ? "Main clips folder" : relative)
+            : destDir; // outside the clips folder somehow (e.g. set by hand) -- show the raw path rather than hide it
+    }
+
+    /// <summary>True if path is ClipsFolder itself or somewhere under it; relative is "" for the former.</summary>
+    private bool IsWithinClipsFolder(string path, out string relative)
+    {
+        string clipsFolder = Path.GetFullPath(_settings.ClipsFolder).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        string full = Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+
+        if (full.Equals(clipsFolder, StringComparison.OrdinalIgnoreCase))
+        {
+            relative = "";
+            return true;
+        }
+        if (full.StartsWith(clipsFolder + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+        {
+            relative = full[(clipsFolder.Length + 1)..];
+            return true;
+        }
+        relative = "";
+        return false;
+    }
+
+    /// <summary>
+    /// Lets one specific buffer's clips land in their own subfolder of the main
+    /// clips folder -- e.g. a distinct folder per game/source. Constrained to
+    /// somewhere inside ClipsFolder, not anywhere on disk, since Gallery only
+    /// ever browses within that same tree (see LoadGallery's own comment).
+    /// </summary>
+    private async Task PickBufferDestFolderAsync(string rowKey, TextBlock folderLabel)
+    {
+        try
+        {
+            Directory.CreateDirectory(_settings.ClipsFolder);
+            var dialog = new OpenFolderDialog { InitialDirectory = _settings.ClipsFolder };
+            if (dialog.ShowDialog(this) != true)
+                return;
+
+            if (!IsWithinClipsFolder(dialog.FolderName, out string relative))
+            {
+                MessageBox.Show(this, "Pick a folder inside your clips folder -- Gallery only browses within that tree.", "Backtrack");
+                return;
+            }
+
+            string absolutePath = relative.Length == 0 ? _settings.ClipsFolder : Path.Combine(_settings.ClipsFolder, relative);
+            Directory.CreateDirectory(absolutePath);
+
+            await _obs.SetReplayRowDestDirAsync(rowKey, absolutePath);
+            folderLabel.Text = relative.Length == 0 ? "Main clips folder" : relative;
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, $"Couldn't set that folder: {ex.Message}", "Backtrack");
+        }
     }
 
     private Button BuildRowButton(ReplayRow row)
@@ -1304,7 +1397,7 @@ public partial class MainWindow : Window
         try
         {
             return Directory.Exists(_settings.ClipsFolder)
-                ? Directory.EnumerateFiles(_settings.ClipsFolder)
+                ? Directory.EnumerateFiles(_settings.ClipsFolder, "*", SearchOption.AllDirectories)
                     .Count(f => VideoExtensions.Contains(Path.GetExtension(f).ToLowerInvariant()))
                 : 0;
         }
@@ -2562,6 +2655,8 @@ public partial class MainWindow : Window
         ShowDisclaimerToggle.IsChecked = _settings.ShowDisclaimer;
         HotkeyCaptureButton.Content = FormatHotkey((GlobalHotkey.Modifiers)_settings.HotkeyModifiers, (uint)_settings.HotkeyVirtualKey);
 
+        LoadDisplaySelector();
+
         ShareClipsToggle.IsChecked = _settings.ShareClipsEnabled;
         RefreshShareClipsStatusText();
         RefreshPairingStatusUi();
@@ -2580,6 +2675,48 @@ public partial class MainWindow : Window
         SetUpdateStatus(BacktrackStatusDot, BacktrackVersionText, UpdateService.CurrentAppVersion.ToString(3), ok: null);
         SetUpdateStatus(ReplaySliderStatusDot, ReplaySliderVersionText, _updates.GetInstalledPluginVersion("replay-slider.dll").ToString(3), ok: null);
         SetUpdateStatus(SourceRecordStatusDot, SourceRecordVersionText, _updates.GetInstalledPluginVersion("source-record.dll").ToString(3), ok: null);
+    }
+
+    private sealed record DisplayOption(string DeviceName, string Name);
+
+    private void LoadDisplaySelector()
+    {
+        List<DisplayInfo> displays = DisplayMonitors.GetAll();
+        var options = displays.Select((d, i) => new DisplayOption(
+            d.DeviceName,
+            $"Display {i + 1}{(d.IsPrimary ? " (Primary)" : "")} — {(int)d.BoundsDiu.Width}x{(int)d.BoundsDiu.Height}")).ToList();
+
+        // Unsubscribed/resubscribed around populating -- ItemsSource/SelectedValue
+        // assignment below would otherwise fire SelectionChanged and immediately
+        // re-save+reposition everything just from opening Settings.
+        DisplaySelector.SelectionChanged -= DisplaySelector_SelectionChanged;
+        DisplaySelector.ItemsSource = options;
+        DisplaySelector.SelectedValue = string.IsNullOrEmpty(_settings.DisplayDeviceName)
+            ? options.FirstOrDefault(o => displays.First(d => d.DeviceName == o.DeviceName).IsPrimary)?.DeviceName
+            : _settings.DisplayDeviceName;
+        if (DisplaySelector.SelectedItem is null && options.Count > 0)
+            DisplaySelector.SelectedIndex = 0;
+        DisplaySelector.SelectionChanged += DisplaySelector_SelectionChanged;
+    }
+
+    private void DisplaySelector_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (DisplaySelector.SelectedValue is not string deviceName)
+            return;
+
+        _settings.DisplayDeviceName = deviceName;
+        _settings.Save();
+
+        // Re-anchors every already-open window to the new monitor immediately,
+        // rather than waiting for whatever would naturally reposition it next
+        // (MainWindow's own next screen change; some of the auxiliary overlays
+        // otherwise only ever position once, in their constructor).
+        ShowScreen(Screen.Settings);
+        _statusOverlay.Reposition();
+        _scrim.Reposition();
+        _disclaimer.Reposition();
+        _logo.Reposition();
+        _toastOverlay.UpdatePosition(true);
     }
 
     private void ObsRemoteToggle_Click(object sender, RoutedEventArgs e)
@@ -2977,14 +3114,25 @@ public partial class MainWindow : Window
 
     private static void CreateOrUpdateStartupTask()
     {
+        // No /RL HIGHEST -- that requests the task run elevated, which schtasks.exe
+        // itself refuses to REGISTER unless the calling process already has admin
+        // rights (Access is denied), regardless of what happens at ONLOGON time.
+        // Backtrack never needs to run elevated (only the RAM disk driver install
+        // does, and that's its own separate, explicit UAC prompt via RamDisk.cs),
+        // so this was failing "Launch with Windows" outright for any non-admin
+        // account -- which is most of them -- for a feature that has no actual
+        // reason to need elevation at all.
         string exePath = Environment.ProcessPath ?? Process.GetCurrentProcess().MainModule!.FileName;
         var psi = new ProcessStartInfo("schtasks.exe",
-            $"/Create /F /SC ONLOGON /RL HIGHEST /TN \"{ScheduledTaskName}\" /TR \"\\\"{exePath}\\\"\"")
-        { UseShellExecute = false, CreateNoWindow = true };
+            $"/Create /F /SC ONLOGON /TN \"{ScheduledTaskName}\" /TR \"\\\"{exePath}\\\"\"")
+        { UseShellExecute = false, RedirectStandardError = true, CreateNoWindow = true };
         using Process proc = Process.Start(psi)!;
+        string stderr = proc.StandardError.ReadToEnd();
         proc.WaitForExit();
         if (proc.ExitCode != 0)
-            throw new InvalidOperationException("schtasks.exe failed to create the startup task.");
+            throw new InvalidOperationException(string.IsNullOrWhiteSpace(stderr)
+                ? "schtasks.exe failed to create the startup task."
+                : $"schtasks.exe failed to create the startup task: {stderr.Trim()}");
     }
 
     private static void DeleteStartupTask()

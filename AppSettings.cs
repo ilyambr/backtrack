@@ -35,6 +35,13 @@ public sealed class AppSettings
 
     public bool ShowDisclaimer { get; set; } = true;
 
+    // Which monitor the overlay and all its auxiliary windows appear on --
+    // Win32's own per-monitor device name (e.g. "\\.\DISPLAY1"), not an index,
+    // since indices can silently renumber when a monitor is plugged/unplugged
+    // but a still-connected monitor's device name doesn't change. Null/empty
+    // means "whichever one Windows currently calls primary."
+    public string? DisplayDeviceName { get; set; }
+
     // A stable identity for this install, shown to (and shown by) other Backtrack
     // instances during pairing -- generated once, not tied to the Windows machine
     // name alone since that can change.

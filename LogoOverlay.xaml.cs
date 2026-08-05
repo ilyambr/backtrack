@@ -17,12 +17,19 @@ public partial class LogoOverlay : Window
         InitializeComponent();
         Loaded += (_, _) =>
         {
-            Left = (SystemParameters.PrimaryScreenWidth - Width) / 2;
-            Top = 20;
+            Reposition();
             IntPtr hwnd = new WindowInteropHelper(this).Handle;
             ClickThrough.Enable(hwnd);
             ToolWindow.Enable(hwnd);
         };
+    }
+
+    /// <summary>Re-reads the configured display -- called again from Settings if the user changes which monitor Backtrack shows on mid-session.</summary>
+    public void Reposition()
+    {
+        Rect bounds = DisplayMonitors.ResolveBoundsDiu(AppSettings.Load().DisplayDeviceName);
+        Left = bounds.X + (bounds.Width - Width) / 2;
+        Top = bounds.Y + 20;
     }
 
     /// <summary>
