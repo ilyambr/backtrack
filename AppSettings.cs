@@ -11,7 +11,9 @@ public sealed class AppSettings
 
     // Where clips live -- can be a local folder or a UNC network path
     // (\\STREAM-PC\Clips) when OBS runs on a different machine than this overlay.
-    public string ClipsFolder { get; set; } = Path.Combine(
+    public string ClipsFolder { get; set; } = DefaultClipsFolder;
+
+    private static string DefaultClipsFolder => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.MyVideos), "Backtrack");
 
     // Where "Copy to this PC" drops a local copy of a clip that's actually sitting
@@ -124,7 +126,10 @@ public sealed class AppSettings
             {
                 var loaded = JsonSerializer.Deserialize<AppSettings>(File.ReadAllText(FilePath));
                 if (loaded is not null)
+                {
+                    loaded.ClipsFolder = ResolveClipsFolderForThisMachine(loaded.ClipsFolder);
                     return loaded;
+                }
             }
         }
         catch
@@ -132,6 +137,29 @@ public sealed class AppSettings
             // Corrupt or unreadable settings file -- fall back to defaults rather than crash.
         }
         return new AppSettings();
+    }
+
+    // settings.json lives under %AppData%, so it doesn't normally follow anyone
+    // between machines -- but it's a plain file, and people do sometimes copy it
+    // over by hand to carry pairing/hotkey/etc config to a second PC quickly.
+    // If it carries ClipsFolder along too, the copied value bakes in the
+    // ORIGINAL machine's Windows username (MyVideos resolves through the
+    // account name), which is very likely wrong on the new machine -- e.g.
+    // "...\Administrator\Videos\Backtrack" landing on a PC whose actual account
+    // isn't named Administrator. Only kicks in when the loaded path (a) doesn't
+    // exist on this machine and (b) matches our own generated default's shape
+    // for a different user, so a deliberately chosen custom folder -- or a
+    // legitimate UNC path to a stream PC's share, see the property doc above --
+    // is never touched.
+    private static string ResolveClipsFolderForThisMachine(string loadedClipsFolder)
+    {
+        if (string.IsNullOrWhiteSpace(loadedClipsFolder) || Directory.Exists(loadedClipsFolder))
+            return loadedClipsFolder;
+
+        string suffix = Path.Combine("Videos", "Backtrack");
+        return loadedClipsFolder.EndsWith(suffix, StringComparison.OrdinalIgnoreCase)
+            ? DefaultClipsFolder
+            : loadedClipsFolder;
     }
 
     public void Save()

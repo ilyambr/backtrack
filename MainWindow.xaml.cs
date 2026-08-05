@@ -471,6 +471,43 @@ public partial class MainWindow : Window
         }
     }
 
+    /// <summary>
+    /// Undoes PushRamDiskDestDirAsync (and any per-row override that was also
+    /// pointed at the RAM disk) when the RAM disk gets turned off, so clips
+    /// don't keep getting routed at a drive letter that's about to stop
+    /// existing. Only touches rows actually pointed at the RAM disk drive --
+    /// a row the user deliberately sent somewhere else on purpose (unrelated
+    /// to the RAM disk) is left alone.
+    ///
+    /// This is the plugin-mediated post-save move step, NOT OBS's own native
+    /// Replay Buffer output path (Settings > Output > Replay Buffer) -- OBS
+    /// exposes no API for that one (obs-websocket's SetRecordDirectory only
+    /// covers the Recording output, not Replay Buffer), so that side still
+    /// needs the same one-time manual flip back, same as enabling it did.
+    /// </summary>
+    private async Task RevertRamDiskDestDirsAsync(char driveLetter)
+    {
+        if (!_obs.IsConnected)
+            return;
+
+        string ramDiskPrefix = $"{char.ToUpperInvariant(driveLetter)}:";
+        try
+        {
+            await _obs.SetReplayDestDirAsync(_settings.ClipsFolder);
+
+            foreach (ReplayRow row in await _obs.ListReplayRowsAsync())
+            {
+                if (row.DestDir.StartsWith(ramDiskPrefix, StringComparison.OrdinalIgnoreCase))
+                    await _obs.SetReplayRowDestDirAsync(row.Key, _settings.ClipsFolder);
+            }
+        }
+        catch
+        {
+            // Same story as PushRamDiskDestDirAsync -- older plugin builds just
+            // fail these calls harmlessly.
+        }
+    }
+
     private void RefreshRamDiskStatusText()
     {
         if (!_settings.RamDiskEnabled)
@@ -577,6 +614,24 @@ public partial class MainWindow : Window
 
             if (_obs.IsConnected)
                 _ = PushRamDiskDestDirAsync();
+        }
+
+        if (!enabled)
+        {
+            // Points the plugin's shared dest-dir and any per-row override that
+            // was pointed at the RAM disk back at ClipsFolder -- see
+            // RevertRamDiskDestDirsAsync for why this can't cover OBS's own
+            // native Replay Buffer output path too.
+            _ = RevertRamDiskDestDirsAsync(oldDrive);
+
+            if (_settings.RamDiskInstructionShown)
+            {
+                Dispatcher.Invoke(() => MessageBox.Show(this,
+                    "RAM disk turned off. The plugin's clip destination has been pointed back at your Clips folder automatically.\n\n" +
+                    $"One more manual step, same as when you turned it on: in OBS, go to Settings > Output > Replay Buffer and change its output path back from {oldDrive}:\\ to a real folder (e.g. your Clips folder) -- " +
+                    "OBS doesn't expose a way for Backtrack to do this part for you automatically, so replay saves will fail until you do.",
+                    "Backtrack"));
+            }
         }
 
         return (true, null);
