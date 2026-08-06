@@ -1,0 +1,55 @@
+<Window x:Class="Backtrack.UpdatePromptOverlay"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Backtrack Update"
+        Width="400"
+        WindowStyle="None"
+        AllowsTransparency="True"
+        Background="Transparent"
+        Topmost="True"
+        ShowInTaskbar="False"
+        ResizeMode="NoResize"
+        SizeToContent="Height"
+        Visibility="Hidden">
+    <!--
+      Deliberately NOT always-on like ToastOverlay/StatusOverlay: this is
+      shown/hidden by MainWindow in lockstep with its own Show()/Hide() (see
+      ToggleVisible/CloseOverlay), since "there's an update waiting for OBS to
+      go idle" is only worth interrupting someone with while they've actually
+      got the HUD open, not as a persistent always-visible nag.
+    -->
+    <Window.Resources>
+        <SolidColorBrush x:Key="Text0" Color="#F5F6F8"/>
+        <SolidColorBrush x:Key="Text1" Color="#AEB4BD"/>
+        <SolidColorBrush x:Key="Rec" Color="#FF5B52"/>
+
+        <!-- Same FlatButton style as MainWindow's, kept in sync by hand since
+             this is a separate window with its own resource scope, same reason
+             the brushes above are duplicated instead of shared. -->
+        <Style x:Key="FlatButton" TargetType="Button">
+            <Setter Property="Background" Value="#1AFFFFFF"/>
+            <Setter Property="Foreground" Value="{StaticResource Text0}"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Padding" Value="10,5"/>
+            <Setter Property="FontSize" Value="11.5"/>
+            <Setter Property="FontWeight" Value="Bold"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Focusable" Value="False"/>
+            <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+        </Style>
+    </Window.Resources>
+    <Grid Margin="8,12,12,12">
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition/>
+            <ColumnDefinition Width="Auto"/>
+        </Grid.ColumnDefinitions>
+        <StackPanel Grid.Column="0" VerticalAlignment="Center" Margin="0,0,14,0">
+            <TextBlock Text="Update Available" FontWeight="Bold" FontSize="12.5" Foreground="{StaticResource Text0}"/>
+            <TextBlock x:Name="BodyText" FontSize="11" Foreground="{StaticResource Text1}" TextWrapping="Wrap" Margin="0,5,0,0"/>
+            <TextBlock Text="Warning: Installing this update will close Backtrack and OBS. Any unsaved recordings, settings, or other work will be lost.."
+                       FontSize="10" Foreground="{StaticResource Rec}" TextWrapping="Wrap" Margin="0,6,0,0"/>
+        </StackPanel>
+        <Button x:Name="InstallButton" Grid.Column="1" Content="Install" Style="{StaticResource FlatButton}" VerticalAlignment="Center"
+                Click="InstallButton_Click"/>
+    </Grid>
+</Window>

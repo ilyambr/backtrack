@@ -86,6 +86,23 @@ public sealed class AppSettings
     // Backtrack can do for the user on every launch.
     public bool RamDiskInstructionShown { get; set; }
 
+    // Sha256 digest (preferred, when GitHub provides one -- see ReleaseInfo.Digest)
+    // and updated_at timestamp (fallback for the rare asset without a digest) of
+    // the release ASSET, not just its version tag, that Backtrack last actually
+    // applied for itself and each companion plugin -- lets UpdateService catch a
+    // same-version-tag re-upload (this project's own release workflow sometimes
+    // reuses the version number for a small fix) that plain version-number
+    // comparison would otherwise miss entirely. Both null until the first check
+    // after this tracking was added; see
+    // CheckAndApplyPluginUpdateAsync/CheckAndApplySelfUpdateAsync for how that
+    // gets seeded without forcing an unnecessary reinstall.
+    public DateTimeOffset? LastAppliedBacktrackReleaseAt { get; set; }
+    public DateTimeOffset? LastAppliedReplaySliderReleaseAt { get; set; }
+    public DateTimeOffset? LastAppliedSourceRecordReleaseAt { get; set; }
+    public string? LastAppliedBacktrackDigest { get; set; }
+    public string? LastAppliedReplaySliderDigest { get; set; }
+    public string? LastAppliedSourceRecordDigest { get; set; }
+
     // Pushed to every Source Record filter's own replay_duration via the
     // replay-slider bridge (set_buffer_duration) -- this is the buffer that
     // actually gets flushed to disk (the RAM disk, if enabled) on every save,

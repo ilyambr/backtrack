@@ -65,7 +65,11 @@ static class Program
             using (RegistryKey key = Registry.CurrentUser.CreateSubKey(uninstallKeyPath))
             {
                 key.SetValue("DisplayName", "Backtrack");
-                key.SetValue("DisplayVersion", "0.2.0");
+                // Read off the just-extracted Backtrack.exe's own version instead of a
+                // hardcoded string here -- that string was already stuck on "0.2.0"
+                // (a whole release behind) before anyone noticed, since nothing forced
+                // it to be touched on a version bump. This way it can't drift again.
+                key.SetValue("DisplayVersion", FileVersionInfo.GetVersionInfo(exePath).FileVersion ?? "0.0.0");
                 key.SetValue("Publisher", "ilyambr");
                 key.SetValue("InstallLocation", installDir);
                 key.SetValue("DisplayIcon", exePath);
