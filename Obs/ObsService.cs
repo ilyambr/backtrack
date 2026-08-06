@@ -1,13 +1,14 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Text.Json;
 using System.Threading.Tasks;
 
 namespace Backtrack.Obs;
 
-public sealed record ReplayRow(string Key, string Label, string Hotkey, int Status, int LengthSeconds);
+public sealed record ReplayRow(string Key, string Label, string Hotkey, int Status, int LengthSeconds, string DestDir);
 
-public sealed record RecordStatus(bool Active, long DurationMs);
+public sealed record RecordStatus(bool Active, long DurationMs, bool Paused);
 
 public enum MicStatus { Hidden, Silent, MutedOrQuiet }
 
@@ -237,7 +238,12 @@ public sealed class ObsService
         JsonElement d = await _client.RequestAsync("GetRecordStatus");
         return new RecordStatus(
             d.GetProperty("outputActive").GetBoolean(),
-            d.TryGetProperty("outputDuration", out JsonElement od) ? od.GetInt64() : 0);
+            d.TryGetProperty("outputDuration", out JsonElement od) ? od.GetInt64() : 0,
+            // OBS legitimately freezes outputDuration while paused (paused time
+            // doesn't count toward recording length) -- correct on OBS's end, but
+            // Backtrack was never reading this flag at all, so a paused recording
+            // just looked exactly like a broken/stuck timer with no explanation.
+            d.TryGetProperty("outputPaused", out JsonElement op) && op.GetBoolean());
     }
 
     public async Task ToggleRecordAsync()
@@ -250,6 +256,43 @@ public sealed class ObsService
     {
         JsonElement d = await _client.RequestAsync("GetReplayBufferStatus");
         return d.GetProperty("outputActive").GetBoolean();
+    }
+
+    public async Task<bool> GetStreamActiveAsync()
+    {
+        JsonElement d = await _client.RequestAsync("GetStreamStatus");
+        return d.GetProperty("outputActive").GetBoolean();
+    }
+
+    /// <summary>
+    /// True if recording, streaming, or any replay buffer (OBS's own single
+    /// global one, or a per-source obs-replay-slider/obs-source-record row) is
+    /// currently active -- used to defer auto-updates rather than yank OBS out
+    /// from under a live recording/stream/replay. Same "replay active" definition
+    /// as the Save Replay pill (see RefreshStatusAsync): a row showing armed
+    /// (Status == 1) counts even if OBS's own global replay-buffer flag doesn't,
+    /// since those buffers can run independently of it.
+    /// </summary>
+    public async Task<bool> IsAnyOutputActiveAsync()
+    {
+        if (!IsConnected)
+            return false;
+
+        try
+        {
+            if ((await GetRecordStatusAsync()).Active || await GetStreamActiveAsync() || await GetReplayBufferActiveAsync())
+                return true;
+
+            List<ReplayRow> rows = await ListReplayRowsAsync();
+            return rows.Any(r => r.Status == 1);
+        }
+        catch
+        {
+            // Can't confirm nothing's active (bridge unreachable, request failed,
+            // etc.) -- treat as active so a transient hiccup errs toward NOT
+            // updating rather than risking an update mid-recording.
+            return true;
+        }
     }
 
     public async Task<List<ReplayRow>> ListReplayRowsAsync()
@@ -273,7 +316,8 @@ public sealed class ObsService
                     item.GetProperty("label").GetString() ?? "",
                     item.TryGetProperty("hotkey", out JsonElement hk) ? hk.GetString() ?? "" : "",
                     item.TryGetProperty("status", out JsonElement st) ? st.GetInt32() : 0,
-                    item.TryGetProperty("length_seconds", out JsonElement ls) ? ls.GetInt32() : 60));
+                    item.TryGetProperty("length_seconds", out JsonElement ls) ? ls.GetInt32() : 60,
+                    item.TryGetProperty("dest_dir", out JsonElement dd) ? dd.GetString() ?? "" : ""));
             }
         }
         return rows;
@@ -297,6 +341,22 @@ public sealed class ObsService
             ["vendorName"] = "replay-buffer-slider",
             ["requestType"] = "set_row_length",
             ["requestData"] = new Dictionary<string, object?> { ["key"] = key, ["seconds"] = seconds },
+        });
+    }
+
+    /// <summary>
+    /// Per-row override of SetReplayDestDirAsync below -- lets one specific
+    /// buffer's clips land in their own subfolder instead of the shared clips
+    /// folder. Empty path clears the override. Needs the set-row-dest-dir
+    /// bridge PR merged into the plugin; older builds just error here harmlessly.
+    /// </summary>
+    public async Task SetReplayRowDestDirAsync(string key, string path)
+    {
+        await _client.RequestAsync("CallVendorRequest", new Dictionary<string, object?>
+        {
+            ["vendorName"] = "replay-buffer-slider",
+            ["requestType"] = "set_row_dest_dir",
+            ["requestData"] = new Dictionary<string, object?> { ["key"] = key, ["path"] = path },
         });
     }
 

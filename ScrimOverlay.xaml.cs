@@ -13,11 +13,18 @@ public partial class ScrimOverlay : Window
     public ScrimOverlay()
     {
         InitializeComponent();
-        Left = 0;
-        Top = 0;
-        Width = SystemParameters.PrimaryScreenWidth;
-        Height = SystemParameters.PrimaryScreenHeight;
+        Reposition();
         Loaded += (_, _) => ToolWindow.Enable(new WindowInteropHelper(this).Handle);
+    }
+
+    /// <summary>Re-reads the configured display and re-covers it -- called again from Settings if the user changes which monitor Backtrack shows on mid-session.</summary>
+    public void Reposition()
+    {
+        Rect bounds = DisplayMonitors.ResolveBoundsDiu(AppSettings.Load().DisplayDeviceName);
+        Left = bounds.X;
+        Top = bounds.Y;
+        Width = bounds.Width;
+        Height = bounds.Height;
     }
 
     // Any click on the dim area dismisses -- not just left. A right-click with

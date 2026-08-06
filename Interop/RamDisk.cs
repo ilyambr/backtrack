@@ -56,28 +56,58 @@ public static class RamDisk
         if (!File.Exists(installScript))
             return (false, $"Bundled ImDisk installer is missing ({installScript}).");
 
+        // UseShellExecute+"runas" (needed to actually trigger the UAC prompt) can't
+        // be combined with RedirectStandardOutput/Error -- .NET flatly disallows
+        // that combination -- so there was no way to see WHY a failed install
+        // failed beyond a bare exit code, ever. Routing through a temp wrapper
+        // script that redirects install.cmd's own output to a log file (then
+        // reading that file back afterward) is the standard workaround: it lets
+        // the elevated process run exactly as before while still capturing what
+        // it actually printed.
+        string logPath = Path.Combine(Path.GetTempPath(), $"backtrack-imdisk-install-{Guid.NewGuid():N}.log");
+        string wrapperPath = Path.Combine(Path.GetTempPath(), $"backtrack-imdisk-wrapper-{Guid.NewGuid():N}.cmd");
         try
         {
-            // ".\install.cmd", not the bare filename -- despite WorkingDirectory
-            // being set correctly, cmd.exe's "/c" command resolution does NOT
-            // search the current directory for a plain relative name (that's only
-            // how *interactive* command typing behaves); without the explicit
-            // ".\" prefix this fails with "'install.cmd' is not recognized..."
-            // even though the file is right there, and cmd.exe still exits 0,
-            // making the failure invisible unless stderr is actually checked.
+            File.WriteAllText(wrapperPath,
+                "@echo off\r\n" +
+                "set IMDISK_SILENT_SETUP=1\r\n" +
+                $"cd /d \"{bundleDir}\"\r\n" +
+                // ".\install.cmd", not the bare filename -- cmd.exe's own command
+                // resolution does NOT search the current directory for a plain
+                // relative name (that's only how *interactive* typing behaves);
+                // without the explicit ".\" prefix this fails with
+                // "'install.cmd' is not recognized..." even though the file is
+                // right there, and cmd.exe still exits 0, making the failure
+                // invisible unless the log is actually checked.
+                $"call .\\install.cmd > \"{logPath}\" 2>&1\r\n" +
+                "exit /b %ERRORLEVEL%\r\n");
+
             var psi = new ProcessStartInfo
             {
                 FileName = "cmd.exe",
-                Arguments = "/c \"set IMDISK_SILENT_SETUP=1&& .\\install.cmd\"",
-                WorkingDirectory = bundleDir,
+                Arguments = $"/c \"{wrapperPath}\"",
                 UseShellExecute = true,
                 Verb = "runas",
                 WindowStyle = ProcessWindowStyle.Hidden,
             };
             using Process? proc = Process.Start(psi);
             proc?.WaitForExit();
+
+            string log = "";
+            try
+            {
+                if (File.Exists(logPath))
+                    log = File.ReadAllText(logPath).Trim();
+            }
+            catch { /* best effort -- still report the exit code below either way */ }
+
             if (proc is null || proc.ExitCode != 0)
-                return (false, "ImDisk installer did not complete successfully.");
+            {
+                string exitCode = proc?.ExitCode.ToString() ?? "unknown";
+                return (false, string.IsNullOrWhiteSpace(log)
+                    ? $"ImDisk installer did not complete successfully (exit code {exitCode})."
+                    : $"ImDisk installer did not complete successfully (exit code {exitCode}):\n{log}");
+            }
         }
         catch (System.ComponentModel.Win32Exception ex) when (ex.NativeErrorCode == 1223)
         {
@@ -87,6 +117,11 @@ public static class RamDisk
         catch (Exception ex)
         {
             return (false, ex.Message);
+        }
+        finally
+        {
+            try { File.Delete(wrapperPath); } catch { /* best effort cleanup */ }
+            try { File.Delete(logPath); } catch { /* best effort cleanup */ }
         }
 
         return IsDriverInstalled() ? (true, null) : (false, "Driver install finished but the service still isn't present.");
@@ -115,7 +150,8 @@ public static class RamDisk
             // can't (the volume was never fully live, so there's nothing for a
             // graceful dismount to release).
             RunImDisk($"-D -m {driveLetter}:");
-            return (false, string.IsNullOrWhiteSpace(output) ? $"imdisk exited with code {exitCode}." : output);
+            string reason = string.IsNullOrWhiteSpace(output) ? $"imdisk exited with code {exitCode}." : output;
+            return (false, TranslateMountError(reason, sizeMb));
         }
 
         return (true, null);
@@ -134,6 +170,29 @@ public static class RamDisk
     }
 
     public static bool IsMounted(char driveLetter) => Directory.Exists($"{driveLetter}:\\");
+
+    /// <summary>
+    /// ImDisk's default RAM disk type is backed by the system's overall memory
+    /// headroom (physical RAM + page file, tracked as Windows' "commit charge"),
+    /// not a dedicated pool -- so "Not enough memory resources are available"
+    /// can fire even with plenty of free physical RAM showing in Task Manager,
+    /// if OTHER running apps have that headroom pinned down at the moment. It's
+    /// also often transient: closing something memory-heavy (or just trying
+    /// again a moment later) can be all it takes. Confirmed directly against
+    /// this exact ImDisk error text, not a guess -- leads with the plain-English
+    /// explanation but keeps ImDisk's own line for anyone who wants it.
+    /// </summary>
+    private static string TranslateMountError(string reason, int sizeMb)
+    {
+        if (!reason.Contains("not enough memory", StringComparison.OrdinalIgnoreCase))
+            return reason;
+
+        return $"Windows didn't have enough free memory to create a {sizeMb} MB RAM disk just now. " +
+            "This comes out of the system's overall memory headroom (RAM + page file), not just free RAM -- " +
+            "other running apps can eat into that even when Task Manager shows plenty free. " +
+            "Try again in a moment, close something memory-heavy, or lower the size in Settings.\n\n" +
+            $"(ImDisk said: {reason})";
+    }
 
     private static (int ExitCode, string Output) RunImDisk(string arguments, int timeoutMs = 60_000)
     {

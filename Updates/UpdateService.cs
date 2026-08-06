@@ -12,7 +12,19 @@ using Microsoft.Win32;
 
 namespace Backtrack.Updates;
 
-public sealed record ReleaseInfo(string Version, string? DownloadUrl);
+/// <summary>
+/// Digest is the matched asset's own "sha256:..." content hash (GitHub computes
+/// and returns this for uploaded release assets) -- the authoritative signal
+/// for "is this literally the same file", immune to clock skew or metadata-only
+/// touches. PublishedAt is that same asset's "updated_at" (not the release's
+/// created_at), kept as a fallback for the rare asset that has no digest.
+/// Either one exists specifically because re-uploading a replacement file to an
+/// existing release changes neither the release's tag nor its created_at --
+/// this repo's own release workflow (see obs-replay-slider / obs-source-record)
+/// sometimes reuses the same version tag for a small fix, so version-number
+/// comparison alone misses that case entirely.
+/// </summary>
+public sealed record ReleaseInfo(string Version, string? DownloadUrl, DateTimeOffset? PublishedAt, string? Digest);
 
 /// <summary>
 /// Checks GitHub's "latest release" endpoint (never drafts/prereleases -- that
@@ -32,6 +44,19 @@ public sealed class UpdateService
     private static string ObsInstallDir => _cachedObsInstallDir ?? ResolveObsInstallDir();
     private static string ObsPluginsDir => Path.Combine(ObsInstallDir, "obs-plugins", "64bit");
     private static string Obs64Path => Path.Combine(ObsInstallDir, "bin", "64bit", "obs64.exe");
+
+    /// <summary>
+    /// True only when obs64.exe actually exists at the resolved install dir --
+    /// real proof OBS is installed on THIS machine, regardless of which of
+    /// ResolveObsInstallDir's three sources found it (registry, a running
+    /// process, or the bare hardcoded-default guess). A receiver-only PC
+    /// (paired to a transmitter's OBS over the network, see PairingService)
+    /// legitimately has no local OBS install at all -- callers use this to
+    /// skip the plugin update check/install entirely there instead of
+    /// silently downloading and running an installer that has nothing to
+    /// install into, which just surfaced as update errors.
+    /// </summary>
+    public bool IsObsInstalled => File.Exists(Obs64Path);
 
     /// <summary>
     /// OBS's own (Inno Setup) installer writes its install directory to
@@ -113,6 +138,8 @@ public sealed class UpdateService
                 return null;
 
             string? downloadUrl = null;
+            DateTimeOffset? publishedAt = null;
+            string? digest = null;
             if (doc.RootElement.TryGetProperty("assets", out JsonElement assets))
             {
                 foreach (JsonElement asset in assets.EnumerateArray())
@@ -121,12 +148,18 @@ public sealed class UpdateService
                     if (name is not null && assetPredicate(name))
                     {
                         downloadUrl = asset.TryGetProperty("browser_download_url", out JsonElement urlEl) ? urlEl.GetString() : null;
+                        if (asset.TryGetProperty("updated_at", out JsonElement updatedEl) && updatedEl.TryGetDateTimeOffset(out DateTimeOffset updatedAt))
+                            publishedAt = updatedAt;
+                        // Not present on every asset ever uploaded (GitHub only
+                        // started computing this at some point) -- null here just
+                        // means callers fall back to the PublishedAt comparison.
+                        digest = asset.TryGetProperty("digest", out JsonElement digestEl) ? digestEl.GetString() : null;
                         break;
                     }
                 }
             }
 
-            return new ReleaseInfo(tag, downloadUrl);
+            return new ReleaseInfo(tag, downloadUrl, publishedAt, digest);
         }
         catch
         {

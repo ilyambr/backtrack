@@ -11,7 +11,9 @@ public sealed class AppSettings
 
     // Where clips live -- can be a local folder or a UNC network path
     // (\\STREAM-PC\Clips) when OBS runs on a different machine than this overlay.
-    public string ClipsFolder { get; set; } = Path.Combine(
+    public string ClipsFolder { get; set; } = DefaultClipsFolder;
+
+    private static string DefaultClipsFolder => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.MyVideos), "Backtrack");
 
     // Where "Copy to this PC" drops a local copy of a clip that's actually sitting
@@ -34,6 +36,13 @@ public sealed class AppSettings
     public int HotkeyVirtualKey { get; set; } = 'G';
 
     public bool ShowDisclaimer { get; set; } = true;
+
+    // Which monitor the overlay and all its auxiliary windows appear on --
+    // Win32's own per-monitor device name (e.g. "\\.\DISPLAY1"), not an index,
+    // since indices can silently renumber when a monitor is plugged/unplugged
+    // but a still-connected monitor's device name doesn't change. Null/empty
+    // means "whichever one Windows currently calls primary."
+    public string? DisplayDeviceName { get; set; }
 
     // A stable identity for this install, shown to (and shown by) other Backtrack
     // instances during pairing -- generated once, not tied to the Windows machine
@@ -77,6 +86,23 @@ public sealed class AppSettings
     // Backtrack can do for the user on every launch.
     public bool RamDiskInstructionShown { get; set; }
 
+    // Sha256 digest (preferred, when GitHub provides one -- see ReleaseInfo.Digest)
+    // and updated_at timestamp (fallback for the rare asset without a digest) of
+    // the release ASSET, not just its version tag, that Backtrack last actually
+    // applied for itself and each companion plugin -- lets UpdateService catch a
+    // same-version-tag re-upload (this project's own release workflow sometimes
+    // reuses the version number for a small fix) that plain version-number
+    // comparison would otherwise miss entirely. Both null until the first check
+    // after this tracking was added; see
+    // CheckAndApplyPluginUpdateAsync/CheckAndApplySelfUpdateAsync for how that
+    // gets seeded without forcing an unnecessary reinstall.
+    public DateTimeOffset? LastAppliedBacktrackReleaseAt { get; set; }
+    public DateTimeOffset? LastAppliedReplaySliderReleaseAt { get; set; }
+    public DateTimeOffset? LastAppliedSourceRecordReleaseAt { get; set; }
+    public string? LastAppliedBacktrackDigest { get; set; }
+    public string? LastAppliedReplaySliderDigest { get; set; }
+    public string? LastAppliedSourceRecordDigest { get; set; }
+
     // Pushed to every Source Record filter's own replay_duration via the
     // replay-slider bridge (set_buffer_duration) -- this is the buffer that
     // actually gets flushed to disk (the RAM disk, if enabled) on every save,
@@ -117,7 +143,10 @@ public sealed class AppSettings
             {
                 var loaded = JsonSerializer.Deserialize<AppSettings>(File.ReadAllText(FilePath));
                 if (loaded is not null)
+                {
+                    loaded.ClipsFolder = ResolveClipsFolderForThisMachine(loaded.ClipsFolder);
                     return loaded;
+                }
             }
         }
         catch
@@ -125,6 +154,29 @@ public sealed class AppSettings
             // Corrupt or unreadable settings file -- fall back to defaults rather than crash.
         }
         return new AppSettings();
+    }
+
+    // settings.json lives under %AppData%, so it doesn't normally follow anyone
+    // between machines -- but it's a plain file, and people do sometimes copy it
+    // over by hand to carry pairing/hotkey/etc config to a second PC quickly.
+    // If it carries ClipsFolder along too, the copied value bakes in the
+    // ORIGINAL machine's Windows username (MyVideos resolves through the
+    // account name), which is very likely wrong on the new machine -- e.g.
+    // "...\Administrator\Videos\Backtrack" landing on a PC whose actual account
+    // isn't named Administrator. Only kicks in when the loaded path (a) doesn't
+    // exist on this machine and (b) matches our own generated default's shape
+    // for a different user, so a deliberately chosen custom folder -- or a
+    // legitimate UNC path to a stream PC's share, see the property doc above --
+    // is never touched.
+    private static string ResolveClipsFolderForThisMachine(string loadedClipsFolder)
+    {
+        if (string.IsNullOrWhiteSpace(loadedClipsFolder) || Directory.Exists(loadedClipsFolder))
+            return loadedClipsFolder;
+
+        string suffix = Path.Combine("Videos", "Backtrack");
+        return loadedClipsFolder.EndsWith(suffix, StringComparison.OrdinalIgnoreCase)
+            ? DefaultClipsFolder
+            : loadedClipsFolder;
     }
 
     public void Save()

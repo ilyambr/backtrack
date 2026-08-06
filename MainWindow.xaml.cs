@@ -46,19 +46,49 @@ public partial class MainWindow : Window
     private const string RunKeyName = "Backtrack";
     private const string ScheduledTaskName = "BacktrackAutostart";
 
+    /// <summary>Re-resolved on every access (cheap: one EnumDisplayMonitors call) so a display change in Settings takes effect on the next reposition without an app restart.</summary>
+    private Rect TargetScreenBounds => DisplayMonitors.ResolveBoundsDiu(_settings.DisplayDeviceName);
+
     private readonly ObsService _obs;
     private bool _serverEnabledAtStartup;
+
+    // Last successful ListReplayRowsAsync read, for RefreshStatusAsync's Save
+    // Replay pill only -- see the catch there for why this exists: a bridge
+    // call failing on just ONE poll tick (out of one per second) used to reset
+    // these to false outright, which could flip the pill to "Off" for a moment
+    // even while a buffer row was genuinely still armed and its own row button
+    // (rendered from a separate, independently-timed call) kept showing green.
+    private bool _lastKnownAnyRowActive;
+    private bool _lastKnownAnyRowError;
+
     private readonly DispatcherTimer _pollTimer;
     private readonly DispatcherTimer _micTimer;
     private readonly StatusOverlay _statusOverlay;
     private readonly ToastOverlay _toastOverlay;
+    private readonly UpdatePromptOverlay _updatePrompt = new();
     private readonly ScrimOverlay _scrim;
     private readonly DisclaimerOverlay _disclaimer;
+
+    // Set when an update was found but deferred because OBS is actively
+    // recording/streaming/replaying (see ObsService.IsAnyOutputActiveAsync).
+    // Only one tracked at a time -- good enough in practice, since hitting
+    // this at all is already the rare case. RefreshUpdatePromptVisibility
+    // shows/hides _updatePrompt to match both "is there one pending" and
+    // "is the HUD actually open right now".
+    private string? _pendingUpdateName;
+    private Action? _pendingUpdateInstall;
     private readonly LogoOverlay _logo;
     private readonly PairingRequestOverlay _pairingRequestOverlay;
     private readonly AppSettings _settings;
     private readonly UpdateService _updates = new();
-    private readonly DispatcherTimer _updateTimer;
+
+    // True once a manual "Check now" press has found something available and
+    // the button has turned into "Update" -- the actual install only happens
+    // on the SECOND press, once the user has explicitly seen there's
+    // something to install rather than it just happening silently on the
+    // first click. Doesn't affect the automatic hourly check, which still
+    // applies updates on its own the moment it's safe to (see CheckForUpdatesAsync).
+    private bool _manualUpdateReady;
     private readonly PairingService _pairing;
     private readonly Dictionary<string, string> _rowLabels = new();
     private List<ReplayRow> _lastReplayRows = new();
@@ -184,10 +214,14 @@ public partial class MainWindow : Window
         {
             PluginVersionInfo replaySlider = await await Dispatcher.InvokeAsync(() =>
                 CheckAndApplyPluginUpdateAsync("obs-replay-slider", "Replay Slider", "replay-slider.dll", ReplaySliderStatusDot, ReplaySliderVersionText,
-                    name => name.Contains("windows", StringComparison.OrdinalIgnoreCase) && name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)));
+                    name => name.Contains("windows", StringComparison.OrdinalIgnoreCase) && name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase),
+                    () => _settings.LastAppliedReplaySliderReleaseAt, v => _settings.LastAppliedReplaySliderReleaseAt = v,
+                    () => _settings.LastAppliedReplaySliderDigest, v => _settings.LastAppliedReplaySliderDigest = v));
             PluginVersionInfo sourceRecord = await await Dispatcher.InvokeAsync(() =>
                 CheckAndApplyPluginUpdateAsync("obs-source-record", "Source Record", "source-record.dll", SourceRecordStatusDot, SourceRecordVersionText,
-                    name => name.Contains("windows-installer", StringComparison.OrdinalIgnoreCase) && name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)));
+                    name => name.Contains("windows-installer", StringComparison.OrdinalIgnoreCase) && name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase),
+                    () => _settings.LastAppliedSourceRecordReleaseAt, v => _settings.LastAppliedSourceRecordReleaseAt = v,
+                    () => _settings.LastAppliedSourceRecordDigest, v => _settings.LastAppliedSourceRecordDigest = v));
             return new PluginVersionsSnapshot(replaySlider, sourceRecord);
         };
 
@@ -214,8 +248,8 @@ public partial class MainWindow : Window
         // acrylic blur, but must never actually appear until the hotkey is
         // pressed -- EnsureHandle() creates it without calling Show().
         IntPtr hwnd = new WindowInteropHelper(this).EnsureHandle();
-        Left = (SystemParameters.PrimaryScreenWidth - Width) / 2;
-        Top = CompactTop;
+        Left = TargetScreenBounds.X + (TargetScreenBounds.Width - Width) / 2;
+        Top = TargetScreenBounds.Y + CompactTop;
         Acrylic.TryEnableBlurBehind(hwnd, 16, 17, 19, 205);
         // This is a hotkey-summoned HUD, not an independent app window -- it and
         // every auxiliary overlay window (Status/Toast/Scrim/Disclaimer/Logo) were
@@ -293,32 +327,114 @@ public partial class MainWindow : Window
             catch (Exception ex) { Debug.WriteLine($"Startup task self-heal failed: {ex.Message}"); }
         }
 
-        // Runs in the background regardless of whether the HUD is even open --
-        // this app starts hidden and can sit there for hours, so checking only
-        // when the user happens to open Settings would mean updates often just
-        // never get noticed.
-        _updateTimer = new DispatcherTimer { Interval = TimeSpan.FromHours(1) };
-        _updateTimer.Tick += async (_, _) => await CheckForUpdatesAsync();
-        _updateTimer.Start();
+        // Once, at startup -- no more recurring hourly timer, and this never
+        // installs anything on its own regardless of what it finds (see
+        // CheckForUpdatesAsync). Manual re-checks happen through the Settings
+        // "Check now" button; nothing else triggers a check anymore.
         _ = CheckForUpdatesAsync();
     }
 
     /// <summary>
-    /// Checks and silently applies updates for Backtrack itself and for both
-    /// companion OBS plugins -- no confirmation prompt by design. Each check is
-    /// independent and swallows its own failures (no network, repo has no
-    /// releases yet, etc.) so one failing never blocks the others. Updates the
-    /// Settings SHARING rows directly (dot + version) regardless of whether that
-    /// screen is currently visible -- harmless when it isn't, and means the
-    /// display is already current next time it's opened.
+    /// Check-only (no install) for one plugin -- same release fetch and
+    /// ShouldApplyUpdate logic CheckAndApplyPluginUpdateAsync uses, just
+    /// without ever reaching InstallPluginUpdateAsync. Used by the manual
+    /// "Check now" button's first press, which is only supposed to report
+    /// what's available, not act on it yet. Reusing ShouldApplyUpdate here
+    /// (rather than duplicating its comparison logic) does mean its baseline-
+    /// seeding side effect can fire from a check-only pass too -- harmless
+    /// and correct either way, since seeding never claims an update is needed.
+    /// </summary>
+    private async Task<(bool Available, string InstalledVersion)> CheckPluginAvailabilityAsync(string repo, string dllFileName, Func<string, bool> assetPredicate,
+        Func<DateTimeOffset?> getLastApplied, Action<DateTimeOffset?> setLastApplied, Func<string?> getLastDigest, Action<string?> setLastDigest)
+    {
+        if (!_updates.IsObsInstalled)
+            return (false, "OBS not installed");
+
+        Version installed = _updates.GetInstalledPluginVersion(dllFileName);
+        try
+        {
+            ReleaseInfo? release = await _updates.GetLatestReleaseAsync("ilyambr", repo, assetPredicate);
+            if (release?.DownloadUrl is null)
+                return (false, installed.ToString(3));
+
+            bool versionBumped = UpdateService.IsNewer(release.Version, installed);
+            return (ShouldApplyUpdate(release, versionBumped, getLastApplied, setLastApplied, getLastDigest, setLastDigest), installed.ToString(3));
+        }
+        catch
+        {
+            return (false, installed.ToString(3));
+        }
+    }
+
+    /// <summary>Same idea as CheckPluginAvailabilityAsync, for Backtrack itself.</summary>
+    private async Task<(bool Available, string InstalledVersion)> CheckSelfAvailabilityAsync()
+    {
+        Version installed = UpdateService.CurrentAppVersion;
+        try
+        {
+            ReleaseInfo? release = await _updates.GetLatestReleaseAsync("ilyambr", "backtrack",
+                name => name.Contains("win", StringComparison.OrdinalIgnoreCase) && name.EndsWith(".zip", StringComparison.OrdinalIgnoreCase));
+            if (release?.DownloadUrl is null)
+                return (false, installed.ToString(3));
+
+            bool versionBumped = UpdateService.IsNewer(release.Version, installed);
+            bool available = ShouldApplyUpdate(release, versionBumped,
+                () => _settings.LastAppliedBacktrackReleaseAt, v => _settings.LastAppliedBacktrackReleaseAt = v,
+                () => _settings.LastAppliedBacktrackDigest, v => _settings.LastAppliedBacktrackDigest = v);
+            return (available, installed.ToString(3));
+        }
+        catch
+        {
+            return (false, installed.ToString(3));
+        }
+    }
+
+    /// <summary>
+    /// Startup-only, and never installs anything by itself: just detects
+    /// availability for Backtrack and both companion OBS plugins and, if
+    /// anything's found, arms the bottom-left prompt (alwaysPromptOnly: true
+    /// on every call) rather than silently applying it -- there's no more
+    /// recurring hourly re-check either, so this is the only automatic check
+    /// that ever runs; anything after this is either the user clicking that
+    /// prompt's Install button or the manual Check now/Update button in
+    /// Settings. Each check is independent and swallows its own failures (no
+    /// network, repo has no releases yet, etc.) so one failing never blocks
+    /// the others. Updates the Settings SHARING rows directly (dot + version)
+    /// regardless of whether that screen is currently visible.
     /// </summary>
     private async Task CheckForUpdatesAsync()
     {
+        await CheckAndApplySelfUpdateAsync(alwaysPromptOnly: true);
+        await CheckAndApplyPluginUpdateAsync("obs-replay-slider", "Replay Slider", "replay-slider.dll", ReplaySliderStatusDot, ReplaySliderVersionText,
+            name => name.Contains("windows", StringComparison.OrdinalIgnoreCase) && name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase),
+            () => _settings.LastAppliedReplaySliderReleaseAt, v => _settings.LastAppliedReplaySliderReleaseAt = v,
+            () => _settings.LastAppliedReplaySliderDigest, v => _settings.LastAppliedReplaySliderDigest = v,
+            alwaysPromptOnly: true);
+        await CheckAndApplyPluginUpdateAsync("obs-source-record", "Source Record", "source-record.dll", SourceRecordStatusDot, SourceRecordVersionText,
+            name => name.Contains("windows-installer", StringComparison.OrdinalIgnoreCase) && name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase),
+            () => _settings.LastAppliedSourceRecordReleaseAt, v => _settings.LastAppliedSourceRecordReleaseAt = v,
+            () => _settings.LastAppliedSourceRecordDigest, v => _settings.LastAppliedSourceRecordDigest = v,
+            alwaysPromptOnly: true);
+    }
+
+    /// <summary>
+    /// The OLD CheckForUpdatesAsync behavior: actually installs whatever's
+    /// available (still deferring to the bottom-left prompt if OBS happens to
+    /// be busy right now). Used only by the manual Check now/Update button's
+    /// second press -- an explicit "yes, install it" action -- and by the
+    /// paired-transmitter remote-update callback, never automatically.
+    /// </summary>
+    private async Task ApplyAllAvailableUpdatesAsync()
+    {
         await CheckAndApplySelfUpdateAsync();
         await CheckAndApplyPluginUpdateAsync("obs-replay-slider", "Replay Slider", "replay-slider.dll", ReplaySliderStatusDot, ReplaySliderVersionText,
-            name => name.Contains("windows", StringComparison.OrdinalIgnoreCase) && name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase));
+            name => name.Contains("windows", StringComparison.OrdinalIgnoreCase) && name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase),
+            () => _settings.LastAppliedReplaySliderReleaseAt, v => _settings.LastAppliedReplaySliderReleaseAt = v,
+            () => _settings.LastAppliedReplaySliderDigest, v => _settings.LastAppliedReplaySliderDigest = v);
         await CheckAndApplyPluginUpdateAsync("obs-source-record", "Source Record", "source-record.dll", SourceRecordStatusDot, SourceRecordVersionText,
-            name => name.Contains("windows-installer", StringComparison.OrdinalIgnoreCase) && name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase));
+            name => name.Contains("windows-installer", StringComparison.OrdinalIgnoreCase) && name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase),
+            () => _settings.LastAppliedSourceRecordReleaseAt, v => _settings.LastAppliedSourceRecordReleaseAt = v,
+            () => _settings.LastAppliedSourceRecordDigest, v => _settings.LastAppliedSourceRecordDigest = v);
     }
 
     /// <summary>Green = confirmed current (already was, or just got updated); red = couldn't confirm (check failed); grey = not checked yet this session.</summary>
@@ -328,8 +444,79 @@ public partial class MainWindow : Window
         versionText.Text = version;
     }
 
-    private async Task<PluginVersionInfo> CheckAndApplyPluginUpdateAsync(string repo, string displayName, string dllFileName, System.Windows.Shapes.Ellipse dot, TextBlock versionText, Func<string, bool> assetPredicate)
+    /// <summary>
+    /// A version bump always wins. Beyond that, prefers comparing the release
+    /// asset's own content digest (sha256, see ReleaseInfo.Digest) against
+    /// whatever was recorded last time -- immune to clock skew and to any
+    /// metadata-only touch that isn't an actual content change -- and only
+    /// falls back to the asset's updated_at timestamp when a digest isn't
+    /// available on both sides (some older assets never got one computed).
+    /// Either signal catches a same-version-tag re-upload that plain
+    /// version-number comparison alone would miss.
+    ///
+    /// First time ever checking a given repo (nothing recorded on either
+    /// side) and the version already matches latest: seeds the baseline via
+    /// the setters and reports "no update needed" rather than reinstalling
+    /// something that's already correct.
+    /// </summary>
+    private bool ShouldApplyUpdate(ReleaseInfo release, bool versionBumped,
+        Func<DateTimeOffset?> getLastApplied, Action<DateTimeOffset?> setLastApplied,
+        Func<string?> getLastDigest, Action<string?> setLastDigest)
     {
+        DateTimeOffset? lastApplied = getLastApplied();
+        string? lastDigest = getLastDigest();
+
+        if (lastApplied is null && lastDigest is null && !versionBumped)
+        {
+            setLastApplied(release.PublishedAt);
+            setLastDigest(release.Digest);
+            _settings.Save();
+            return false;
+        }
+
+        bool digestKnownBothSides = release.Digest is not null && lastDigest is not null;
+        bool digestChanged = digestKnownBothSides && !string.Equals(release.Digest, lastDigest, StringComparison.OrdinalIgnoreCase);
+        bool republishedByTimestamp = !digestKnownBothSides && release.PublishedAt is not null && lastApplied is not null && release.PublishedAt > lastApplied;
+
+        return versionBumped || digestChanged || republishedByTimestamp;
+    }
+
+    private void RecordUpdateApplied(ReleaseInfo release, Action<DateTimeOffset?> setLastApplied, Action<string?> setLastDigest)
+    {
+        setLastApplied(release.PublishedAt ?? DateTimeOffset.UtcNow);
+        setLastDigest(release.Digest);
+        _settings.Save();
+    }
+
+    /// <summary>
+    /// SetPendingUpdate only ever gets called to SET the one tracked deferred
+    /// prompt -- nothing was clearing it once the situation resolved (applied
+    /// successfully, or a later check found it already current), so a prompt
+    /// shown once during a busy moment would just sit there forever afterward,
+    /// even once the plugin/app was genuinely up to date. Scoped to the
+    /// matching component's name so resolving one deferred update can't
+    /// accidentally clear a DIFFERENT one still genuinely pending.
+    /// </summary>
+    private void ClearPendingUpdateIfMatches(string componentDisplayName)
+    {
+        if (_pendingUpdateName == componentDisplayName)
+            SetPendingUpdate(null, null);
+    }
+
+    private async Task<PluginVersionInfo> CheckAndApplyPluginUpdateAsync(string repo, string displayName, string dllFileName, System.Windows.Shapes.Ellipse dot, TextBlock versionText, Func<string, bool> assetPredicate,
+        Func<DateTimeOffset?> getLastApplied, Action<DateTimeOffset?> setLastApplied, Func<string?> getLastDigest, Action<string?> setLastDigest,
+        bool alwaysPromptOnly = false)
+    {
+        // No local OBS install (e.g. a receiver-only PC paired to a transmitter's
+        // OBS over the network) -- nothing to check a plugin version against and
+        // nothing for a downloaded installer to install into, so skip entirely
+        // instead of downloading+running an installer that just errors out.
+        if (!_updates.IsObsInstalled)
+        {
+            SetUpdateStatus(dot, versionText, "OBS not installed", ok: null);
+            return new PluginVersionInfo("OBS not installed", null);
+        }
+
         Version installed = _updates.GetInstalledPluginVersion(dllFileName);
         try
         {
@@ -340,15 +527,42 @@ public partial class MainWindow : Window
                 return new PluginVersionInfo(installed.ToString(3), false);
             }
 
-            if (!UpdateService.IsNewer(release.Version, installed))
+            bool versionBumped = UpdateService.IsNewer(release.Version, installed);
+            if (!ShouldApplyUpdate(release, versionBumped, getLastApplied, setLastApplied, getLastDigest, setLastDigest))
             {
                 SetUpdateStatus(dot, versionText, installed.ToString(3), ok: true);
+                ClearPendingUpdateIfMatches(displayName);
                 return new PluginVersionInfo(installed.ToString(3), true);
             }
 
-            await _updates.InstallPluginUpdateAsync(release.DownloadUrl);
-            _toastOverlay.ShowUpdateApplied(displayName, release.Version);
-            SetUpdateStatus(dot, versionText, release.Version, ok: true);
+            async Task ApplyAsync()
+            {
+                _toastOverlay.ShowUpdateInProgress(displayName);
+                await _updates.InstallPluginUpdateAsync(release.DownloadUrl);
+                RecordUpdateApplied(release, setLastApplied, setLastDigest);
+                _toastOverlay.ShowUpdateApplied(displayName, release.Version);
+                SetUpdateStatus(dot, versionText, release.Version, ok: true);
+                ClearPendingUpdateIfMatches(displayName);
+            }
+
+            // Installing a plugin update means closing OBS out from under
+            // whatever it's doing (InstallPluginUpdateAsync's CloseObsIfRunningAsync)
+            // -- alwaysPromptOnly (the startup check -- see CheckForUpdatesAsync)
+            // never installs anything on its own regardless of OBS state, only
+            // ever surfaces the bottom-left prompt for the user to act on. The
+            // manual Check now/Update button path (alwaysPromptOnly: false)
+            // still applies immediately when OBS is idle, falling back to the
+            // same prompt only if something's actually active right now.
+            bool obsActive = await _obs.IsAnyOutputActiveAsync();
+            if (alwaysPromptOnly || obsActive)
+            {
+                string suffix = obsActive ? " (update waiting for OBS to be idle)" : " (update available)";
+                SetUpdateStatus(dot, versionText, $"{installed.ToString(3)}{suffix}", ok: null);
+                SetPendingUpdate(displayName, () => _ = ApplyAsync());
+                return new PluginVersionInfo(installed.ToString(3), null);
+            }
+
+            await ApplyAsync();
             return new PluginVersionInfo(release.Version, true);
         }
         catch (Exception ex)
@@ -359,7 +573,7 @@ public partial class MainWindow : Window
         }
     }
 
-    private async Task CheckAndApplySelfUpdateAsync()
+    private async Task CheckAndApplySelfUpdateAsync(bool alwaysPromptOnly = false)
     {
         Version installed = UpdateService.CurrentAppVersion;
         try
@@ -377,17 +591,44 @@ public partial class MainWindow : Window
                 return;
             }
 
-            if (!UpdateService.IsNewer(release.Version, installed))
+            bool versionBumped = UpdateService.IsNewer(release.Version, installed);
+            if (!ShouldApplyUpdate(release, versionBumped,
+                    () => _settings.LastAppliedBacktrackReleaseAt, v => _settings.LastAppliedBacktrackReleaseAt = v,
+                    () => _settings.LastAppliedBacktrackDigest, v => _settings.LastAppliedBacktrackDigest = v))
             {
                 SetUpdateStatus(BacktrackStatusDot, BacktrackVersionText, installed.ToString(3), ok: true);
+                ClearPendingUpdateIfMatches("Backtrack");
                 return;
             }
 
-            await _updates.ApplySelfUpdateAsync(release.DownloadUrl, release.Version);
-            SetUpdateStatus(BacktrackStatusDot, BacktrackVersionText, release.Version, ok: true);
-            // The helper script above is now waiting for this process to exit --
-            // shut down cleanly so it can finish the swap and relaunch.
-            Application.Current.Shutdown();
+            async Task ApplyAsync()
+            {
+                _toastOverlay.ShowUpdateInProgress("Backtrack");
+                RecordUpdateApplied(release, v => _settings.LastAppliedBacktrackReleaseAt = v, v => _settings.LastAppliedBacktrackDigest = v);
+                await _updates.ApplySelfUpdateAsync(release.DownloadUrl, release.Version);
+                SetUpdateStatus(BacktrackStatusDot, BacktrackVersionText, release.Version, ok: true);
+                // The helper script above is now waiting for this process to exit --
+                // shut down cleanly so it can finish the swap and relaunch.
+                Application.Current.Shutdown();
+            }
+
+            // Applying a self-update shuts Backtrack down mid-swap -- fine on its
+            // own, but not something to do while a recording/stream/replay is
+            // actively relying on this instance's hotkey/tray/overlay without
+            // asking first. alwaysPromptOnly (the startup check) never installs
+            // on its own regardless of OBS state, only ever surfaces the
+            // bottom-left prompt; the manual Update button still applies
+            // immediately when idle, falling back to the same prompt otherwise.
+            bool obsActive = await _obs.IsAnyOutputActiveAsync();
+            if (alwaysPromptOnly || obsActive)
+            {
+                string suffix = obsActive ? " (update waiting for OBS to be idle)" : " (update available)";
+                SetUpdateStatus(BacktrackStatusDot, BacktrackVersionText, $"{installed.ToString(3)}{suffix}", ok: null);
+                SetPendingUpdate("Backtrack", () => _ = ApplyAsync());
+                return;
+            }
+
+            await ApplyAsync();
         }
         catch (Exception ex)
         {
@@ -465,6 +706,43 @@ public partial class MainWindow : Window
             // Needs the plugin's set_dest_dir bridge request -- an older plugin
             // build just fails this call harmlessly; the dock's own "Move clips
             // to:" field still works as a one-time manual fallback either way.
+        }
+    }
+
+    /// <summary>
+    /// Undoes PushRamDiskDestDirAsync (and any per-row override that was also
+    /// pointed at the RAM disk) when the RAM disk gets turned off, so clips
+    /// don't keep getting routed at a drive letter that's about to stop
+    /// existing. Only touches rows actually pointed at the RAM disk drive --
+    /// a row the user deliberately sent somewhere else on purpose (unrelated
+    /// to the RAM disk) is left alone.
+    ///
+    /// This is the plugin-mediated post-save move step, NOT OBS's own native
+    /// Replay Buffer output path (Settings > Output > Replay Buffer) -- OBS
+    /// exposes no API for that one (obs-websocket's SetRecordDirectory only
+    /// covers the Recording output, not Replay Buffer), so that side still
+    /// needs the same one-time manual flip back, same as enabling it did.
+    /// </summary>
+    private async Task RevertRamDiskDestDirsAsync(char driveLetter)
+    {
+        if (!_obs.IsConnected)
+            return;
+
+        string ramDiskPrefix = $"{char.ToUpperInvariant(driveLetter)}:";
+        try
+        {
+            await _obs.SetReplayDestDirAsync(_settings.ClipsFolder);
+
+            foreach (ReplayRow row in await _obs.ListReplayRowsAsync())
+            {
+                if (row.DestDir.StartsWith(ramDiskPrefix, StringComparison.OrdinalIgnoreCase))
+                    await _obs.SetReplayRowDestDirAsync(row.Key, _settings.ClipsFolder);
+            }
+        }
+        catch
+        {
+            // Same story as PushRamDiskDestDirAsync -- older plugin builds just
+            // fail these calls harmlessly.
         }
     }
 
@@ -576,7 +854,33 @@ public partial class MainWindow : Window
                 _ = PushRamDiskDestDirAsync();
         }
 
+        if (!enabled)
+        {
+            // Points the plugin's shared dest-dir and any per-row override that
+            // was pointed at the RAM disk back at ClipsFolder -- see
+            // RevertRamDiskDestDirsAsync for why this can't cover OBS's own
+            // native Replay Buffer output path too.
+            _ = RevertRamDiskDestDirsAsync(oldDrive);
+
+            if (_settings.RamDiskInstructionShown)
+            {
+                Dispatcher.Invoke(() => MessageBox.Show(this,
+                    "RAM disk turned off. The plugin's clip destination has been pointed back at your Clips folder automatically.\n\n" +
+                    $"One more manual step, same as when you turned it on: in OBS, go to Settings > Output > Replay Buffer and change its output path back from {oldDrive}:\\ to a real folder (e.g. your Clips folder) -- " +
+                    "OBS doesn't expose a way for Backtrack to do this part for you automatically, so replay saves will fail until you do.",
+                    "Backtrack"));
+            }
+        }
+
         return (true, null);
+    }
+
+    /// <summary>Collapsed by default -- clicking the "EXPERIMENTAL" header just flips ExperimentalContent's visibility and the arrow glyph to match.</summary>
+    private void ExperimentalHeader_Click(object sender, MouseButtonEventArgs e)
+    {
+        bool expand = ExperimentalContent.Visibility != Visibility.Visible;
+        ExperimentalContent.Visibility = expand ? Visibility.Visible : Visibility.Collapsed;
+        ExperimentalHeaderText.Text = expand ? "▾ EXPERIMENTAL" : "▸ EXPERIMENTAL";
     }
 
     private void SuggestRamDiskSize_Click(object sender, RoutedEventArgs e)
@@ -760,6 +1064,7 @@ public partial class MainWindow : Window
         _disclaimer.Hide();
         _logo.Hide();
         _toastOverlay.UpdatePosition(false);
+        _updatePrompt.HidePrompt();
     }
 
     private void MainWindow_KeyDown(object sender, KeyEventArgs e)
@@ -801,10 +1106,27 @@ public partial class MainWindow : Window
             _toastOverlay.Show();
             _toastOverlay.UpdatePosition(true);
             WindowZOrder.BringToFrontWithoutActivating(new WindowInteropHelper(_toastOverlay).Handle);
+            RefreshUpdatePromptVisibility();
 
             if (_settings.ShowDisclaimer)
                 _disclaimer.Show();
         }
+    }
+
+    /// <summary>Sets/clears the one tracked deferred-update prompt and shows/hides it to match. Safe to call whether or not the HUD is currently open -- only actually shows the window when it is.</summary>
+    private void SetPendingUpdate(string? componentDisplayName, Action? install)
+    {
+        _pendingUpdateName = componentDisplayName;
+        _pendingUpdateInstall = install;
+        RefreshUpdatePromptVisibility();
+    }
+
+    private void RefreshUpdatePromptVisibility()
+    {
+        if (IsVisible && _pendingUpdateName is not null && _pendingUpdateInstall is not null)
+            _updatePrompt.ShowPrompt(_pendingUpdateName, _pendingUpdateInstall);
+        else
+            _updatePrompt.HidePrompt();
     }
 
     // ---------------------------------------------------------------- screens
@@ -823,13 +1145,14 @@ public partial class MainWindow : Window
 
         bool big = screen is Screen.Gallery or Screen.Player;
         Width = screen == Screen.Settings ? WideWidth : big ? BigWidth() : CompactWidth;
-        Left = (SystemParameters.PrimaryScreenWidth - Width) / 2;
+        Rect targetBounds = TargetScreenBounds;
+        Left = targetBounds.X + (targetBounds.Width - Width) / 2;
 
         if (screen == Screen.Settings)
         {
-            double maxScrollHeight = Math.Max(SystemParameters.PrimaryScreenHeight - 260, 450);
+            double maxScrollHeight = Math.Max(targetBounds.Height - 260, 450);
             SettingsScrollHost.MaxHeight = maxScrollHeight;
-            Top = Math.Max((SystemParameters.PrimaryScreenHeight - (maxScrollHeight + 80)) / 2, 85);
+            Top = targetBounds.Y + Math.Max((targetBounds.Height - (maxScrollHeight + 80)) / 2, 85);
         }
         else if (big)
         {
@@ -837,7 +1160,7 @@ public partial class MainWindow : Window
         }
         else
         {
-            Top = CompactTop;
+            Top = targetBounds.Y + CompactTop;
         }
 
         PlayerOverlayPopup.IsOpen = screen == Screen.Player;
@@ -864,7 +1187,7 @@ public partial class MainWindow : Window
     /// the actual on-screen height is driven by content, not a Window.Height
     /// set here.
     /// </summary>
-    private double BigWidth() => Math.Min(SystemParameters.PrimaryScreenWidth * 0.78, 1500);
+    private double BigWidth() => Math.Min(TargetScreenBounds.Width * 0.78, 1500);
 
     private void ApplyBigScreenSize()
     {
@@ -881,7 +1204,7 @@ public partial class MainWindow : Window
         // the same size panel, not different sizes depending on which you're on.
         PlayerVideoHost.Height = contentHeight;
         GalleryScrollHost.MaxHeight = contentHeight;
-        Top = BigTop;
+        Top = TargetScreenBounds.Y + BigTop;
     }
 
     private void BackToIdle_Click(object sender, MouseButtonEventArgs e) => ShowScreen(Screen.Idle);
@@ -942,9 +1265,15 @@ public partial class MainWindow : Window
         try
         {
             RecordStatus recStatus = await _obs.GetRecordStatusAsync();
+            // Label stays "Stop Recording" even while paused -- clicking it calls
+            // ToggleRecordAsync, which only ever sends Start/StopRecord (there's no
+            // pause/resume button here), so "Resume Recording" would be a lie about
+            // what a click actually does.
             RecordLabel.Text = recStatus.Active ? "Stop Recording" : "Start Recording";
             SetRecordIcon(recStatus.Active);
-            RecordStatusText.Text = recStatus.Active ? FormatDuration(recStatus.DurationMs) : "--:--";
+            RecordStatusText.Text = !recStatus.Active ? "--:--"
+                : recStatus.Paused ? $"{FormatDuration(recStatus.DurationMs)} (Paused)"
+                : FormatDuration(recStatus.DurationMs);
             _statusOverlay.SetRecording(recStatus.Active);
 
             // Not just OBS's single global replay-buffer flag: obs-replay-slider (and
@@ -954,29 +1283,39 @@ public partial class MainWindow : Window
             // buffer row is visibly active, which is exactly backwards.
             //
             // Status == 2 is a row in an ERROR state (e.g. a buffer that failed to
-            // save), not merely inactive -- lumping it into "anything nonzero counts as
-            // on" makes an errored buffer show as green "On", hiding the exact thing
-            // this pill exists to surface. Error must outrank active, which outranks off.
+            // save), not merely inactive. Active must outrank error, though, not the
+            // other way around -- with multiple buffers, one being broken doesn't mean
+            // replay saving as a whole is down if another one is still working; saying
+            // "Error" while a buffer is visibly green and armed is just as backwards as
+            // saying "Off" was. Error only wins when NOTHING is currently active.
             bool replayBufferActive = await _obs.GetReplayBufferActiveAsync();
-            bool anyRowActive = false;
-            bool anyRowError = false;
+            bool anyRowActive;
+            bool anyRowError;
             try
             {
                 List<ReplayRow> rows = await _obs.ListReplayRowsAsync();
                 anyRowActive = rows.Any(r => r.Status == 1);
                 anyRowError = rows.Any(r => r.Status == 2);
+                _lastKnownAnyRowActive = anyRowActive;
+                _lastKnownAnyRowError = anyRowError;
             }
             catch
             {
-                // Bridge unreachable this tick -- fall back to just the base OBS flag.
+                // Bridge unreachable this ONE tick (out of one per second) -- reusing
+                // the last successful read instead of resetting to false avoids the
+                // pill flickering to "Off" for a moment while a row is genuinely still
+                // active, which is exactly as backwards as the two cases above.
+                anyRowActive = _lastKnownAnyRowActive;
+                anyRowError = _lastKnownAnyRowError;
             }
             bool replayActive = replayBufferActive || anyRowActive;
+            bool showError = anyRowError && !replayActive;
 
-            string replayStateColor = anyRowError ? "Rec" : replayActive ? "Green" : "Text2";
-            ReplayStatus.Text = anyRowError ? "Error" : replayActive ? "On" : "Off";
+            string replayStateColor = replayActive ? "Green" : showError ? "Rec" : "Text2";
+            ReplayStatus.Text = replayActive ? "On" : showError ? "Error" : "Off";
             ReplayStatus.Foreground = (Brush)FindResource(replayStateColor);
-            SaveReplayIcon.Foreground = (Brush)FindResource(anyRowError ? "Rec" : replayActive ? "Green" : "Text0");
-            _statusOverlay.SetReplayOnline(replayActive && !anyRowError);
+            SaveReplayIcon.Foreground = (Brush)FindResource(replayActive ? "Green" : showError ? "Rec" : "Text0");
+            _statusOverlay.SetReplayOnline(replayActive);
         }
         catch
         {
@@ -1126,13 +1465,50 @@ public partial class MainWindow : Window
         }
 
         foreach (ReplayRow row in rows)
-            BufferVisibilityPanel.Children.Add(BuildBufferVisibilityRow(row.Label));
+            BufferVisibilityPanel.Children.Add(BuildBufferVisibilityRow(row));
     }
 
-    private Border BuildBufferVisibilityRow(string label)
+    private Border BuildBufferVisibilityRow(ReplayRow row)
     {
+        string label = row.Label;
         var toggle = new ToggleButton { Style = (Style)FindResource("AppToggle"), VerticalAlignment = VerticalAlignment.Center };
         toggle.IsChecked = !_settings.HiddenBufferLabels.Contains(label);
+
+        var topGrid = new Grid();
+        topGrid.ColumnDefinitions.Add(new ColumnDefinition());
+        topGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        var name = new TextBlock { Text = label, FontSize = 13, FontWeight = FontWeights.Bold, Foreground = (Brush)FindResource("Text0"), VerticalAlignment = VerticalAlignment.Center };
+        Grid.SetColumn(name, 0);
+        Grid.SetColumn(toggle, 1);
+        topGrid.Children.Add(name);
+        topGrid.Children.Add(toggle);
+
+        var folderLabel = new TextBlock
+        {
+            Text = DescribeRowDestDir(row.DestDir),
+            FontSize = 11,
+            Foreground = (Brush)FindResource("Text2"),
+            VerticalAlignment = VerticalAlignment.Center,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+        };
+        var folderButton = new Button { Content = "Folder", Style = (Style)FindResource("FlatButton"), VerticalAlignment = VerticalAlignment.Center };
+        folderButton.Click += async (_, _) => await PickBufferDestFolderAsync(row.Key, folderLabel);
+
+        var bottomGrid = new Grid
+        {
+            Margin = new Thickness(0, 8, 0, 0),
+            // Hidden buffers don't need their destination fussed over here --
+            // this only reappears once the buffer's turned back on. Reacts
+            // live to the toggle below, not just on next Settings open.
+            Visibility = toggle.IsChecked == true ? Visibility.Visible : Visibility.Collapsed,
+        };
+        bottomGrid.ColumnDefinitions.Add(new ColumnDefinition());
+        bottomGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        Grid.SetColumn(folderLabel, 0);
+        Grid.SetColumn(folderButton, 1);
+        bottomGrid.Children.Add(folderLabel);
+        bottomGrid.Children.Add(folderButton);
+
         toggle.Click += (_, _) =>
         {
             if (toggle.IsChecked == true)
@@ -1140,18 +1516,76 @@ public partial class MainWindow : Window
             else
                 _settings.HiddenBufferLabels.Add(label);
             _settings.Save();
+            bottomGrid.Visibility = toggle.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
         };
 
-        var grid = new Grid();
-        grid.ColumnDefinitions.Add(new ColumnDefinition());
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        var name = new TextBlock { Text = label, FontSize = 13, FontWeight = FontWeights.Bold, Foreground = (Brush)FindResource("Text0"), VerticalAlignment = VerticalAlignment.Center };
-        Grid.SetColumn(name, 0);
-        Grid.SetColumn(toggle, 1);
-        grid.Children.Add(name);
-        grid.Children.Add(toggle);
+        var container = new StackPanel();
+        container.Children.Add(topGrid);
+        container.Children.Add(bottomGrid);
 
-        return new Border { Style = (Style)FindResource("SettingsRow"), Child = grid };
+        return new Border { Style = (Style)FindResource("SettingsRow"), Child = container };
+    }
+
+    private string DescribeRowDestDir(string destDir)
+    {
+        if (string.IsNullOrEmpty(destDir))
+            return "Not set -- clips stay wherever this buffer writes them";
+        return IsWithinClipsFolder(destDir, out string relative)
+            ? (relative.Length == 0 ? "Main clips folder" : relative)
+            : destDir; // outside the clips folder somehow (e.g. set by hand) -- show the raw path rather than hide it
+    }
+
+    /// <summary>True if path is ClipsFolder itself or somewhere under it; relative is "" for the former.</summary>
+    private bool IsWithinClipsFolder(string path, out string relative)
+    {
+        string clipsFolder = Path.GetFullPath(_settings.ClipsFolder).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        string full = Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+
+        if (full.Equals(clipsFolder, StringComparison.OrdinalIgnoreCase))
+        {
+            relative = "";
+            return true;
+        }
+        if (full.StartsWith(clipsFolder + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+        {
+            relative = full[(clipsFolder.Length + 1)..];
+            return true;
+        }
+        relative = "";
+        return false;
+    }
+
+    /// <summary>
+    /// Lets one specific buffer's clips land in their own subfolder of the main
+    /// clips folder -- e.g. a distinct folder per game/source. Constrained to
+    /// somewhere inside ClipsFolder, not anywhere on disk, since Gallery only
+    /// ever browses within that same tree (see LoadGallery's own comment).
+    /// </summary>
+    private async Task PickBufferDestFolderAsync(string rowKey, TextBlock folderLabel)
+    {
+        try
+        {
+            Directory.CreateDirectory(_settings.ClipsFolder);
+            var dialog = new OpenFolderDialog { InitialDirectory = _settings.ClipsFolder };
+            if (dialog.ShowDialog(this) != true)
+                return;
+
+            if (!IsWithinClipsFolder(dialog.FolderName, out string relative))
+            {
+                MessageBox.Show(this, "Pick a folder inside your clips folder -- Gallery only browses within that tree.", "Backtrack");
+                return;
+            }
+
+            string absolutePath = relative.Length == 0 ? _settings.ClipsFolder : Path.Combine(_settings.ClipsFolder, relative);
+            Directory.CreateDirectory(absolutePath);
+
+            await _obs.SetReplayRowDestDirAsync(rowKey, absolutePath);
+            folderLabel.Text = relative.Length == 0 ? "Main clips folder" : relative;
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, $"Couldn't set that folder: {ex.Message}", "Backtrack");
+        }
     }
 
     private Button BuildRowButton(ReplayRow row)
@@ -1304,7 +1738,7 @@ public partial class MainWindow : Window
         try
         {
             return Directory.Exists(_settings.ClipsFolder)
-                ? Directory.EnumerateFiles(_settings.ClipsFolder)
+                ? Directory.EnumerateFiles(_settings.ClipsFolder, "*", SearchOption.AllDirectories)
                     .Count(f => VideoExtensions.Contains(Path.GetExtension(f).ToLowerInvariant()))
                 : 0;
         }
@@ -2562,6 +2996,8 @@ public partial class MainWindow : Window
         ShowDisclaimerToggle.IsChecked = _settings.ShowDisclaimer;
         HotkeyCaptureButton.Content = FormatHotkey((GlobalHotkey.Modifiers)_settings.HotkeyModifiers, (uint)_settings.HotkeyVirtualKey);
 
+        LoadDisplaySelector();
+
         ShareClipsToggle.IsChecked = _settings.ShareClipsEnabled;
         RefreshShareClipsStatusText();
         RefreshPairingStatusUi();
@@ -2573,13 +3009,58 @@ public partial class MainWindow : Window
         RamDiskSizeBox.Text = _settings.RamDiskSizeMb.ToString();
         RefreshRamDiskStatusText();
 
-        // Shows what's actually installed immediately (no network needed), with a
-        // neutral grey dot until a real check (manual or the hourly background
-        // one) confirms green/red -- better than the rows sitting blank/stale
-        // the moment Settings opens.
-        SetUpdateStatus(BacktrackStatusDot, BacktrackVersionText, UpdateService.CurrentAppVersion.ToString(3), ok: null);
-        SetUpdateStatus(ReplaySliderStatusDot, ReplaySliderVersionText, _updates.GetInstalledPluginVersion("replay-slider.dll").ToString(3), ok: null);
-        SetUpdateStatus(SourceRecordStatusDot, SourceRecordVersionText, _updates.GetInstalledPluginVersion("source-record.dll").ToString(3), ok: null);
+        // Deliberately NOT resetting the update status dots/text here. They
+        // start grey from XAML (see BacktrackStatusDot etc.) before any check
+        // has run, and the real checks (startup, hourly, manual button) keep
+        // them accurate independent of whether Settings is even open --
+        // forcing them back to grey every time this screen opens was undoing
+        // an already-confirmed green/red result for no reason, making an
+        // update that genuinely WAS just verified look unconfirmed again.
+    }
+
+    private sealed record DisplayOption(string DeviceName, string Name);
+
+    private void LoadDisplaySelector()
+    {
+        List<DisplayInfo> displays = DisplayMonitors.GetAll();
+        // Real monitor model name (e.g. "AG276QZD") when EDID lookup finds one --
+        // falls back to a generic "Display N" for whatever monitor doesn't
+        // expose it (some don't include a name descriptor in their EDID at all).
+        var options = displays.Select((d, i) => new DisplayOption(
+            d.DeviceName,
+            $"{d.FriendlyName ?? $"Display {i + 1}"}{(d.IsPrimary ? " (Primary)" : "")} — {(int)d.BoundsDiu.Width}x{(int)d.BoundsDiu.Height}")).ToList();
+
+        // Unsubscribed/resubscribed around populating -- ItemsSource/SelectedValue
+        // assignment below would otherwise fire SelectionChanged and immediately
+        // re-save+reposition everything just from opening Settings.
+        DisplaySelector.SelectionChanged -= DisplaySelector_SelectionChanged;
+        DisplaySelector.ItemsSource = options;
+        DisplaySelector.SelectedValue = string.IsNullOrEmpty(_settings.DisplayDeviceName)
+            ? options.FirstOrDefault(o => displays.First(d => d.DeviceName == o.DeviceName).IsPrimary)?.DeviceName
+            : _settings.DisplayDeviceName;
+        if (DisplaySelector.SelectedItem is null && options.Count > 0)
+            DisplaySelector.SelectedIndex = 0;
+        DisplaySelector.SelectionChanged += DisplaySelector_SelectionChanged;
+    }
+
+    private void DisplaySelector_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (DisplaySelector.SelectedValue is not string deviceName)
+            return;
+
+        _settings.DisplayDeviceName = deviceName;
+        _settings.Save();
+
+        // Re-anchors every already-open window to the new monitor immediately,
+        // rather than waiting for whatever would naturally reposition it next
+        // (MainWindow's own next screen change; some of the auxiliary overlays
+        // otherwise only ever position once, in their constructor).
+        ShowScreen(Screen.Settings);
+        _statusOverlay.Reposition();
+        _scrim.Reposition();
+        _disclaimer.Reposition();
+        _logo.Reposition();
+        _toastOverlay.UpdatePosition(true);
     }
 
     private void ObsRemoteToggle_Click(object sender, RoutedEventArgs e)
@@ -2977,14 +3458,25 @@ public partial class MainWindow : Window
 
     private static void CreateOrUpdateStartupTask()
     {
+        // No /RL HIGHEST -- that requests the task run elevated, which schtasks.exe
+        // itself refuses to REGISTER unless the calling process already has admin
+        // rights (Access is denied), regardless of what happens at ONLOGON time.
+        // Backtrack never needs to run elevated (only the RAM disk driver install
+        // does, and that's its own separate, explicit UAC prompt via RamDisk.cs),
+        // so this was failing "Launch with Windows" outright for any non-admin
+        // account -- which is most of them -- for a feature that has no actual
+        // reason to need elevation at all.
         string exePath = Environment.ProcessPath ?? Process.GetCurrentProcess().MainModule!.FileName;
         var psi = new ProcessStartInfo("schtasks.exe",
-            $"/Create /F /SC ONLOGON /RL HIGHEST /TN \"{ScheduledTaskName}\" /TR \"\\\"{exePath}\\\"\"")
-        { UseShellExecute = false, CreateNoWindow = true };
+            $"/Create /F /SC ONLOGON /TN \"{ScheduledTaskName}\" /TR \"\\\"{exePath}\\\"\"")
+        { UseShellExecute = false, RedirectStandardError = true, CreateNoWindow = true };
         using Process proc = Process.Start(psi)!;
+        string stderr = proc.StandardError.ReadToEnd();
         proc.WaitForExit();
         if (proc.ExitCode != 0)
-            throw new InvalidOperationException("schtasks.exe failed to create the startup task.");
+            throw new InvalidOperationException(string.IsNullOrWhiteSpace(stderr)
+                ? "schtasks.exe failed to create the startup task."
+                : $"schtasks.exe failed to create the startup task: {stderr.Trim()}");
     }
 
     private static void DeleteStartupTask()
@@ -3016,12 +3508,43 @@ public partial class MainWindow : Window
 
     private void QuitApp_Click(object sender, RoutedEventArgs e) => Application.Current.Shutdown();
 
+    /// <summary>
+    /// Two presses, not one: the first only checks and turns the button into
+    /// "Update" if it found anything, so pressing "Check now" never silently
+    /// installs something the user didn't ask for yet. The second press (now
+    /// showing "Update") is what actually runs the real install pipeline --
+    /// same CheckForUpdatesAsync the automatic hourly check uses, so it still
+    /// respects the OBS-busy defer/prompt logic rather than forcing through.
+    /// </summary>
     private async void CheckUpdatesButton_Click(object sender, RoutedEventArgs e)
     {
         CheckUpdatesButton.IsEnabled = false;
         try
         {
-            await CheckForUpdatesAsync();
+            if (_manualUpdateReady)
+            {
+                _manualUpdateReady = false;
+                CheckUpdatesButton.Content = "Check now";
+                await ApplyAllAvailableUpdatesAsync();
+                return;
+            }
+
+            (bool backtrackAvail, string backtrackVer) = await CheckSelfAvailabilityAsync();
+            (bool replayAvail, string replayVer) = await CheckPluginAvailabilityAsync("obs-replay-slider", "replay-slider.dll",
+                name => name.Contains("windows", StringComparison.OrdinalIgnoreCase) && name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase),
+                () => _settings.LastAppliedReplaySliderReleaseAt, v => _settings.LastAppliedReplaySliderReleaseAt = v,
+                () => _settings.LastAppliedReplaySliderDigest, v => _settings.LastAppliedReplaySliderDigest = v);
+            (bool sourceAvail, string sourceVer) = await CheckPluginAvailabilityAsync("obs-source-record", "source-record.dll",
+                name => name.Contains("windows-installer", StringComparison.OrdinalIgnoreCase) && name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase),
+                () => _settings.LastAppliedSourceRecordReleaseAt, v => _settings.LastAppliedSourceRecordReleaseAt = v,
+                () => _settings.LastAppliedSourceRecordDigest, v => _settings.LastAppliedSourceRecordDigest = v);
+
+            SetUpdateStatus(BacktrackStatusDot, BacktrackVersionText, backtrackAvail ? $"{backtrackVer} (update available)" : backtrackVer, ok: backtrackAvail ? null : true);
+            SetUpdateStatus(ReplaySliderStatusDot, ReplaySliderVersionText, replayAvail ? $"{replayVer} (update available)" : replayVer, ok: replayAvail ? null : true);
+            SetUpdateStatus(SourceRecordStatusDot, SourceRecordVersionText, sourceAvail ? $"{sourceVer} (update available)" : sourceVer, ok: sourceAvail ? null : true);
+
+            _manualUpdateReady = backtrackAvail || replayAvail || sourceAvail;
+            CheckUpdatesButton.Content = _manualUpdateReady ? "Update" : "Check now";
         }
         finally
         {

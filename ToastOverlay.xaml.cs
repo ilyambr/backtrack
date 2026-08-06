@@ -38,8 +38,9 @@ public partial class ToastOverlay : Window
     public void UpdatePosition(bool overlayActive)
     {
         _overlayActive = overlayActive;
-        Left = 12;
-        Top = overlayActive ? 58 : 14;
+        Rect bounds = DisplayMonitors.ResolveBoundsDiu(AppSettings.Load().DisplayDeviceName);
+        Left = bounds.X + 12;
+        Top = bounds.Y + (overlayActive ? 58 : 14);
         IntPtr hwnd = new WindowInteropHelper(this).Handle;
         if (hwnd != IntPtr.Zero)
         {
@@ -67,6 +68,12 @@ public partial class ToastOverlay : Window
 
     public void ShowUpdateApplied(string component, string version) =>
         Show(GlyphIcon("\u2b06", Green), Green, $"{component} updated", $"Now on version {version}");
+
+    // Fired right before the download+install actually starts (which can take
+    // a while and, for a plugin, closes and relaunches OBS along the way) so
+    // it doesn't look like the app just silently glitched or hung.
+    public void ShowUpdateInProgress(string component) =>
+        Show(GlyphIcon("\u2b07", Accent), Accent, $"Updating {component}...", "Downloading and installing in the background");
 
     private static TextBlock GlyphIcon(string glyph, Brush color) => new()
     {
