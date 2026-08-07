@@ -596,7 +596,18 @@ public partial class MainWindow : Window
             name => name.Contains("windows-installer", StringComparison.OrdinalIgnoreCase) && name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase),
             () => _settings.LastAppliedSourceRecordReleaseAt, v => _settings.LastAppliedSourceRecordReleaseAt = v,
             () => _settings.LastAppliedSourceRecordDigest, v => _settings.LastAppliedSourceRecordDigest = v);
-        await CheckAndApplySelfUpdateAsync();
+
+        // Never on a dev build (see UpdateService.IsDevBuild): a locally-compiled
+        // binary's digest never matches the official release's, so this would
+        // always think an update is "available" regardless of version string,
+        // and applying it ends in Application.Current.Shutdown() a few lines
+        // into CheckAndApplySelfUpdateAsync -- which used to kill the dev
+        // process out from under whoever just wanted the plugin updates above,
+        // even though those had already applied by that point. Plugins remain
+        // fully updatable from a dev build; only Backtrack's own self-update is
+        // off-limits here.
+        if (!UpdateService.IsDevBuild)
+            await CheckAndApplySelfUpdateAsync();
     }
 
     private void ShowAppStartedToast()
@@ -3785,7 +3796,14 @@ public partial class MainWindow : Window
                 return;
             }
 
-            (bool backtrackAvail, string backtrackVer) = await CheckSelfAvailabilityAsync();
+            // Backtrack's own self-update never runs on a dev build (see the
+            // comment in CheckForUpdatesAsync) -- don't even bother checking
+            // availability here, since a dev build's digest never matches and
+            // would always misreport "update available" for a self-update that
+            // will never actually be offered.
+            (bool backtrackAvail, string backtrackVer) = UpdateService.IsDevBuild
+                ? (false, $"{UpdateService.CurrentAppVersion.ToString(3)} (dev build)")
+                : await CheckSelfAvailabilityAsync();
             (bool replayAvail, string replayVer) = await CheckPluginAvailabilityAsync("obs-replay-slider", "replay-slider.dll",
                 name => name.Contains("windows", StringComparison.OrdinalIgnoreCase) && name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase),
                 () => _settings.LastAppliedReplaySliderReleaseAt, v => _settings.LastAppliedReplaySliderReleaseAt = v,
