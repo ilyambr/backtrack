@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Globalization;
 using System.Windows;
 using System.Windows.Data;
@@ -24,3 +24,34 @@ public sealed class SliderFillConverter : IMultiValueConverter
     public object[] ConvertBack(object value, Type[] targetTypes, object? parameter, CultureInfo culture) =>
         throw new NotSupportedException();
 }
+
+public sealed class ComboBoxItemTextConverter : IValueConverter
+{
+    public object Convert(object value, Type targetType, object? parameter, CultureInfo culture)
+    {
+        if (value is null)
+            return "";
+        if (value is System.Windows.Controls.ComboBoxItem cbi)
+            return cbi.Content?.ToString() ?? "";
+
+        var nameProp = value.GetType().GetProperty("Name");
+        if (nameProp != null)
+        {
+            var val = nameProp.GetValue(value);
+            if (val != null) return val.ToString() ?? "";
+        }
+
+        var contentProp = value.GetType().GetProperty("Content");
+        if (contentProp != null)
+        {
+            var val = contentProp.GetValue(value);
+            if (val != null) return val.ToString() ?? "";
+        }
+
+        return value.ToString() ?? "";
+    }
+
+    public object ConvertBack(object value, Type targetType, object? parameter, CultureInfo culture) =>
+        throw new NotSupportedException();
+}
+

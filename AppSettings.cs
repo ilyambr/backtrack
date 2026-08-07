@@ -103,6 +103,12 @@ public sealed class AppSettings
     public string? LastAppliedReplaySliderDigest { get; set; }
     public string? LastAppliedSourceRecordDigest { get; set; }
 
+    // Bottom-right corner log window (see OverlayLogWindow). "Obs" mirrors
+    // OBS's own status-bar-style warnings (encoding overload, saves) one line
+    // at a time; "Backtrack" shows a scrollable window into AppLog instead.
+    public bool OverlayLogEnabled { get; set; } = true;
+    public string OverlayLogMode { get; set; } = "Obs";
+
     // Pushed to every Source Record filter's own replay_duration via the
     // replay-slider bridge (set_buffer_duration) -- this is the buffer that
     // actually gets flushed to disk (the RAM disk, if enabled) on every save,

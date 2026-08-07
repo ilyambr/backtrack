@@ -7,7 +7,8 @@ using Microsoft.Win32;
 
 namespace Backtrack.Interop;
 
-public readonly record struct DisplayInfo(string DeviceName, bool IsPrimary, Rect BoundsDiu, string? FriendlyName);
+/// <summary>WorkAreaDiu excludes the taskbar (and any other appbar docked to an edge) -- BoundsDiu is the full physical monitor rect, taskbar included.</summary>
+public readonly record struct DisplayInfo(string DeviceName, bool IsPrimary, Rect BoundsDiu, Rect WorkAreaDiu, string? FriendlyName);
 
 /// <summary>
 /// Raw Win32 monitor enumeration, not System.Windows.Forms.Screen -- this app
@@ -91,7 +92,13 @@ public static class DisplayMonitors
                 (info.rcMonitor.Right - info.rcMonitor.Left) / scale,
                 (info.rcMonitor.Bottom - info.rcMonitor.Top) / scale);
 
-            results.Add(new DisplayInfo(info.szDevice, (info.dwFlags & MONITORINFOF_PRIMARY) != 0, bounds, TryGetMonitorFriendlyName(info.szDevice)));
+            var workArea = new Rect(
+                info.rcWork.Left / scale,
+                info.rcWork.Top / scale,
+                (info.rcWork.Right - info.rcWork.Left) / scale,
+                (info.rcWork.Bottom - info.rcWork.Top) / scale);
+
+            results.Add(new DisplayInfo(info.szDevice, (info.dwFlags & MONITORINFOF_PRIMARY) != 0, bounds, workArea, TryGetMonitorFriendlyName(info.szDevice)));
             return true;
         }, IntPtr.Zero);
         return results;
@@ -187,4 +194,5 @@ public static class DisplayMonitors
     }
 
     public static Rect ResolveBoundsDiu(string? deviceName) => Resolve(deviceName).BoundsDiu;
+    public static Rect ResolveWorkAreaDiu(string? deviceName) => Resolve(deviceName).WorkAreaDiu;
 }

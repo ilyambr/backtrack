@@ -1,4 +1,6 @@
-﻿using System.Linq;
+using System;
+using System.Linq;
+using System.Threading;
 using System.Windows;
 using System.Windows.Threading;
 
@@ -17,9 +19,83 @@ public partial class App : Application
     private PairingRequestOverlay? _pairingRequest;
     private MainWindow? _main;
 
+    private static Mutex? _appMutex;
+    private static EventWaitHandle? _showEvent;
+
     protected override void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
+
+        // %AppData%\Backtrack, same folder settings.json already lives in --
+        // not a bare relative "crash.log", which lands wherever the process
+        // happens to think its working directory is (inconsistent depending
+        // on how it's launched: double-click, a shortcut with a different
+        // "Start in" folder, Task Scheduler, etc.) rather than somewhere
+        // reliably findable afterward.
+        string crashLogPath = System.IO.Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Backtrack", "crash.log");
+        AppDomain.CurrentDomain.UnhandledException += (s, ev) =>
+        {
+            try
+            {
+                System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(crashLogPath)!);
+                System.IO.File.AppendAllText(crashLogPath, $"[{DateTime.Now}] Domain exception: {ev.ExceptionObject}\n");
+            }
+            catch { }
+        };
+        DispatcherUnhandledException += (s, ev) =>
+        {
+            try
+            {
+                System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(crashLogPath)!);
+                System.IO.File.AppendAllText(crashLogPath, $"[{DateTime.Now}] Dispatcher exception: {ev.Exception}\n");
+            }
+            catch { }
+        };
+
+        bool isPrimary;
+        try
+        {
+            _appMutex = new Mutex(false, @"Local\Backtrack_SingleInstance_Mutex_v3");
+            isPrimary = _appMutex.WaitOne(TimeSpan.Zero, false);
+        }
+        catch (AbandonedMutexException)
+        {
+            isPrimary = true;
+        }
+        catch (Exception)
+        {
+            isPrimary = true;
+        }
+
+        if (!isPrimary)
+        {
+            try
+            {
+                using var existingEvent = EventWaitHandle.OpenExisting(@"Local\Backtrack_ShowHud_Event_v3");
+                existingEvent?.Set();
+            }
+            catch { }
+
+            Shutdown();
+            return;
+        }
+
+        try
+        {
+            _showEvent = new EventWaitHandle(false, EventResetMode.AutoReset, @"Local\Backtrack_ShowHud_Event_v3");
+            ThreadPool.RegisterWaitForSingleObject(_showEvent, (state, timedOut) =>
+            {
+                Dispatcher.BeginInvoke(() =>
+                {
+                    if (_main != null && !_main.IsVisible)
+                    {
+                        _main.ToggleVisible();
+                    }
+                });
+            }, null, -1, false);
+        }
+        catch { }
 
         // The status overlay and toast notifications are always visible,
         // independent of the hotkey-summoned HUD -- create and show them first.
@@ -54,13 +130,8 @@ public partial class App : Application
         // not a normal always-visible window.
         _main = new MainWindow(_status, _toasts, _scrim, _disclaimer, _logo, _pairingRequest);
 
-        // Set by UpdateService.ApplySelfUpdateAsync's relaunch command. A toast
-        // shown from the OLD process right before it self-updates would close
-        // with that window before anyone could see it, so the new process
-        // announces it instead -- a moment after Show() so the toast window's
-        // own layout has actually settled first.
         string? updatedVersion = e.Args
-            .FirstOrDefault(a => a.StartsWith("--updated=", System.StringComparison.Ordinal))
+            .FirstOrDefault(a => a.StartsWith("--updated=", StringComparison.Ordinal))
             ?.Substring("--updated=".Length);
         if (!string.IsNullOrEmpty(updatedVersion))
         {

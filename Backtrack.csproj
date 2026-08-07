@@ -8,7 +8,8 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>Backtrack</AssemblyName>
     <RootNamespace>Backtrack</RootNamespace>
-    <Version>0.2.2</Version>
+    <Version>0.2.3</Version>
+    <ApplicationIcon>Assets\app.ico</ApplicationIcon>
     <!-- The OBS link itself is still a hand-rolled obs-websocket v5 client over
          System.Net.WebSockets, no package needed. LibVLC below is the one
          exception, since WPF's own MediaElement is built on the legacy Windows
@@ -31,6 +32,9 @@
     <Resource Include="Assets\logo.png" />
     <Resource Include="Assets\ilyambr.png" />
     <None Update="Assets\backtrack_tray.png">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Update="Assets\app.ico">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
     <!-- ImDisk Virtual Disk Driver (ltr-data.se), redistributed unmodified per its

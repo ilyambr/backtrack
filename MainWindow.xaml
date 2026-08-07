@@ -16,6 +16,7 @@
         Visibility="Hidden">
     <Window.Resources>
         <local:SliderFillConverter x:Key="SliderFillConverter"/>
+        <local:ComboBoxItemTextConverter x:Key="ComboBoxItemTextConverter"/>
 
         <SolidColorBrush x:Key="PanelBg" Color="#101113"/>
         <SolidColorBrush x:Key="Hairline" Color="#1FFFFFFF"/>
@@ -359,7 +360,7 @@
                                     <ContentPresenter Grid.Column="0" Content="{TemplateBinding SelectedItem}" VerticalAlignment="Center">
                                         <ContentPresenter.ContentTemplate>
                                             <DataTemplate>
-                                                <TextBlock Text="{Binding Name}"
+                                                <TextBlock Text="{Binding Path=., Converter={StaticResource ComboBoxItemTextConverter}}"
                                                            Foreground="{Binding RelativeSource={RelativeSource AncestorType=ComboBox}, Path=Foreground}"
                                                            FontSize="{Binding RelativeSource={RelativeSource AncestorType=ComboBox}, Path=FontSize}"
                                                            FontWeight="{Binding RelativeSource={RelativeSource AncestorType=ComboBox}, Path=FontWeight}"/>
@@ -1159,6 +1160,29 @@
                                          immediate-toggle: avoids a second round-trip just for the enabled flag. -->
                                     <Button Content="Save &amp; apply on transmitter" Style="{StaticResource FlatButton}" HorizontalAlignment="Left" Click="ApplyRemoteRamDiskSettings_Click"/>
                                 </StackPanel>
+                            </StackPanel>
+
+                            <TextBlock Text="OVERLAY LOG" FontSize="11" FontWeight="Bold" Foreground="{StaticResource Text1}" Margin="0,24,0,10"/>
+                            <Border Style="{StaticResource SettingsRow}" BorderThickness="0">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel VerticalAlignment="Center">
+                                        <TextBlock Text="Small log in the corner of the screen" FontSize="13" FontWeight="Bold" Foreground="{StaticResource Text0}"/>
+                                        <TextBlock Text="Bottom-right, always visible. OBS mode mirrors OBS's own status bar (encoding overload, saves); Backtrack mode shows Backtrack's own recent activity instead."
+                                                   FontSize="11" Foreground="{StaticResource Text2}" Margin="0,3,0,0" TextWrapping="Wrap"/>
+                                    </StackPanel>
+                                    <ToggleButton x:Name="OverlayLogToggle" Grid.Column="1" Style="{StaticResource AppToggle}" VerticalAlignment="Center" Click="OverlayLogToggle_Click"/>
+                                </Grid>
+                            </Border>
+                            <StackPanel x:Name="OverlayLogModeFields" Margin="0,14,0,6">
+                                <TextBlock Text="Mode" FontSize="11" FontWeight="Bold" Foreground="{StaticResource Text1}" Margin="0,0,0,6"/>
+                                <ComboBox x:Name="OverlayLogModeSelector" Style="{StaticResource ModernComboBox}" SelectionChanged="OverlayLogModeSelector_SelectionChanged">
+                                     <ComboBoxItem Content="OBS" Tag="Obs"/>
+                                     <ComboBoxItem Content="Backtrack" Tag="Backtrack"/>
+                                 </ComboBox>
                             </StackPanel>
                         </StackPanel>
                     </StackPanel>

@@ -100,6 +100,7 @@ static class Program
                 shortcut.TargetPath = targetPath;
                 shortcut.WorkingDirectory = workingDir;
                 shortcut.Description = description;
+                shortcut.IconLocation = $"{targetPath},0";
                 shortcut.Save();
             }
         }

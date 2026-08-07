@@ -69,6 +69,9 @@ public partial class ToastOverlay : Window
     public void ShowUpdateApplied(string component, string version) =>
         Show(GlyphIcon("\u2b06", Green), Green, $"{component} updated", $"Now on version {version}");
 
+    public void ShowAppStarted(string hotkeyText) =>
+        Show(GlyphIcon("\u21bb", Accent), Accent, "Backtrack is running", $"Press {hotkeyText} to open the overlay");
+
     // Fired right before the download+install actually starts (which can take
     // a while and, for a plugin, closes and relaunches OBS along the way) so
     // it doesn't look like the app just silently glitched or hung.
