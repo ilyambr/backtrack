@@ -350,8 +350,16 @@ public partial class MainWindow : Window
         // CheckForUpdatesAsync's doc comment); every other trigger requires an
         // explicit click, either the bottom-left prompt's Install button or
         // the Settings "Check now" -> "Update" button.
+        //
+        // Skipped entirely on a dev build (see UpdateService.IsDevBuild): a
+        // locally-compiled binary will always look "out of date" by digest
+        // regardless of version string, and auto-applying here would silently
+        // overwrite whatever's actively being tested with the real release.
+        // The manual Settings button still works either way -- this only
+        // disables the automatic/unprompted paths, not manual control.
         ShowAppStartedToast();
-        _ = CheckForUpdatesAsync();
+        if (!UpdateService.IsDevBuild)
+            _ = CheckForUpdatesAsync();
 
         InitializeOverlayLog();
     }
@@ -1361,6 +1369,18 @@ public partial class MainWindow : Window
         GalleryPanel.Visibility = screen == Screen.Gallery ? Visibility.Visible : Visibility.Collapsed;
         PlayerPanel.Visibility = screen == Screen.Player ? Visibility.Visible : Visibility.Collapsed;
         SettingsPanel.Visibility = screen == Screen.Settings ? Visibility.Visible : Visibility.Collapsed;
+
+        // GalleryStatus is the SAME TextBlock as the Idle tile's "X clips"
+        // subtitle -- LoadGallery() (browsing) sets it to a SHALLOW count of
+        // just the currently-viewed folder's own files, not a recursive total,
+        // so it stomps the real total the moment Gallery's opened at all (e.g.
+        // clips organized into subfolders would show far fewer, or zero, right
+        // there in the root). Recomputing the real recursive count every time
+        // Idle becomes the active screen means that stale per-folder number
+        // never lingers on the tile once you're back, regardless of which path
+        // got you there.
+        if (screen == Screen.Idle)
+            _ = RefreshGalleryCountAsync();
 
         if (switchingPanel)
             AnimatePanelIn(newPanel);
@@ -3428,7 +3448,7 @@ public partial class MainWindow : Window
                         RenderDiscoveredDevices();
                         return;
                     case PairingOutcome.Denied:
-                        statusText.Text = "Request denied.";
+                        statusText.Text = string.IsNullOrEmpty(result.Error) ? "Request denied." : result.Error;
                         break;
                     case PairingOutcome.TimedOut:
                         statusText.Text = "Request timed out.";
@@ -3490,7 +3510,7 @@ public partial class MainWindow : Window
                     RenderDiscoveredDevices();
                     return;
                 case PairingOutcome.Denied:
-                    ManualPairStatusText.Text = "Request denied.";
+                    ManualPairStatusText.Text = string.IsNullOrEmpty(result.Error) ? "Request denied." : result.Error;
                     break;
                 case PairingOutcome.TimedOut:
                     ManualPairStatusText.Text = "Request timed out. Check the address and that the other PC has \"Share my clips\" on.";

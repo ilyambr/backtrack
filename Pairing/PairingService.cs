@@ -244,10 +244,37 @@ public sealed class PairingService : IDisposable
         string deviceId = request.TryGetProperty("deviceId", out JsonElement d) ? d.GetString() ?? "" : "";
         string deviceName = request.TryGetProperty("deviceName", out JsonElement n) ? n.GetString() ?? "Unknown device" : "Unknown device";
         string requestId = Guid.NewGuid().ToString("N");
-        string code = RandomNumberGenerator.GetInt32(0, 1_000_000).ToString("D6");
 
-        _pendingRequests[requestId] = new PendingRequest { DeviceId = deviceId, DeviceName = deviceName, Code = code };
-        PairingRequested?.Invoke(deviceName, code, requestId);
+        /* PairingRequested is answered by a single shared overlay window (see
+         * MainWindow's subscription) -- ShowRequest() just overwrites its
+         * Allow/Deny callbacks and displayed code with whatever request last
+         * called it, with no idea a prior request was still undecided. If a
+         * second request arrives while the first is still sitting there
+         * waiting on a human, the human ends up approving whichever one is
+         * currently on screen, but that only marks THAT request's entry
+         * Decided -- the other one is silently orphaned: never approved,
+         * never denied, and (if its own connecting client is still polling)
+         * eventually just times out on that end. Worse, if it's approved on
+         * a later overlap, the two sides can walk away with secrets from two
+         * different handshakes that were never meant to be compared, which
+         * is exactly the "secrets don't match" symptom this was root-caused
+         * from. Reject overlapping requests outright instead: the connecting
+         * side gets an immediate, unambiguous "denied" and can just retry
+         * once the first attempt is resolved, rather than either side ending
+         * up with a secret the other doesn't recognize. */
+        bool busy = _pendingRequests.Values.Any(p => !p.Decided);
+        string code = busy ? "" : RandomNumberGenerator.GetInt32(0, 1_000_000).ToString("D6");
+
+        var pending = new PendingRequest { DeviceId = deviceId, DeviceName = deviceName, Code = code };
+        if (busy)
+        {
+            pending.Decided = true;
+            pending.Approved = false;
+        }
+        _pendingRequests[requestId] = pending;
+
+        if (!busy)
+            PairingRequested?.Invoke(deviceName, code, requestId);
 
         return JsonSerializer.Serialize(new PairRequestResponse(requestId, code));
     }
@@ -491,6 +518,14 @@ public sealed class PairingService : IDisposable
             var response = JsonSerializer.Deserialize<PairRequestResponse>(responseLine);
             if (response is null)
                 return new PairingResult(PairingOutcome.Failed, Error: "Unexpected response from the other PC.");
+
+            /* An empty code means the host already had another pairing request
+             * awaiting a decision and rejected this one outright (see the busy
+             * check in HandlePairRequest) -- skip straight to that instead of
+             * flashing a blank code for the one second it takes the first poll
+             * below to come back "denied". */
+            if (string.IsNullOrEmpty(response.Code))
+                return new PairingResult(PairingOutcome.Denied, Error: "That PC is already handling another pairing request -- try again in a moment.");
 
             onCodeReceived(response.Code);
 
