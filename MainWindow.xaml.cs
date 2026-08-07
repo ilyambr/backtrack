@@ -133,6 +133,14 @@ public partial class MainWindow : Window
     private string? _currentGalleryFolder;
     private string GalleryFolder => _currentGalleryFolder ?? _settings.ClipsFolder;
 
+    // Whether Gallery is currently browsing this PC's own ClipsFolder or the
+    // paired transmitter PC's, over the pairing connection (see
+    // PairingService.ListRemoteGalleryAsync/DownloadRemoteClipAsync). Reset to
+    // local every time Gallery is (re)opened from Idle -- see GalleryTile_Click.
+    private bool _galleryIsRemote;
+    // Relative to the remote PC's own ClipsFolder root; null means "at that root".
+    private string? _currentRemoteGalleryFolder;
+
     private readonly HashSet<string> _selectedClipPaths = new(StringComparer.OrdinalIgnoreCase);
     // Rebuilt every LoadGallery() call -- lets mass actions and the selection-circle
     // visuals look up a card's controls by file without threading extra state through
@@ -1651,6 +1659,48 @@ public partial class MainWindow : Window
     {
         ShowScreen(Screen.Gallery);
         _currentGalleryFolder = null;
+        _galleryIsRemote = false;
+        _currentRemoteGalleryFolder = null;
+        RefreshGallerySourceTabsVisibility();
+        LoadGallery();
+    }
+
+    /// <summary>The "This PC"/"Remote" tabs only make sense (and only show) once
+    /// actually paired with a transmitter PC -- call whenever pairing state
+    /// changes, in addition to whenever Gallery itself opens.</summary>
+    private void RefreshGallerySourceTabsVisibility()
+    {
+        bool paired = !string.IsNullOrEmpty(_settings.PairedPeerSecret);
+        GallerySourceTabs.Visibility = paired ? Visibility.Visible : Visibility.Collapsed;
+        if (!paired && _galleryIsRemote)
+        {
+            // Got unpaired while sitting on the Remote tab -- there's nothing
+            // left to show there, so fall back to local rather than leaving
+            // Gallery stuck showing a now-meaningless "Remote" view.
+            _galleryIsRemote = false;
+            _currentRemoteGalleryFolder = null;
+        }
+        GalleryLocalTabButton.FontWeight = _galleryIsRemote ? FontWeights.Normal : FontWeights.Bold;
+        GalleryRemoteTabButton.FontWeight = _galleryIsRemote ? FontWeights.Bold : FontWeights.Normal;
+        GalleryRemoteTabButton.Content = string.IsNullOrEmpty(_settings.PairedPeerName) ? "Remote" : _settings.PairedPeerName;
+    }
+
+    private void GalleryLocalTab_Click(object sender, RoutedEventArgs e)
+    {
+        if (!_galleryIsRemote)
+            return;
+        _galleryIsRemote = false;
+        RefreshGallerySourceTabsVisibility();
+        LoadGallery();
+    }
+
+    private void GalleryRemoteTab_Click(object sender, RoutedEventArgs e)
+    {
+        if (_galleryIsRemote || string.IsNullOrEmpty(_settings.PairedPeerSecret))
+            return;
+        _galleryIsRemote = true;
+        _currentRemoteGalleryFolder = null;
+        RefreshGallerySourceTabsVisibility();
         LoadGallery();
     }
 
@@ -2017,7 +2067,7 @@ public partial class MainWindow : Window
 
     // ---------------------------------------------------------------- gallery
 
-    private static readonly string[] VideoExtensions = { ".mp4", ".mkv", ".flv", ".mov" };
+    private static readonly string[] VideoExtensions = GalleryFormats.VideoExtensions;
 
     private async Task RefreshGalleryCountAsync()
     {
@@ -2042,6 +2092,12 @@ public partial class MainWindow : Window
 
     private void LoadGallery()
     {
+        if (_galleryIsRemote)
+        {
+            _ = LoadRemoteGalleryAsync();
+            return;
+        }
+
         GalleryGrid.Children.Clear();
         _galleryCardSelection.Clear();
         _selectedClipPaths.Clear();
@@ -2126,6 +2182,15 @@ public partial class MainWindow : Window
     /// </summary>
     private void UpdateGalleryPathBar()
     {
+        if (_galleryIsRemote)
+        {
+            bool remoteAtRoot = _currentRemoteGalleryFolder is null;
+            GalleryPathBar.Visibility = remoteAtRoot ? Visibility.Collapsed : Visibility.Visible;
+            if (!remoteAtRoot)
+                GalleryPathText.Text = _currentRemoteGalleryFolder;
+            return;
+        }
+
         bool atRoot = _currentGalleryFolder is null;
         GalleryPathBar.Visibility = atRoot ? Visibility.Collapsed : Visibility.Visible;
         if (atRoot)
@@ -2153,8 +2218,26 @@ public partial class MainWindow : Window
         LoadGallery();
     }
 
+    /// <summary>Descends into a subfolder of the paired PC's own ClipsFolder root -- relativePath uses '/' throughout regardless of either PC's actual OS.</summary>
+    private void OpenRemoteGalleryFolder(string name)
+    {
+        _currentRemoteGalleryFolder = _currentRemoteGalleryFolder is null ? name : $"{_currentRemoteGalleryFolder}/{name}";
+        LoadGallery();
+    }
+
     private void GalleryUp_Click(object sender, MouseButtonEventArgs e)
     {
+        if (_galleryIsRemote)
+        {
+            if (_currentRemoteGalleryFolder is not null)
+            {
+                int lastSlash = _currentRemoteGalleryFolder.LastIndexOf('/');
+                _currentRemoteGalleryFolder = lastSlash < 0 ? null : _currentRemoteGalleryFolder[..lastSlash];
+            }
+            LoadGallery();
+            return;
+        }
+
         string root = Path.GetFullPath(_settings.ClipsFolder).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
         string current = Path.GetFullPath(GalleryFolder).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
 
@@ -2175,6 +2258,189 @@ public partial class MainWindow : Window
             }
         }
         LoadGallery();
+    }
+
+    /// <summary>
+    /// Remote counterpart of the local LoadGallery() above -- same shape (folder
+    /// tiles first, then clip tiles, then a status count), fetched over the
+    /// pairing connection instead of the local filesystem. No thumbnails (there's
+    /// no local file to decode a frame from without downloading it first) and no
+    /// selection/mass-actions/trim -- those operate on local files by design; a
+    /// remote clip has to be downloaded (see OpenRemoteClipAsync) before any of
+    /// that could apply to it.
+    /// </summary>
+    private async Task LoadRemoteGalleryAsync()
+    {
+        GalleryGrid.Children.Clear();
+        _galleryCardSelection.Clear();
+        _selectedClipPaths.Clear();
+        RefreshGallerySelectionUi();
+        UpdateGalleryPathBar();
+        GalleryStatus.Text = "Loading...";
+
+        RemoteGalleryListing? listing = await _pairing.ListRemoteGalleryAsync(_currentRemoteGalleryFolder ?? "");
+        if (listing is null)
+        {
+            GalleryGrid.Children.Add(new TextBlock
+            {
+                Text = $"Couldn't reach {_settings.PairedPeerName}'s Backtrack -- make sure it's running and paired.",
+                FontSize = 12,
+                Foreground = (Brush)FindResource("Rec"),
+                TextWrapping = TextWrapping.Wrap,
+                Width = BigWidth() - 40,
+            });
+            GalleryStatus.Text = "";
+            return;
+        }
+
+        if (listing.Folders.Count == 0 && listing.Files.Count == 0)
+        {
+            GalleryGrid.Children.Add(new TextBlock
+            {
+                Text = "No clips in this folder yet.",
+                FontSize = 12,
+                Foreground = (Brush)FindResource("Text2"),
+            });
+            GalleryStatus.Text = "0 clips";
+            return;
+        }
+
+        foreach (string name in listing.Folders)
+            GalleryGrid.Children.Add(BuildRemoteFolderCard(name));
+
+        foreach (RemoteGalleryFile file in listing.Files)
+            GalleryGrid.Children.Add(BuildRemoteClipCard(file));
+
+        GalleryStatus.Text = listing.Files.Count == 1 ? "1 clip" : $"{listing.Files.Count} clips";
+    }
+
+    private Border BuildRemoteFolderCard(string name)
+    {
+        var iconHost = new Border
+        {
+            Background = new SolidColorBrush(Color.FromRgb(24, 26, 30)),
+            Height = 118,
+            Cursor = Cursors.Hand,
+        };
+        var folderGlyph = new System.Windows.Shapes.Path
+        {
+            Data = Geometry.Parse("M10,4H4C2.89,4 2,4.89 2,6V18A2,2 0 0,0 4,20H20A2,2 0 0,0 22,18V8C22,6.89 21.1,6 20,6H12L10,4Z"),
+            Fill = (Brush)FindResource("Text1"),
+            Width = 46,
+            Height = 38,
+            Stretch = Stretch.Uniform,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        iconHost.Child = folderGlyph;
+
+        var title = new TextBlock
+        {
+            Text = name,
+            FontWeight = FontWeights.Bold,
+            FontSize = 12.5,
+            Foreground = (Brush)FindResource("Text0"),
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            Margin = new Thickness(0, 7, 0, 1),
+        };
+        var sub = new TextBlock { Text = "Folder", FontSize = 11, Foreground = (Brush)FindResource("Text2") };
+
+        var content = new StackPanel();
+        content.Children.Add(iconHost);
+        content.Children.Add(title);
+        content.Children.Add(sub);
+
+        var card = new Border { Width = 210, Child = content, Cursor = Cursors.Hand };
+        card.MouseLeftButtonUp += (_, _) => OpenRemoteGalleryFolder(name);
+        return card;
+    }
+
+    private Border BuildRemoteClipCard(RemoteGalleryFile file)
+    {
+        var iconHost = new Border
+        {
+            Background = new SolidColorBrush(Color.FromRgb(24, 26, 30)),
+            Height = 118,
+            Cursor = Cursors.Hand,
+        };
+        // Play-triangle glyph -- no thumbnail is available without downloading
+        // the clip first (see this method's own doc comment on LoadRemoteGalleryAsync).
+        var playGlyph = new System.Windows.Shapes.Path
+        {
+            Data = Geometry.Parse("M8,5.14V19.14L19,12.14L8,5.14Z"),
+            Fill = (Brush)FindResource("Text1"),
+            Width = 38,
+            Height = 38,
+            Stretch = Stretch.Uniform,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        iconHost.Child = playGlyph;
+
+        var title = new TextBlock
+        {
+            Text = file.Name,
+            FontWeight = FontWeights.Bold,
+            FontSize = 12.5,
+            Foreground = (Brush)FindResource("Text0"),
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            Margin = new Thickness(0, 7, 0, 1),
+        };
+        double mb = file.Size / (1024.0 * 1024.0);
+        var sub = new TextBlock
+        {
+            Text = $"{file.Modified.ToLocalTime():MMM d, h:mm tt} · {mb:0.#} MB",
+            FontSize = 11,
+            Foreground = (Brush)FindResource("Text2"),
+        };
+
+        var content = new StackPanel();
+        content.Children.Add(iconHost);
+        content.Children.Add(title);
+        content.Children.Add(sub);
+
+        var card = new Border { Width = 210, Child = content, Cursor = Cursors.Hand };
+        string relativePath = _currentRemoteGalleryFolder is null ? file.Name : $"{_currentRemoteGalleryFolder}/{file.Name}";
+        card.MouseLeftButtonUp += (_, _) => _ = OpenRemoteClipAsync(relativePath, file.Name);
+        return card;
+    }
+
+    /// <summary>
+    /// Downloads a remote clip into a per-peer local cache (so re-opening the
+    /// same clip later doesn't re-download it) and opens it in the existing
+    /// Player -- once it's actually on disk here, it plays exactly like any
+    /// local clip, no separate remote playback path needed.
+    /// </summary>
+    private async Task OpenRemoteClipAsync(string relativePath, string fileName)
+    {
+        if (string.IsNullOrEmpty(_settings.PairedPeerDeviceId))
+            return;
+
+        string cacheDir = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "Backtrack", "RemoteCache", _settings.PairedPeerDeviceId,
+            Path.GetDirectoryName(relativePath.Replace('/', Path.DirectorySeparatorChar)) ?? "");
+        Directory.CreateDirectory(cacheDir);
+        string destPath = Path.Combine(cacheDir, fileName);
+
+        if (File.Exists(destPath))
+        {
+            OpenInPlayer(new FileInfo(destPath));
+            return;
+        }
+
+        string previousStatus = GalleryStatus.Text;
+        var progress = new Progress<double>(p => GalleryStatus.Text = $"Downloading... {p:P0}");
+        (bool success, string? error) = await _pairing.DownloadRemoteClipAsync(relativePath, destPath, progress);
+        GalleryStatus.Text = previousStatus;
+
+        if (!success)
+        {
+            MessageBox.Show(this, $"Couldn't download that clip: {error}", "Backtrack");
+            return;
+        }
+
+        OpenInPlayer(new FileInfo(destPath));
     }
 
     private void ToggleClipSelected(FileInfo file)
@@ -3443,6 +3709,7 @@ public partial class MainWindow : Window
             PairingStatusText.Text = "Not paired";
             UnpairButton.Visibility = Visibility.Collapsed;
         }
+        RefreshGallerySourceTabsVisibility();
     }
 
     private void UnpairButton_Click(object sender, RoutedEventArgs e)
