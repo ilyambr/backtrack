@@ -194,9 +194,28 @@ public partial class MainWindow : Window
                 ShowObsModeMessage($"Recording saved to '{path}'");
             }
         });
-        _obs.ReplaySaved += (key, path) => Dispatcher.BeginInvoke(() =>
+        _obs.ReplaySaved += (key, path) => Dispatcher.BeginInvoke(async () =>
         {
-            string label = _rowLabels.TryGetValue(key, out string? l) ? l : key;
+            if (!_rowLabels.TryGetValue(key, out string? label))
+            {
+                // The row's key is a raw obs_source_t* address formatted as a
+                // string, not a real identifier (see obs-replay-slider's
+                // AddRow/RebuildRows: "not all OBS versions... have
+                // obs_source_get_uuid(), so use the source object's own
+                // address instead") -- which is NOT stable across an OBS
+                // restart on the transmitter PC, since every source gets a
+                // new address. A cache built before the last such restart is
+                // silently wrong for every row, not just missing one, which
+                // is exactly what showed up as a meaningless raw number in
+                // the toast instead of the real filter/source name. Retry
+                // once, live, before giving up -- self-heals this toast
+                // immediately instead of waiting for Backtrack's own next
+                // reconnect to refresh the whole cache.
+                await PrefetchRowLabelsAsync();
+                _rowLabels.TryGetValue(key, out label);
+            }
+            label ??= key;
+
             _toastOverlay.ShowReplaySaved(label, path);
             AppLog.Write($"{label} saved to '{path}'");
             ShowObsModeMessage($"Replay saved to '{path}'");
