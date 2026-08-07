@@ -675,6 +675,22 @@ public partial class MainWindow : Window
 
         bool digestKnownBothSides = release.Digest is not null && lastDigest is not null;
         bool digestChanged = digestKnownBothSides && !string.Equals(release.Digest, lastDigest, StringComparison.OrdinalIgnoreCase);
+
+        // A matching digest is authoritative: it proves the exact bytes of
+        // this release were already installed, regardless of what the
+        // installed binary's OWN self-reported version string claims.
+        // versionBumped compares GitHub's tag against that self-reported
+        // string (see GetInstalledPluginVersion) -- a plugin whose version-
+        // embedding is out of sync with its real content (hit for real in
+        // obs-source-record: CMakeLists.txt's hardcoded version lagged
+        // buildspec.json for several releases) would otherwise make
+        // versionBumped permanently true even once the actual fix is
+        // installed, reinstalling the same already-current release every
+        // single check forever -- closing/reopening OBS each time for
+        // nothing. Trust a matching digest over a version-string mismatch.
+        if (digestKnownBothSides && !digestChanged)
+            return false;
+
         bool republishedByTimestamp = !digestKnownBothSides && release.PublishedAt is not null && lastApplied is not null && release.PublishedAt > lastApplied;
 
         return versionBumped || digestChanged || republishedByTimestamp;
