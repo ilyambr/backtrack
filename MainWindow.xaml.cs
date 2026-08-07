@@ -248,6 +248,11 @@ public partial class MainWindow : Window
             RamDisk.IsMounted(_settings.RamDiskDriveLetter));
         _pairing.ApplyRamDiskSnapshot = ApplyRamDiskConfigAsync;
 
+        // Lets a paired receiver PC's remote Gallery tab reuse this instance's
+        // own thumbnail cache instead of PairingService duplicating LibVLC
+        // frame-grab logic it has no access to -- see EnsureThumbnailCachedAsync.
+        _pairing.EnsureThumbnailCachedForRemote = async fullPath => await EnsureThumbnailCachedAsync(new FileInfo(fullPath));
+
         // Same reasoning as RAM disk above -- plugin version checks/updates read
         // and write C:\Program Files\obs-studio on THIS machine (see
         // UpdateService), so a paired receiver PC needs this run here, not on
@@ -2263,11 +2268,12 @@ public partial class MainWindow : Window
     /// <summary>
     /// Remote counterpart of the local LoadGallery() above -- same shape (folder
     /// tiles first, then clip tiles, then a status count), fetched over the
-    /// pairing connection instead of the local filesystem. No thumbnails (there's
-    /// no local file to decode a frame from without downloading it first) and no
-    /// selection/mass-actions/trim -- those operate on local files by design; a
-    /// remote clip has to be downloaded (see OpenRemoteClipAsync) before any of
-    /// that could apply to it.
+    /// pairing connection instead of the local filesystem. Thumbnails are
+    /// fetched from the transmitter PC's own local cache (see
+    /// LoadRemoteThumbnailAsync/HandleGetThumbnailAsync), not generated here.
+    /// No selection/mass-actions/trim, though -- those operate on local files
+    /// by design; a remote clip has to be downloaded (see OpenRemoteClipAsync)
+    /// before any of that could apply to it.
     /// </summary>
     private async Task LoadRemoteGalleryAsync()
     {
@@ -2362,9 +2368,13 @@ public partial class MainWindow : Window
             Background = new SolidColorBrush(Color.FromRgb(24, 26, 30)),
             Height = 118,
             Cursor = Cursors.Hand,
+            ClipToBounds = true,
         };
-        // Play-triangle glyph -- no thumbnail is available without downloading
-        // the clip first (see this method's own doc comment on LoadRemoteGalleryAsync).
+        // Play-triangle placeholder, shown until the real frame arrives (see
+        // LoadRemoteThumbnailAsync below) -- the transmitter PC already has
+        // this clip thumbnailed for its own local Gallery in the common case
+        // (PrewarmGalleryThumbnailsAsync runs there too), so this is usually
+        // a quick fetch, not a fresh generation.
         var playGlyph = new System.Windows.Shapes.Path
         {
             Data = Geometry.Parse("M8,5.14V19.14L19,12.14L8,5.14Z"),
@@ -2375,7 +2385,12 @@ public partial class MainWindow : Window
             HorizontalAlignment = HorizontalAlignment.Center,
             VerticalAlignment = VerticalAlignment.Center,
         };
-        iconHost.Child = playGlyph;
+        var thumbImage = new Image { Stretch = Stretch.UniformToFill };
+
+        var iconGrid = new Grid();
+        iconGrid.Children.Add(playGlyph);
+        iconGrid.Children.Add(thumbImage);
+        iconHost.Child = iconGrid;
 
         var title = new TextBlock
         {
@@ -2402,7 +2417,53 @@ public partial class MainWindow : Window
         var card = new Border { Width = 210, Child = content, Cursor = Cursors.Hand };
         string relativePath = _currentRemoteGalleryFolder is null ? file.Name : $"{_currentRemoteGalleryFolder}/{file.Name}";
         card.MouseLeftButtonUp += (_, _) => _ = OpenRemoteClipAsync(relativePath, file.Name);
+
+        _ = LoadRemoteThumbnailAsync(relativePath, file, thumbImage);
         return card;
+    }
+
+    /// <summary>
+    /// Fetches (and locally caches, per peer) a remote clip's thumbnail --
+    /// keyed on relativePath + the file's modified/size as reported by the
+    /// listing (same idea as GetThumbnailCachePath's local key), so a changed
+    /// remote file gets a fresh thumbnail instead of showing a stale frame
+    /// forever. The play-triangle placeholder stays put on any failure --
+    /// not worth surfacing an error over a missing thumbnail.
+    /// </summary>
+    private async Task LoadRemoteThumbnailAsync(string relativePath, RemoteGalleryFile file, Image target)
+    {
+        if (string.IsNullOrEmpty(_settings.PairedPeerDeviceId))
+            return;
+
+        string cacheDir = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "Backtrack", "RemoteThumbnails", _settings.PairedPeerDeviceId);
+        Directory.CreateDirectory(cacheDir);
+        string key = $"{relativePath}|{file.Modified.Ticks}|{file.Size}";
+        string hash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(key)));
+        string cachePath = Path.Combine(cacheDir, $"{hash}.jpg");
+
+        if (!File.Exists(cachePath))
+        {
+            (bool success, _) = await _pairing.DownloadRemoteThumbnailAsync(relativePath, cachePath);
+            if (!success)
+                return;
+        }
+
+        try
+        {
+            var bitmap = new BitmapImage();
+            bitmap.BeginInit();
+            bitmap.CacheOption = BitmapCacheOption.OnLoad;
+            bitmap.UriSource = new Uri(cachePath);
+            bitmap.EndInit();
+            bitmap.Freeze();
+            target.Source = bitmap;
+        }
+        catch
+        {
+            // Cached file is somehow unreadable -- leave the play-triangle placeholder.
+        }
     }
 
     /// <summary>

@@ -227,14 +227,20 @@ public sealed class PairingService : IDisposable
                 using JsonDocument doc = JsonDocument.Parse(line);
                 string? type = doc.RootElement.TryGetProperty("type", out JsonElement t) ? t.GetString() : null;
 
-                // get_clip is the one request type whose response isn't a single
-                // JSON line -- it writes a JSON header line and then (on success)
-                // streams the raw file bytes directly after it, so it has to own
-                // writing to the connection itself instead of going through the
-                // uniform "one line in, one line out" dispatch below.
+                // get_clip/get_thumbnail are the request types whose response
+                // isn't a single JSON line -- each writes a JSON header line and
+                // then (on success) streams raw bytes directly after it, so they
+                // have to own writing to the connection themselves instead of
+                // going through the uniform "one line in, one line out" dispatch
+                // below.
                 if (type == "get_clip")
                 {
                     await HandleGetClipAsync(doc.RootElement, client.GetStream());
+                    return;
+                }
+                if (type == "get_thumbnail")
+                {
+                    await HandleGetThumbnailAsync(doc.RootElement, client.GetStream());
                     return;
                 }
 
@@ -403,6 +409,15 @@ public sealed class PairingService : IDisposable
         return true;
     }
 
+    /// <summary>
+    /// Set by MainWindow so an authenticated request can reuse this instance's
+    /// own local thumbnail cache (MainWindow.EnsureThumbnailCachedAsync) instead
+    /// of this class duplicating LibVLC frame-grab logic it has no access to --
+    /// takes a resolved local full path, returns the cached .jpg's path (running
+    /// generation first if it wasn't already cached for this PC's own Gallery).
+    /// </summary>
+    public Func<string, Task<string?>>? EnsureThumbnailCachedForRemote { get; set; }
+
     private string HandleListGallery(JsonElement request)
     {
         if (!IsAuthorizedClient(request))
@@ -466,9 +481,70 @@ public sealed class PairingService : IDisposable
             return;
         }
 
+        await StreamFileResponseAsync(stream, fullPath);
+    }
+
+    /// <summary>
+    /// Same wire shape as HandleGetClipAsync (JSON header line, then raw bytes
+    /// on success), but for one clip's thumbnail -- reuses this instance's own
+    /// local thumbnail cache (see EnsureThumbnailCachedForRemote) rather than
+    /// duplicating LibVLC frame-grab logic here, so a clip already thumbnailed
+    /// for this PC's own Gallery (see PrewarmGalleryThumbnailsAsync) is usually
+    /// an instant response, not a fresh generation per remote request.
+    /// </summary>
+    private async Task HandleGetThumbnailAsync(JsonElement request, NetworkStream stream)
+    {
+        if (!IsAuthorizedClient(request))
+        {
+            await WriteLineAsync(stream, JsonSerializer.Serialize(new { success = false, error = "Not authorized -- pair with this PC first." }));
+            return;
+        }
+
+        string relativePath = request.TryGetProperty("path", out JsonElement p) ? p.GetString() ?? "" : "";
+        if (!TryResolveGalleryPath(relativePath, out string fullPath, out string? pathError) ||
+            !GalleryFormats.VideoExtensions.Contains(Path.GetExtension(fullPath).ToLowerInvariant()))
+        {
+            await WriteLineAsync(stream, JsonSerializer.Serialize(new { success = false, error = pathError ?? "Not a clip file." }));
+            return;
+        }
+
+        if (!File.Exists(fullPath))
+        {
+            await WriteLineAsync(stream, JsonSerializer.Serialize(new { success = false, error = "That clip doesn't exist on this PC anymore." }));
+            return;
+        }
+
+        if (EnsureThumbnailCachedForRemote is null)
+        {
+            await WriteLineAsync(stream, JsonSerializer.Serialize(new { success = false, error = "Thumbnails aren't available on this PC right now." }));
+            return;
+        }
+
+        string? thumbnailPath;
         try
         {
-            using FileStream fileStream = File.OpenRead(fullPath);
+            thumbnailPath = await EnsureThumbnailCachedForRemote(fullPath);
+        }
+        catch (Exception ex)
+        {
+            await WriteLineAsync(stream, JsonSerializer.Serialize(new { success = false, error = ex.Message }));
+            return;
+        }
+
+        if (thumbnailPath is null || !File.Exists(thumbnailPath))
+        {
+            await WriteLineAsync(stream, JsonSerializer.Serialize(new { success = false, error = "Couldn't generate a thumbnail for that clip." }));
+            return;
+        }
+
+        await StreamFileResponseAsync(stream, thumbnailPath);
+    }
+
+    private static async Task StreamFileResponseAsync(NetworkStream stream, string localPath)
+    {
+        try
+        {
+            using FileStream fileStream = File.OpenRead(localPath);
             await WriteLineAsync(stream, JsonSerializer.Serialize(new { success = true, size = fileStream.Length }));
             await fileStream.CopyToAsync(stream);
             await stream.FlushAsync();
@@ -478,7 +554,7 @@ public sealed class PairingService : IDisposable
             // Too late to send a clean JSON error once bytes may already be
             // flowing -- just drop the connection, the client's own read will
             // come up short of the promised size and treat that as a failure.
-            System.Diagnostics.Debug.WriteLine($"get_clip failed mid-transfer: {ex.Message}");
+            System.Diagnostics.Debug.WriteLine($"File stream response failed mid-transfer: {ex.Message}");
         }
     }
 
@@ -590,7 +666,14 @@ public sealed class PairingService : IDisposable
     /// (0-1) progress as bytes arrive, since a clip can be large enough that a
     /// silent multi-second wait would otherwise look like Backtrack hung.
     /// </summary>
-    public async Task<(bool Success, string? Error)> DownloadRemoteClipAsync(string relativePath, string destPath, IProgress<double>? progress = null)
+    public Task<(bool Success, string? Error)> DownloadRemoteClipAsync(string relativePath, string destPath, IProgress<double>? progress = null) =>
+        DownloadStreamedFileAsync("get_clip", relativePath, destPath, progress);
+
+    /// <summary>Same idea as DownloadRemoteClipAsync, but for one clip's thumbnail -- see HandleGetThumbnailAsync on the host side.</summary>
+    public Task<(bool Success, string? Error)> DownloadRemoteThumbnailAsync(string relativePath, string destPath) =>
+        DownloadStreamedFileAsync("get_thumbnail", relativePath, destPath);
+
+    private async Task<(bool Success, string? Error)> DownloadStreamedFileAsync(string requestType, string relativePath, string destPath, IProgress<double>? progress = null)
     {
         if (string.IsNullOrEmpty(_settings.PairedPeerHost) || string.IsNullOrEmpty(_settings.PairedPeerSecret))
             return (false, "Not paired with a transmitter PC.");
@@ -599,7 +682,7 @@ public sealed class PairingService : IDisposable
         {
             using var client = new TcpClient();
             await client.ConnectAsync(_settings.PairedPeerHost, _settings.PairedPeerPort);
-            string request = JsonSerializer.Serialize(new { type = "get_clip", secret = _settings.PairedPeerSecret, path = relativePath });
+            string request = JsonSerializer.Serialize(new { type = requestType, secret = _settings.PairedPeerSecret, path = relativePath });
             NetworkStream stream = client.GetStream();
             await WriteLineAsync(stream, request);
 
@@ -638,7 +721,7 @@ public sealed class PairingService : IDisposable
             if (received != size)
             {
                 System.IO.File.Delete(tempPath);
-                return (false, "Connection dropped before the whole clip arrived.");
+                return (false, "Connection dropped before the whole file arrived.");
             }
 
             System.IO.File.Delete(destPath); // ok if it doesn't exist
