@@ -47,39 +47,66 @@ public sealed class ObsClient : IAsyncDisposable
             throw new ObsUnreachableException("OBS isn't running, or its WebSocket server is off", ex);
         }
 
-        JsonElement hello = await ReceiveOneAsync(ct);
-        if (hello.GetProperty("op").GetInt32() != 0)
-            throw new InvalidOperationException("Expected Hello (op 0) as the first message from OBS");
-
-        JsonElement helloData = hello.GetProperty("d");
-        int rpcVersion = helloData.GetProperty("rpcVersion").GetInt32();
-
-        var identify = new Dictionary<string, object?>
+        // Everything below assumes the WebSocket-level connect above already
+        // succeeded (_ws is open) -- if the obs-websocket handshake itself
+        // fails (unexpected Hello, wrong password on Identified, etc.), that
+        // open socket was previously left dangling: nothing closed or
+        // disposed it, and RetryLoopAsync calls ConnectAsync again every 5s
+        // forever while disconnected, leaking one real OS socket handle per
+        // attempt. Catch and clean up here instead of leaving _ws open.
+        try
         {
-            ["rpcVersion"] = rpcVersion,
-            // General|Config|Scenes|Inputs|Transitions|Filters|Outputs|SceneItems|MediaInputs|Vendors
-            // ((1<<10)-1 = 1023) plus InputVolumeMeters (1<<16 = 65536) -- that one's a
-            // separate "high-volume" category not included in the low bits at all,
-            // needed for the mic status badge's live audio-level monitoring.
-            ["eventSubscriptions"] = 1023 | (1 << 16),
-        };
+            JsonElement hello = await ReceiveOneAsync(ct);
+            if (hello.GetProperty("op").GetInt32() != 0)
+                throw new InvalidOperationException("Expected Hello (op 0) as the first message from OBS");
 
-        if (helloData.TryGetProperty("authentication", out JsonElement auth))
-        {
-            string challenge = auth.GetProperty("challenge").GetString()!;
-            string salt = auth.GetProperty("salt").GetString()!;
-            identify["authentication"] = ComputeAuthString(password ?? "", salt, challenge);
+            JsonElement helloData = hello.GetProperty("d");
+            int rpcVersion = helloData.GetProperty("rpcVersion").GetInt32();
+
+            var identify = new Dictionary<string, object?>
+            {
+                ["rpcVersion"] = rpcVersion,
+                // General|Config|Scenes|Inputs|Transitions|Filters|Outputs|SceneItems|MediaInputs|Vendors
+                // ((1<<10)-1 = 1023) plus InputVolumeMeters (1<<16 = 65536) -- that one's a
+                // separate "high-volume" category not included in the low bits at all,
+                // needed for the mic status badge's live audio-level monitoring.
+                ["eventSubscriptions"] = 1023 | (1 << 16),
+            };
+
+            if (helloData.TryGetProperty("authentication", out JsonElement auth))
+            {
+                string challenge = auth.GetProperty("challenge").GetString()!;
+                string salt = auth.GetProperty("salt").GetString()!;
+                identify["authentication"] = ComputeAuthString(password ?? "", salt, challenge);
+            }
+
+            await SendAsync(1, identify, ct);
+
+            JsonElement identified = await ReceiveOneAsync(ct);
+            if (identified.GetProperty("op").GetInt32() != 2)
+                throw new InvalidOperationException("OBS did not send Identified -- check the password");
         }
-
-        await SendAsync(1, identify, ct);
-
-        JsonElement identified = await ReceiveOneAsync(ct);
-        if (identified.GetProperty("op").GetInt32() != 2)
-            throw new InvalidOperationException("OBS did not send Identified -- check the password");
+        catch (Exception) when (CleanupFailedConnectWebSocket())
+        {
+            throw; // unreachable -- the when-filter never returns true, it only runs cleanup as a side effect
+        }
 
         IsConnected = true;
         _receiveCts = new CancellationTokenSource();
         _ = Task.Run(() => ReceiveLoopAsync(_receiveCts.Token));
+    }
+
+    /// <summary>
+    /// Disposes and clears a WebSocket left over from a failed post-connect
+    /// handshake. Run from an exception filter (always returns false, so the
+    /// original exception's stack trace is preserved) rather than a catch
+    /// block, purely so cleanup happens without needing a separate rethrow.
+    /// </summary>
+    private bool CleanupFailedConnectWebSocket()
+    {
+        _ws?.Dispose();
+        _ws = null;
+        return false;
     }
 
     // Per the obs-websocket v5 auth spec:
