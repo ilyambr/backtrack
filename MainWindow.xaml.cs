@@ -3225,14 +3225,37 @@ public partial class MainWindow : Window
 
         using var exportPlayer = new LibVlc.MediaPlayer(media);
         using var done = new System.Threading.ManualResetEventSlim(false);
+        bool encounteredError = false;
 
         exportPlayer.EndReached += (_, _) => done.Set();
-        exportPlayer.EncounteredError += (_, _) => done.Set();
+        // Previously both handlers just did done.Set() with no way to tell
+        // which one fired -- ExportTrim returned normally either way, and
+        // RunTrimAsync's "Replace original" path then unconditionally
+        // File.Copy(..., overwrite: true)'d whatever (possibly empty or
+        // partial) file resulted, silently destroying the user's saved clip
+        // on a real transcode failure (codec quirk, disk pressure, a seek
+        // LibVLC struggled with).
+        exportPlayer.EncounteredError += (_, _) =>
+        {
+            encounteredError = true;
+            done.Set();
+        };
 
         exportPlayer.Play();
         if (!done.Wait(TimeSpan.FromMinutes(10)))
             throw new TimeoutException("Trim export took too long.");
         exportPlayer.Stop();
+
+        if (encounteredError)
+            throw new InvalidOperationException("LibVLC reported an error during trim export.");
+
+        // Belt-and-suspenders: a transcode can also report success
+        // (EndReached) while still leaving nothing usable on disk (e.g. a
+        // start/stop-time range LibVLC accepted but couldn't actually
+        // produce output for) -- verify a real, non-empty file exists before
+        // the caller trusts this as a successful export.
+        if (!File.Exists(destPath) || new FileInfo(destPath).Length == 0)
+            throw new InvalidOperationException("Trim export produced no output file.");
     }
 
     // --------------------------------------------------------------- settings
