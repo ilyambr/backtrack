@@ -8,7 +8,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>Backtrack</AssemblyName>
     <RootNamespace>Backtrack</RootNamespace>
-    <Version>0.2.3</Version>
+    <Version>0.2.4</Version>
     <ApplicationIcon>Assets\app.ico</ApplicationIcon>
     <!-- The OBS link itself is still a hand-rolled obs-websocket v5 client over
          System.Net.WebSockets, no package needed. LibVLC below is the one

@@ -35,6 +35,35 @@ public sealed record ReleaseInfo(string Version, string? DownloadUrl, DateTimeOf
 /// </summary>
 public sealed class UpdateService
 {
+    /// <summary>
+    /// True unless running from the real installed location
+    /// (%LocalAppData%\Programs\Backtrack, per installer/Program.cs's own
+    /// installDir) -- i.e. a local dev build, running straight out of a repo's
+    /// bin\ folder or copied somewhere else entirely.
+    ///
+    /// Auto-update is deliberately never allowed to run here: a locally
+    /// compiled binary's digest will essentially never match the official
+    /// release's (builds aren't byte-reproducible across machines/compile
+    /// runs even from identical source), so a dev build would ALWAYS look
+    /// "out of date" by the digest check regardless of its version string --
+    /// and worse, letting the startup auto-apply run would silently overwrite
+    /// whatever's actively being tested with the real published release.
+    /// Based on install location rather than a Debug/Release or feature-flag
+    /// check, since this whole session's dev builds are Release builds too --
+    /// a location check can't be accidentally left in the wrong state, unlike
+    /// a flag someone has to remember to toggle back.
+    /// </summary>
+    public static bool IsDevBuild
+    {
+        get
+        {
+            string installedDir = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Programs", "Backtrack");
+            string running = AppContext.BaseDirectory.TrimEnd('\\', '/');
+            return !string.Equals(running, installedDir.TrimEnd('\\', '/'), StringComparison.OrdinalIgnoreCase);
+        }
+    }
+
     // Not hardcoded -- see ResolveObsInstallDir. Cached once resolved with real
     // confidence (registry or a currently-running OBS), but NOT cached when it
     // falls all the way through to the bare default guess, so a later call
