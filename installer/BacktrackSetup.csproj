@@ -6,7 +6,7 @@
     <UseWindowsForms>true</UseWindowsForms>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
-    <AssemblyName>Backtrack-Setup-v0.2.2</AssemblyName>
+    <AssemblyName>Backtrack-Setup-v0.2.3</AssemblyName>
     <RootNamespace>BacktrackSetup</RootNamespace>
     <!-- A framework-dependent apphost .exe is just a tiny native stub that
          loads its real code from a sibling .dll sitting next to it: the

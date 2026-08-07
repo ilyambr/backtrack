@@ -12,6 +12,7 @@ using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
+using System.Windows.Media.Animation;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using Backtrack.Interop;
@@ -66,6 +67,10 @@ public partial class MainWindow : Window
     private readonly StatusOverlay _statusOverlay;
     private readonly ToastOverlay _toastOverlay;
     private readonly UpdatePromptOverlay _updatePrompt = new();
+    private readonly OverlayLogWindow _overlayLog = new();
+    private readonly DispatcherTimer _obsStatsTimer = new() { Interval = TimeSpan.FromSeconds(2) };
+    private long? _lastRenderTotalFrames, _lastRenderSkippedFrames, _lastOutputTotalFrames, _lastOutputSkippedFrames;
+    private DateTime? _obsLogClearAtUtc;
     private readonly ScrimOverlay _scrim;
     private readonly DisclaimerOverlay _disclaimer;
 
@@ -178,20 +183,33 @@ public partial class MainWindow : Window
         // Events, not polling -- these fire the instant OBS says so, whether or
         // not the HUD is even open, which is the only way "did it actually save"
         // can be answered truthfully instead of guessed at.
-        _obs.RecordingStateChanged += (active, path) => Dispatcher.BeginInvoke(() => _toastOverlay.ShowRecording(active, path));
+        _obs.RecordingStateChanged += (active, path) => Dispatcher.BeginInvoke(() =>
+        {
+            _toastOverlay.ShowRecording(active, path);
+            if (active)
+                AppLog.Write("Recording started");
+            else if (path is not null)
+            {
+                AppLog.Write($"Recording saved to '{path}'");
+                ShowObsModeMessage($"Recording saved to '{path}'");
+            }
+        });
         _obs.ReplaySaved += (key, path) => Dispatcher.BeginInvoke(() =>
         {
             string label = _rowLabels.TryGetValue(key, out string? l) ? l : key;
             _toastOverlay.ShowReplaySaved(label, path);
+            AppLog.Write($"{label} saved to '{path}'");
+            ShowObsModeMessage($"Replay saved to '{path}'");
             _ = RefreshGalleryCountAsync();
         });
         _obs.StateChanged += () => Dispatcher.BeginInvoke(() =>
         {
+            AppLog.Write(_obs.IsConnected ? "Connected to OBS" : "Disconnected from OBS");
             _ = PrefetchRowLabelsAsync();
-            // Covers OBS (re)starting after Backtrack already mounted the RAM disk,
-            // or OBS itself restarting mid-session -- not just the initial mount.
             if (_settings.RamDiskEnabled && RamDisk.IsMounted(_settings.RamDiskDriveLetter))
                 _ = PushRamDiskDestDirAsync();
+            else if (!_settings.RamDiskEnabled)
+                _ = _obs.RevertSourceRecordFilterPathsAsync(_settings.RamDiskDriveLetter, _settings.ClipsFolder);
         });
 
         // Lets a paired receiver PC's Backtrack read/change RAM disk settings on
@@ -327,11 +345,157 @@ public partial class MainWindow : Window
             catch (Exception ex) { Debug.WriteLine($"Startup task self-heal failed: {ex.Message}"); }
         }
 
-        // Once, at startup -- no more recurring hourly timer, and this never
-        // installs anything on its own regardless of what it finds (see
-        // CheckForUpdatesAsync). Manual re-checks happen through the Settings
-        // "Check now" button; nothing else triggers a check anymore.
+        // Once, at startup -- no more recurring hourly timer. This is the one
+        // moment auto-applying an update unattended is actually fine (see
+        // CheckForUpdatesAsync's doc comment); every other trigger requires an
+        // explicit click, either the bottom-left prompt's Install button or
+        // the Settings "Check now" -> "Update" button.
+        ShowAppStartedToast();
         _ = CheckForUpdatesAsync();
+
+        InitializeOverlayLog();
+    }
+
+    // ------------------------------------------------------------ overlay log
+
+    private void InitializeOverlayLog()
+    {
+        AppLog.Write("Backtrack started");
+        AppLog.Changed += () => Dispatcher.BeginInvoke(RefreshBacktrackModeLog);
+
+        _obsStatsTimer.Tick += async (_, _) => await RefreshObsModeLogAsync();
+        _obsStatsTimer.Start();
+    }
+
+    /// <summary>
+    /// Call after OverlayLogEnabled/OverlayLogMode changes in Settings, and
+    /// from ToggleVisible/CloseOverlay whenever the HUD itself opens or
+    /// closes -- _overlayLog is only ever shown while BOTH the feature is
+    /// enabled AND the HUD is currently open, same lifecycle as the update
+    /// prompt (see UpdatePromptOverlay), not a persistent always-on badge.
+    /// </summary>
+    private void RefreshOverlayLogVisibilityAndMode()
+    {
+        if (!_settings.OverlayLogEnabled || !IsVisible)
+        {
+            _overlayLog.Hide();
+            return;
+        }
+
+        bool obsMode = _settings.OverlayLogMode != "Backtrack";
+        _overlayLog.Show();
+        _overlayLog.SetMode(obsMode);
+        if (obsMode)
+            _ = RefreshObsModeLogAsync();
+        else
+            RefreshBacktrackModeLog();
+    }
+
+    private void RefreshBacktrackModeLog()
+    {
+        if (!_settings.OverlayLogEnabled || !IsVisible || _settings.OverlayLogMode != "Backtrack")
+            return;
+
+        List<string> lines = AppLog.Snapshot().Select(e => $"[{e.TimestampLocal:HH:mm:ss}] {e.Message}").ToList();
+        _overlayLog.SetBacktrackLines(lines);
+    }
+
+    /// <summary>Sets the OBS-mode line and arms its auto-clear timer -- for one-off events (recording/replay saved), not the recurring overload check below, which re-asserts itself every poll instead.</summary>
+    private void ShowObsModeMessage(string text)
+    {
+        if (!_settings.OverlayLogEnabled || !IsVisible || _settings.OverlayLogMode == "Backtrack")
+            return;
+        _overlayLog.SetObsLine(text);
+        _obsLogClearAtUtc = DateTime.UtcNow.AddSeconds(5);
+    }
+
+    /// <summary>
+    /// Polled every 2s (see _obsStatsTimer): the closest available equivalent
+    /// to OBS's own status bar, built from the same underlying frame-drop
+    /// counters OBS uses internally (see ObsService.GetStatsAsync) since
+    /// there's no API for the literal status bar text or its exact timing.
+    /// Overload warnings persist for as long as the condition keeps being true
+    /// on each poll; one-off save messages (see ShowObsModeMessage) instead
+    /// clear themselves after a few seconds via _obsLogClearAtUtc.
+    /// </summary>
+    private async Task RefreshObsModeLogAsync()
+    {
+        if (!_settings.OverlayLogEnabled || !IsVisible || _settings.OverlayLogMode == "Backtrack")
+            return;
+
+        if (!_obs.IsConnected)
+        {
+            _overlayLog.SetObsLine("");
+            return;
+        }
+
+        try
+        {
+            ObsStats stats = await _obs.GetStatsAsync();
+            string? warning = ComputeObsOverloadWarning(stats);
+            if (warning is not null)
+            {
+                _overlayLog.SetObsLine(warning);
+                _obsLogClearAtUtc = null;
+                return;
+            }
+
+            if (_obsLogClearAtUtc is DateTime clearAt)
+            {
+                if (DateTime.UtcNow < clearAt)
+                    return; // still showing a recent one-off message -- leave it
+                _obsLogClearAtUtc = null;
+            }
+            _overlayLog.SetObsLine("");
+        }
+        catch
+        {
+            // Transient request failure -- leave whatever was last shown rather
+            // than flashing blank every 2s until it recovers.
+        }
+    }
+
+    /// <summary>
+    /// Diffs consecutive polls (not a lifetime average, which would dilute to
+    /// nothing over a long session) to get a recent skipped-frame rate for
+    /// rendering (GPU-side) and output/encoding separately. Encoding wins if
+    /// both are simultaneously over threshold, since that's the one that
+    /// actually costs you frames in the saved file.
+    /// </summary>
+    private string? ComputeObsOverloadWarning(ObsStats stats)
+    {
+        const double ThresholdPct = 1.0;
+        string? result = null;
+
+        if (_lastRenderTotalFrames is long lastRenderTotal && _lastRenderSkippedFrames is long lastRenderSkipped)
+        {
+            long totalDelta = stats.RenderTotalFrames - lastRenderTotal;
+            long skippedDelta = stats.RenderSkippedFrames - lastRenderSkipped;
+            if (totalDelta > 0)
+            {
+                double pct = 100.0 * skippedDelta / totalDelta;
+                if (pct > ThresholdPct)
+                    result = $"Rendering lag ({pct:0.#}% frames skipped)";
+            }
+        }
+
+        if (_lastOutputTotalFrames is long lastOutTotal && _lastOutputSkippedFrames is long lastOutSkipped)
+        {
+            long totalDelta = stats.OutputTotalFrames - lastOutTotal;
+            long skippedDelta = stats.OutputSkippedFrames - lastOutSkipped;
+            if (totalDelta > 0)
+            {
+                double pct = 100.0 * skippedDelta / totalDelta;
+                if (pct > ThresholdPct)
+                    result = $"Encoding overloaded ({pct:0.#}% frames skipped)";
+            }
+        }
+
+        _lastRenderTotalFrames = stats.RenderTotalFrames;
+        _lastRenderSkippedFrames = stats.RenderSkippedFrames;
+        _lastOutputTotalFrames = stats.OutputTotalFrames;
+        _lastOutputSkippedFrames = stats.OutputSkippedFrames;
+        return result;
     }
 
     /// <summary>
@@ -390,43 +554,32 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// Startup-only, and never installs anything by itself: just detects
-    /// availability for Backtrack and both companion OBS plugins and, if
-    /// anything's found, arms the bottom-left prompt (alwaysPromptOnly: true
-    /// on every call) rather than silently applying it -- there's no more
-    /// recurring hourly re-check either, so this is the only automatic check
-    /// that ever runs; anything after this is either the user clicking that
-    /// prompt's Install button or the manual Check now/Update button in
-    /// Settings. Each check is independent and swallows its own failures (no
-    /// network, repo has no releases yet, etc.) so one failing never blocks
-    /// the others. Updates the Settings SHARING rows directly (dot + version)
+    /// Checks and applies updates for both companion OBS plugins and for
+    /// Backtrack itself -- still deferring to the bottom-left prompt instead
+    /// of installing if OBS happens to be actively recording/streaming/replaying
+    /// right now (see CheckAndApplyPluginUpdateAsync/CheckAndApplySelfUpdateAsync).
+    ///
+    /// Plugins are checked BEFORE Backtrack itself, deliberately: applying a
+    /// self-update ends in Application.Current.Shutdown() a few lines below,
+    /// which would exit the process before ever reaching the plugin checks if
+    /// they came after it in this same sequential method -- silently skipping
+    /// them whenever Backtrack itself also happened to have an update.
+    ///
+    /// Auto-applying (rather than always just prompting) is only appropriate
+    /// at the one moment this is safe to do completely unattended: app
+    /// startup, before anything's necessarily even happened yet this session.
+    /// There's no recurring hourly re-check anymore, so that startup call is
+    /// the only automatic trigger left -- this same method is also reused by
+    /// the manual Check now/Update button's second press, which is an
+    /// explicit "yes, install it" click regardless of when it happens.
+    ///
+    /// Each check is independent and swallows its own failures (no network,
+    /// repo has no releases yet, etc.) so one failing never blocks the
+    /// others. Updates the Settings SHARING rows directly (dot + version)
     /// regardless of whether that screen is currently visible.
     /// </summary>
     private async Task CheckForUpdatesAsync()
     {
-        await CheckAndApplySelfUpdateAsync(alwaysPromptOnly: true);
-        await CheckAndApplyPluginUpdateAsync("obs-replay-slider", "Replay Slider", "replay-slider.dll", ReplaySliderStatusDot, ReplaySliderVersionText,
-            name => name.Contains("windows", StringComparison.OrdinalIgnoreCase) && name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase),
-            () => _settings.LastAppliedReplaySliderReleaseAt, v => _settings.LastAppliedReplaySliderReleaseAt = v,
-            () => _settings.LastAppliedReplaySliderDigest, v => _settings.LastAppliedReplaySliderDigest = v,
-            alwaysPromptOnly: true);
-        await CheckAndApplyPluginUpdateAsync("obs-source-record", "Source Record", "source-record.dll", SourceRecordStatusDot, SourceRecordVersionText,
-            name => name.Contains("windows-installer", StringComparison.OrdinalIgnoreCase) && name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase),
-            () => _settings.LastAppliedSourceRecordReleaseAt, v => _settings.LastAppliedSourceRecordReleaseAt = v,
-            () => _settings.LastAppliedSourceRecordDigest, v => _settings.LastAppliedSourceRecordDigest = v,
-            alwaysPromptOnly: true);
-    }
-
-    /// <summary>
-    /// The OLD CheckForUpdatesAsync behavior: actually installs whatever's
-    /// available (still deferring to the bottom-left prompt if OBS happens to
-    /// be busy right now). Used only by the manual Check now/Update button's
-    /// second press -- an explicit "yes, install it" action -- and by the
-    /// paired-transmitter remote-update callback, never automatically.
-    /// </summary>
-    private async Task ApplyAllAvailableUpdatesAsync()
-    {
-        await CheckAndApplySelfUpdateAsync();
         await CheckAndApplyPluginUpdateAsync("obs-replay-slider", "Replay Slider", "replay-slider.dll", ReplaySliderStatusDot, ReplaySliderVersionText,
             name => name.Contains("windows", StringComparison.OrdinalIgnoreCase) && name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase),
             () => _settings.LastAppliedReplaySliderReleaseAt, v => _settings.LastAppliedReplaySliderReleaseAt = v,
@@ -435,6 +588,33 @@ public partial class MainWindow : Window
             name => name.Contains("windows-installer", StringComparison.OrdinalIgnoreCase) && name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase),
             () => _settings.LastAppliedSourceRecordReleaseAt, v => _settings.LastAppliedSourceRecordReleaseAt = v,
             () => _settings.LastAppliedSourceRecordDigest, v => _settings.LastAppliedSourceRecordDigest = v);
+        await CheckAndApplySelfUpdateAsync();
+    }
+
+    private void ShowAppStartedToast()
+    {
+        string hotkey = FormatHotkeyText();
+        _toastOverlay.ShowAppStarted(hotkey);
+    }
+
+    private string FormatHotkeyText()
+    {
+        var parts = new List<string>();
+        if ((_settings.HotkeyModifiers & 0x2) != 0) parts.Add("Ctrl");
+        if ((_settings.HotkeyModifiers & 0x1) != 0) parts.Add("Alt");
+        if ((_settings.HotkeyModifiers & 0x4) != 0) parts.Add("Shift");
+        if ((_settings.HotkeyModifiers & 0x8) != 0) parts.Add("Win");
+
+        string keyStr;
+        if (_settings.HotkeyVirtualKey >= 'A' && _settings.HotkeyVirtualKey <= 'Z')
+            keyStr = ((char)_settings.HotkeyVirtualKey).ToString();
+        else if (_settings.HotkeyVirtualKey >= 0x30 && _settings.HotkeyVirtualKey <= 0x39)
+            keyStr = ((char)_settings.HotkeyVirtualKey).ToString();
+        else
+            keyStr = System.Windows.Input.KeyInterop.KeyFromVirtualKey(_settings.HotkeyVirtualKey).ToString();
+
+        parts.Add(keyStr);
+        return string.Join("+", parts);
     }
 
     /// <summary>Green = confirmed current (already was, or just got updated); red = couldn't confirm (check failed); grey = not checked yet this session.</summary>
@@ -504,8 +684,7 @@ public partial class MainWindow : Window
     }
 
     private async Task<PluginVersionInfo> CheckAndApplyPluginUpdateAsync(string repo, string displayName, string dllFileName, System.Windows.Shapes.Ellipse dot, TextBlock versionText, Func<string, bool> assetPredicate,
-        Func<DateTimeOffset?> getLastApplied, Action<DateTimeOffset?> setLastApplied, Func<string?> getLastDigest, Action<string?> setLastDigest,
-        bool alwaysPromptOnly = false)
+        Func<DateTimeOffset?> getLastApplied, Action<DateTimeOffset?> setLastApplied, Func<string?> getLastDigest, Action<string?> setLastDigest)
     {
         // No local OBS install (e.g. a receiver-only PC paired to a transmitter's
         // OBS over the network) -- nothing to check a plugin version against and
@@ -540,6 +719,7 @@ public partial class MainWindow : Window
                 _toastOverlay.ShowUpdateInProgress(displayName);
                 await _updates.InstallPluginUpdateAsync(release.DownloadUrl);
                 RecordUpdateApplied(release, setLastApplied, setLastDigest);
+                AppLog.Write($"{displayName} updated to {release.Version}");
                 _toastOverlay.ShowUpdateApplied(displayName, release.Version);
                 SetUpdateStatus(dot, versionText, release.Version, ok: true);
                 ClearPendingUpdateIfMatches(displayName);
@@ -547,17 +727,12 @@ public partial class MainWindow : Window
 
             // Installing a plugin update means closing OBS out from under
             // whatever it's doing (InstallPluginUpdateAsync's CloseObsIfRunningAsync)
-            // -- alwaysPromptOnly (the startup check -- see CheckForUpdatesAsync)
-            // never installs anything on its own regardless of OBS state, only
-            // ever surfaces the bottom-left prompt for the user to act on. The
-            // manual Check now/Update button path (alwaysPromptOnly: false)
-            // still applies immediately when OBS is idle, falling back to the
-            // same prompt only if something's actually active right now.
-            bool obsActive = await _obs.IsAnyOutputActiveAsync();
-            if (alwaysPromptOnly || obsActive)
+            // -- never worth it mid-recording/stream/replay without asking
+            // first. Deferred to the bottom-left prompt instead, so the user
+            // can force it through right now if they'd rather do that.
+            if (await _obs.IsAnyOutputActiveAsync())
             {
-                string suffix = obsActive ? " (update waiting for OBS to be idle)" : " (update available)";
-                SetUpdateStatus(dot, versionText, $"{installed.ToString(3)}{suffix}", ok: null);
+                SetUpdateStatus(dot, versionText, $"{installed.ToString(3)} (update waiting for OBS to be idle)", ok: null);
                 SetPendingUpdate(displayName, () => _ = ApplyAsync());
                 return new PluginVersionInfo(installed.ToString(3), null);
             }
@@ -573,7 +748,7 @@ public partial class MainWindow : Window
         }
     }
 
-    private async Task CheckAndApplySelfUpdateAsync(bool alwaysPromptOnly = false)
+    private async Task CheckAndApplySelfUpdateAsync()
     {
         Version installed = UpdateService.CurrentAppVersion;
         try
@@ -605,6 +780,7 @@ public partial class MainWindow : Window
             {
                 _toastOverlay.ShowUpdateInProgress("Backtrack");
                 RecordUpdateApplied(release, v => _settings.LastAppliedBacktrackReleaseAt = v, v => _settings.LastAppliedBacktrackDigest = v);
+                AppLog.Write($"Backtrack updating to {release.Version} (relaunching)");
                 await _updates.ApplySelfUpdateAsync(release.DownloadUrl, release.Version);
                 SetUpdateStatus(BacktrackStatusDot, BacktrackVersionText, release.Version, ok: true);
                 // The helper script above is now waiting for this process to exit --
@@ -615,15 +791,11 @@ public partial class MainWindow : Window
             // Applying a self-update shuts Backtrack down mid-swap -- fine on its
             // own, but not something to do while a recording/stream/replay is
             // actively relying on this instance's hotkey/tray/overlay without
-            // asking first. alwaysPromptOnly (the startup check) never installs
-            // on its own regardless of OBS state, only ever surfaces the
-            // bottom-left prompt; the manual Update button still applies
-            // immediately when idle, falling back to the same prompt otherwise.
-            bool obsActive = await _obs.IsAnyOutputActiveAsync();
-            if (alwaysPromptOnly || obsActive)
+            // asking first. Deferred to the bottom-left prompt instead, so the
+            // user can force it through right now if they'd rather do that.
+            if (await _obs.IsAnyOutputActiveAsync())
             {
-                string suffix = obsActive ? " (update waiting for OBS to be idle)" : " (update available)";
-                SetUpdateStatus(BacktrackStatusDot, BacktrackVersionText, $"{installed.ToString(3)}{suffix}", ok: null);
+                SetUpdateStatus(BacktrackStatusDot, BacktrackVersionText, $"{installed.ToString(3)} (update waiting for OBS to be idle)", ok: null);
                 SetPendingUpdate("Backtrack", () => _ = ApplyAsync());
                 return;
             }
@@ -691,7 +863,11 @@ public partial class MainWindow : Window
                 return (false, installError);
         }
 
-        return RamDisk.Mount(_settings.RamDiskDriveLetter, _settings.RamDiskSizeMb);
+        (bool ok, string? error) = RamDisk.Mount(_settings.RamDiskDriveLetter, _settings.RamDiskSizeMb);
+        AppLog.Write(ok
+            ? $"RAM disk mounted at {_settings.RamDiskDriveLetter}: ({_settings.RamDiskSizeMb} MB)"
+            : $"RAM disk mount failed: {error}");
+        return (ok, error);
     }
 
     /// <summary>Tells replay-slider's dock to move trimmed clips off the RAM disk onto wherever this app's own clips actually live.</summary>
@@ -738,6 +914,8 @@ public partial class MainWindow : Window
                 if (row.DestDir.StartsWith(ramDiskPrefix, StringComparison.OrdinalIgnoreCase))
                     await _obs.SetReplayRowDestDirAsync(row.Key, _settings.ClipsFolder);
             }
+
+            await _obs.RevertSourceRecordFilterPathsAsync(driveLetter, _settings.ClipsFolder);
         }
         catch
         {
@@ -770,6 +948,21 @@ public partial class MainWindow : Window
     {
         bool enabled = RamDiskToggle.IsChecked == true;
         await ApplyRamDiskConfigAsync(enabled, _settings.RamDiskDriveLetter, _settings.RamDiskSizeMb);
+    }
+
+    private void OverlayLogToggle_Click(object sender, RoutedEventArgs e)
+    {
+        _settings.OverlayLogEnabled = OverlayLogToggle.IsChecked == true;
+        _settings.Save();
+        OverlayLogModeFields.Visibility = _settings.OverlayLogEnabled ? Visibility.Visible : Visibility.Collapsed;
+        RefreshOverlayLogVisibilityAndMode();
+    }
+
+    private void OverlayLogModeSelector_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        _settings.OverlayLogMode = OverlayLogModeSelector.SelectedItem is ComboBoxItem { Tag: string tag } ? tag : "Obs";
+        _settings.Save();
+        RefreshOverlayLogVisibilityAndMode();
     }
 
     private async void ApplyRamDiskSettings_Click(object sender, RoutedEventArgs e)
@@ -807,7 +1000,10 @@ public partial class MainWindow : Window
         // it, which used to freeze the whole window if that process took any real
         // time (or hit the redirect-read deadlock; see RunImDisk).
         if ((!enabled || driveOrSizeChanged) && RamDisk.IsMounted(oldDrive))
+        {
             await Task.Run(() => RamDisk.Unmount(oldDrive));
+            AppLog.Write($"RAM disk unmounted ({oldDrive}:)");
+        }
 
         _settings.RamDiskEnabled = enabled;
         _settings.RamDiskDriveLetter = driveLetter;
@@ -1065,6 +1261,7 @@ public partial class MainWindow : Window
         _logo.Hide();
         _toastOverlay.UpdatePosition(false);
         _updatePrompt.HidePrompt();
+        RefreshOverlayLogVisibilityAndMode();
     }
 
     private void MainWindow_KeyDown(object sender, KeyEventArgs e)
@@ -1089,7 +1286,7 @@ public partial class MainWindow : Window
         }
     }
 
-    private void ToggleVisible()
+    public void ToggleVisible()
     {
         if (IsVisible)
         {
@@ -1107,6 +1304,7 @@ public partial class MainWindow : Window
             _toastOverlay.UpdatePosition(true);
             WindowZOrder.BringToFrontWithoutActivating(new WindowInteropHelper(_toastOverlay).Handle);
             RefreshUpdatePromptVisibility();
+            RefreshOverlayLogVisibilityAndMode();
 
             if (_settings.ShowDisclaimer)
                 _disclaimer.Show();
@@ -1131,13 +1329,41 @@ public partial class MainWindow : Window
 
     // ---------------------------------------------------------------- screens
 
+    private FrameworkElement PanelFor(Screen screen) => screen switch
+    {
+        Screen.Idle => IdlePanel,
+        Screen.SaveReplay => SaveReplayPanel,
+        Screen.Gallery => GalleryPanel,
+        Screen.Player => PlayerPanel,
+        Screen.Settings => SettingsPanel,
+        _ => IdlePanel,
+    };
+
+    /// <summary>Fade + slight slide-up on whichever panel just became active, purely cosmetic (BeginAnimation, not a blocking wait) so it doesn't change ShowScreen's own synchronous behavior -- every caller that populates content right after (LoadGallery, etc.) still runs immediately, unaffected.</summary>
+    private static void AnimatePanelIn(FrameworkElement panel)
+    {
+        var slide = new TranslateTransform(0, 10);
+        panel.RenderTransform = slide;
+        panel.Opacity = 0;
+
+        var ease = new QuadraticEase { EasingMode = EasingMode.EaseOut };
+        panel.BeginAnimation(OpacityProperty, new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(160)) { EasingFunction = ease });
+        slide.BeginAnimation(TranslateTransform.YProperty, new DoubleAnimation(10, 0, TimeSpan.FromMilliseconds(160)) { EasingFunction = ease });
+    }
+
     private void ShowScreen(Screen screen)
     {
+        FrameworkElement newPanel = PanelFor(screen);
+        bool switchingPanel = newPanel.Visibility != Visibility.Visible;
+
         IdlePanel.Visibility = screen == Screen.Idle ? Visibility.Visible : Visibility.Collapsed;
         SaveReplayPanel.Visibility = screen == Screen.SaveReplay ? Visibility.Visible : Visibility.Collapsed;
         GalleryPanel.Visibility = screen == Screen.Gallery ? Visibility.Visible : Visibility.Collapsed;
         PlayerPanel.Visibility = screen == Screen.Player ? Visibility.Visible : Visibility.Collapsed;
         SettingsPanel.Visibility = screen == Screen.Settings ? Visibility.Visible : Visibility.Collapsed;
+
+        if (switchingPanel)
+            AnimatePanelIn(newPanel);
 
         // The gear only makes sense on the idle screen -- it isn't a fourth tile,
         // so it shouldn't linger once you've navigated away from the row it sits above.
@@ -3009,6 +3235,16 @@ public partial class MainWindow : Window
         RamDiskSizeBox.Text = _settings.RamDiskSizeMb.ToString();
         RefreshRamDiskStatusText();
 
+        OverlayLogToggle.IsChecked = _settings.OverlayLogEnabled;
+        OverlayLogModeFields.Visibility = _settings.OverlayLogEnabled ? Visibility.Visible : Visibility.Collapsed;
+        // Unsubscribed/resubscribed around setting SelectedIndex -- unlike
+        // ToggleButton.Click, ComboBox's SelectionChanged DOES fire from a
+        // programmatic assignment, which would otherwise re-save+refresh the
+        // overlay log just from opening Settings (same reasoning as DisplaySelector).
+        OverlayLogModeSelector.SelectionChanged -= OverlayLogModeSelector_SelectionChanged;
+        OverlayLogModeSelector.SelectedIndex = _settings.OverlayLogMode == "Backtrack" ? 1 : 0;
+        OverlayLogModeSelector.SelectionChanged += OverlayLogModeSelector_SelectionChanged;
+
         // Deliberately NOT resetting the update status dots/text here. They
         // start grey from XAML (see BacktrackStatusDot etc.) before any check
         // has run, and the real checks (startup, hourly, manual button) keep
@@ -3525,7 +3761,7 @@ public partial class MainWindow : Window
             {
                 _manualUpdateReady = false;
                 CheckUpdatesButton.Content = "Check now";
-                await ApplyAllAvailableUpdatesAsync();
+                await CheckForUpdatesAsync();
                 return;
             }
 

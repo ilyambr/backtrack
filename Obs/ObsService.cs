@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
@@ -9,6 +9,8 @@ namespace Backtrack.Obs;
 public sealed record ReplayRow(string Key, string Label, string Hotkey, int Status, int LengthSeconds, string DestDir);
 
 public sealed record RecordStatus(bool Active, long DurationMs, bool Paused);
+
+public sealed record ObsStats(long RenderTotalFrames, long RenderSkippedFrames, long OutputTotalFrames, long OutputSkippedFrames);
 
 public enum MicStatus { Hidden, Silent, MutedOrQuiet }
 
@@ -252,6 +254,26 @@ public sealed class ObsService
         await _client.RequestAsync(status.Active ? "StopRecord" : "StartRecord");
     }
 
+    /// <summary>
+    /// Raw counters behind OBS's own status-bar-style overload warnings --
+    /// there's no request/event that hands over the literal status bar text
+    /// or its timing (that's internal Qt UI logic with no public hook), but
+    /// this is the same underlying data it's computed from, and it works over
+    /// the same websocket connection regardless of whether OBS is local or on
+    /// a remote transmitter PC (unlike, say, tailing OBS's own log file,
+    /// which only a local install even has). Callers diff consecutive polls
+    /// to get a recent/current rate rather than a lifetime average.
+    /// </summary>
+    public async Task<ObsStats> GetStatsAsync()
+    {
+        JsonElement d = await _client.RequestAsync("GetStats");
+        return new ObsStats(
+            d.GetProperty("renderTotalFrames").GetInt64(),
+            d.GetProperty("renderSkippedFrames").GetInt64(),
+            d.GetProperty("outputTotalFrames").GetInt64(),
+            d.GetProperty("outputSkippedFrames").GetInt64());
+    }
+
     public async Task<bool> GetReplayBufferActiveAsync()
     {
         JsonElement d = await _client.RequestAsync("GetReplayBufferStatus");
@@ -393,5 +415,129 @@ public sealed class ObsService
             ["requestType"] = "set_buffer_duration",
             ["requestData"] = new Dictionary<string, object?> { ["seconds"] = seconds },
         });
+    }
+
+    /// <summary>
+    /// Queries all OBS sources for Source Record filters and updates any whose output path
+    /// is set to the RAM disk drive back to the specified target folder via obs-websocket.
+    /// </summary>
+    public async Task RevertSourceRecordFilterPathsAsync(char driveLetter, string targetFolder)
+    {
+        if (!IsConnected)
+            return;
+
+        string ramDiskPrefix = $"{char.ToUpperInvariant(driveLetter)}:";
+        try
+        {
+            var sourceNames = new List<string>();
+
+            try
+            {
+                JsonElement inputsResponse = await _client.RequestAsync("GetInputList");
+                if (inputsResponse.ValueKind == JsonValueKind.Object &&
+                    inputsResponse.TryGetProperty("inputs", out JsonElement inputsArr))
+                {
+                    foreach (JsonElement input in inputsArr.EnumerateArray())
+                    {
+                        if (input.TryGetProperty("inputName", out JsonElement nameEl))
+                        {
+                            string name = nameEl.GetString() ?? "";
+                            if (!string.IsNullOrEmpty(name))
+                                sourceNames.Add(name);
+                        }
+                    }
+                }
+            }
+            catch { }
+
+            try
+            {
+                JsonElement scenesResponse = await _client.RequestAsync("GetSceneList");
+                if (scenesResponse.ValueKind == JsonValueKind.Object &&
+                    scenesResponse.TryGetProperty("scenes", out JsonElement scenesArr))
+                {
+                    foreach (JsonElement scene in scenesArr.EnumerateArray())
+                    {
+                        if (scene.TryGetProperty("sceneName", out JsonElement sNameEl))
+                        {
+                            string sName = sNameEl.GetString() ?? "";
+                            if (!string.IsNullOrEmpty(sName) && !sourceNames.Contains(sName))
+                                sourceNames.Add(sName);
+                        }
+                    }
+                }
+            }
+            catch { }
+
+            foreach (string sourceName in sourceNames)
+            {
+                try
+                {
+                    JsonElement filterListResponse = await _client.RequestAsync("GetSourceFilterList", new Dictionary<string, object?>
+                    {
+                        ["sourceName"] = sourceName
+                    });
+
+                    if (filterListResponse.ValueKind == JsonValueKind.Object &&
+                        filterListResponse.TryGetProperty("filters", out JsonElement filtersArr))
+                    {
+                        foreach (JsonElement filter in filtersArr.EnumerateArray())
+                        {
+                            string filterKind = filter.TryGetProperty("filterKind", out JsonElement fk) ? fk.GetString() ?? "" : "";
+                            string filterName = filter.TryGetProperty("filterName", out JsonElement fn) ? fn.GetString() ?? "" : "";
+
+                            if (filterKind.Contains("source_record", StringComparison.OrdinalIgnoreCase) ||
+                                filterKind.Contains("sourcerecord", StringComparison.OrdinalIgnoreCase))
+                            {
+                                if (filter.TryGetProperty("filterSettings", out JsonElement settings))
+                                {
+                                    bool needsUpdate = false;
+                                    var updatedSettings = new Dictionary<string, object?>();
+
+                                    foreach (JsonProperty prop in settings.EnumerateObject())
+                                    {
+                                        string val = prop.Value.ValueKind == JsonValueKind.String ? prop.Value.GetString() ?? "" : "";
+                                        if (val.StartsWith(ramDiskPrefix, StringComparison.OrdinalIgnoreCase))
+                                        {
+                                            needsUpdate = true;
+                                            updatedSettings[prop.Name] = targetFolder;
+                                        }
+                                        else
+                                        {
+                                            if (prop.Value.ValueKind == JsonValueKind.String)
+                                                updatedSettings[prop.Name] = prop.Value.GetString();
+                                            else if (prop.Value.ValueKind == JsonValueKind.Number)
+                                                updatedSettings[prop.Name] = prop.Value.GetDouble();
+                                            else if (prop.Value.ValueKind == JsonValueKind.True || prop.Value.ValueKind == JsonValueKind.False)
+                                                updatedSettings[prop.Name] = prop.Value.GetBoolean();
+                                        }
+                                    }
+
+                                    if (needsUpdate)
+                                    {
+                                        updatedSettings["directory"] = targetFolder;
+                                        updatedSettings["path"] = targetFolder;
+
+                                        await _client.RequestAsync("SetSourceFilterSettings", new Dictionary<string, object?>
+                                        {
+                                            ["sourceName"] = sourceName,
+                                            ["filterName"] = filterName,
+                                            ["filterSettings"] = updatedSettings,
+                                            ["overlay"] = true
+                                        });
+                                        AppLog.Write($"Reverted Source Record filter '{filterName}' path on '{sourceName}' to '{targetFolder}'");
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                catch { }
+            }
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"RevertSourceRecordFilterPathsAsync failed: {ex.Message}");
+        }
     }
 }
