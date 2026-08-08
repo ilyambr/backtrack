@@ -1250,7 +1250,7 @@
          shown at all while both actually live AND the Idle screen is what's
          currently showing (see UpdateStreamingBoxVisibility). -->
     <Border x:Name="StreamingStatusBorder" Background="{StaticResource PanelBg}" BorderBrush="{StaticResource Hairline}" BorderThickness="1"
-            Margin="0,8,0,0" Padding="10,7" Visibility="Collapsed">
+            Margin="0,8,0,0" Padding="10,7" HorizontalAlignment="Center" Visibility="Collapsed">
         <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
             <Ellipse Width="8" Height="8" Fill="{StaticResource Stream}" VerticalAlignment="Center" Margin="0,0,7,0"/>
             <TextBlock Text="You are currently livestreaming." FontSize="11.5" FontWeight="Bold"
