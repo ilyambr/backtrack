@@ -62,6 +62,7 @@ public partial class MainWindow : Window
     private bool _lastKnownAnyRowActive;
     private bool _lastKnownAnyRowError;
     private int _lastKnownActiveRecordRowCount;
+    private bool _refreshStatusRunning;
     // Set the moment a filter-only recording (main not active) is first
     // noticed, cleared once nothing's recording -- see RefreshStatusAsync's
     // own comment on why this is an approximation, not a true start time.
@@ -293,7 +294,30 @@ public partial class MainWindow : Window
         };
 
         _pollTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
-        _pollTimer.Tick += async (_, _) => await RefreshStatusAsync();
+        _pollTimer.Tick += async (_, _) =>
+        {
+            // Re-entrancy guard: RefreshStatusAsync now makes 4 sequential OBS
+            // round-trips (2 more than it used to, for the Start Recording
+            // aggregation) -- if one tick ever takes longer than the 1s interval
+            // to finish (a slow bridge round-trip, OBS's own UI thread briefly
+            // busy, etc.), the timer fires again anyway and a second overlapping
+            // call starts racing the first, both touching the same UI elements
+            // and connection. That pileup is what a sudden "everything feels
+            // laggy" (and, downstream, WPF layout passes falling behind enough
+            // for the Player overlay Popup to end up looking stale) turned out
+            // to be -- skip this tick entirely rather than let them stack.
+            if (_refreshStatusRunning)
+                return;
+            _refreshStatusRunning = true;
+            try
+            {
+                await RefreshStatusAsync();
+            }
+            finally
+            {
+                _refreshStatusRunning = false;
+            }
+        };
 
         _micTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
         _micTimer.Tick += (_, _) => _statusOverlay.SetMicStatus(_obs.GetMicStatus());
@@ -1677,7 +1701,18 @@ public partial class MainWindow : Window
 
         try
         {
-            RecordStatus recStatus = await _obs.GetRecordStatusAsync();
+            // Fired together, not one at a time -- these 4 are mutually
+            // independent OBS requests. Awaiting each immediately (the original
+            // shape) meant this tick's total latency was the SUM of all 4
+            // round-trips; kicking them all off first and only then awaiting
+            // means it's the MAX of the slowest one instead, which is what
+            // actually keeps this comfortably inside the 1s poll interval.
+            Task<RecordStatus> recStatusTask = _obs.GetRecordStatusAsync();
+            Task<List<RecordRow>> recordRowsTask = _obs.ListRecordRowsAsync();
+            Task<bool> replayBufferActiveTask = _obs.GetReplayBufferActiveAsync();
+            Task<List<ReplayRow>> replayRowsTask = _obs.ListReplayRowsAsync();
+
+            RecordStatus recStatus = await recStatusTask;
             // Not just OBS's single global recording: a Source Record filter can be
             // recording independently of it (started from its own row in the Start
             // Recording menu, or from ControlPanelDock's own button in OBS), so the
@@ -1690,7 +1725,7 @@ public partial class MainWindow : Window
             int activeRecordRowCount;
             try
             {
-                List<RecordRow> recordRows = await _obs.ListRecordRowsAsync();
+                List<RecordRow> recordRows = await recordRowsTask;
                 activeRecordRowCount = recordRows.Count(r => r.Status == RecordStatusRecording);
                 _lastKnownActiveRecordRowCount = activeRecordRowCount;
             }
@@ -1747,12 +1782,12 @@ public partial class MainWindow : Window
             // replay saving as a whole is down if another one is still working; saying
             // "Error" while a buffer is visibly green and armed is just as backwards as
             // saying "Off" was. Error only wins when NOTHING is currently active.
-            bool replayBufferActive = await _obs.GetReplayBufferActiveAsync();
+            bool replayBufferActive = await replayBufferActiveTask;
             bool anyRowActive;
             bool anyRowError;
             try
             {
-                List<ReplayRow> rows = await _obs.ListReplayRowsAsync();
+                List<ReplayRow> rows = await replayRowsTask;
                 anyRowActive = rows.Any(r => r.Status == 1);
                 anyRowError = rows.Any(r => r.Status == 2);
                 _lastKnownAnyRowActive = anyRowActive;

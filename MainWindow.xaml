@@ -776,8 +776,8 @@
                      were ever to desync, closing the whole HUD still works. -->
                 <Popup x:Name="PlayerOverlayPopup" PlacementTarget="{Binding ElementName=PlayerVideoView}" Placement="Relative"
                        HorizontalOffset="0" VerticalOffset="0" AllowsTransparency="True" StaysOpen="True" Focusable="False" IsOpen="False">
-                    <Grid Width="{Binding ElementName=PlayerVideoView, Path=ActualWidth}" Height="46">
-                        <StackPanel Orientation="Horizontal" Margin="14,0,0,0" VerticalAlignment="Center">
+                    <Grid Width="{Binding ElementName=PlayerVideoView, Path=ActualWidth}" Height="34">
+                        <StackPanel Orientation="Horizontal" Margin="8,0,0,0" VerticalAlignment="Center">
                             <StackPanel.Effect>
                                 <DropShadowEffect BlurRadius="6" ShadowDepth="1" Color="Black" Opacity="0.85"/>
                             </StackPanel.Effect>
