@@ -19,7 +19,9 @@
     <TextBlock TextAlignment="Center" TextWrapping="Wrap" FontSize="10.5" Foreground="#AEB4BD" MaxWidth="520">
         <Run x:Name="VersionRun" FontWeight="Bold" Foreground="#F5F6F8" Text="Backtrack Alpha"/>
         <LineBreak/>
-        <Run Text="This software is currently in alpha. Features are experimental and may be unstable, incomplete, or not work as intended. Report issues on GitHub: "/>
+        <Run Text="This software is currently in alpha. Features are experimental and may be unstable, incomplete, or not work as intended."/>
+        <LineBreak/>
+        <Run Text="Report issues on GitHub: "/>
         <Hyperlink NavigateUri="https://github.com/ilyambr/backtrack/issues" RequestNavigate="Hyperlink_RequestNavigate" Foreground="#F5F6F8">
             <Run Text="https://github.com/ilyambr/backtrack/issues"/>
         </Hyperlink>
