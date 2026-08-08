@@ -1430,16 +1430,44 @@ public partial class MainWindow : Window
         _ => IdlePanel,
     };
 
-    /// <summary>Fade + slight slide-up on whichever panel just became active, purely cosmetic (BeginAnimation, not a blocking wait) so it doesn't change ShowScreen's own synchronous behavior -- every caller that populates content right after (LoadGallery, etc.) still runs immediately, unaffected.</summary>
+    /// <summary>
+    /// Fade + a subtle scale-in on whichever panel just became active, purely
+    /// cosmetic (BeginAnimation, not a blocking wait) so it doesn't change
+    /// ShowScreen's own synchronous behavior -- every caller that populates
+    /// content right after (LoadGallery, etc.) still runs immediately,
+    /// unaffected.
+    ///
+    /// Deliberately not a crossfade -- two different attempts at keeping the
+    /// outgoing panel visible-and-fading (instead of collapsing it
+    /// immediately, like this one does) both looked worse in practice than
+    /// the old panel just disappearing outright: fixing the window resize
+    /// timing traded a content-clipping glitch for an empty-dead-space
+    /// glitch instead. Collapsing the old panel synchronously sidesteps that
+    /// whole class of problem.
+    ///
+    /// No slide either -- an earlier version added one and it read as
+    /// awkward: sliding an entire panel's worth of tiles/text/buttons as one
+    /// block draws the eye to everything moving at once and looks "swimmy"
+    /// rather than smooth. CubicEase (no overshoot) for opacity, since
+    /// overshooting a fade looks like flicker; BackEase's slight overshoot-
+    /// then-settle on the scale specifically is what reads as "alive"
+    /// rather than mechanical.
+    /// </summary>
     private static void AnimatePanelIn(FrameworkElement panel)
     {
-        var slide = new TranslateTransform(0, 10);
-        panel.RenderTransform = slide;
+        var duration = TimeSpan.FromMilliseconds(220);
+        var scale = new ScaleTransform(0.96, 0.96);
+        panel.RenderTransform = scale;
+        panel.RenderTransformOrigin = new Point(0.5, 0.5);
         panel.Opacity = 0;
 
-        var ease = new QuadraticEase { EasingMode = EasingMode.EaseOut };
-        panel.BeginAnimation(OpacityProperty, new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(160)) { EasingFunction = ease });
-        slide.BeginAnimation(TranslateTransform.YProperty, new DoubleAnimation(10, 0, TimeSpan.FromMilliseconds(160)) { EasingFunction = ease });
+        var fadeEase = new CubicEase { EasingMode = EasingMode.EaseOut };
+        // Small amplitude -- enough to feel like a real settle, not a bounce.
+        var settleEase = new BackEase { EasingMode = EasingMode.EaseOut, Amplitude = 0.35 };
+
+        panel.BeginAnimation(OpacityProperty, new DoubleAnimation(0, 1, duration) { EasingFunction = fadeEase });
+        scale.BeginAnimation(ScaleTransform.ScaleXProperty, new DoubleAnimation(0.96, 1, duration) { EasingFunction = settleEase });
+        scale.BeginAnimation(ScaleTransform.ScaleYProperty, new DoubleAnimation(0.96, 1, duration) { EasingFunction = settleEase });
     }
 
     private void ShowScreen(Screen screen)
@@ -1515,8 +1543,18 @@ public partial class MainWindow : Window
     /// absurd on huge monitors); since the window uses SizeToContent="Height",
     /// the actual on-screen height is driven by content, not a Window.Height
     /// set here.
+    ///
+    /// The cap used to be 1500 -- right around what 78% of a 1080p screen's
+    /// width already comes out to (1920 * 0.78 ~= 1498), so it only ever
+    /// bound 1080p in practice. A 1440p screen (2560 * 0.78 ~= 1998) hit that
+    /// exact same 1500 cap instead of actually getting bigger, so Gallery/
+    /// Player looked identically sized on both -- not "capped for huge
+    /// monitors" like the comment always meant, just silently capped for
+    /// everyone above 1080p. Raised to 2000 so 1440p gets its real,
+    /// essentially-uncapped size and only screens meaningfully bigger than
+    /// that (4K and up) actually hit the ceiling.
     /// </summary>
-    private double BigWidth() => Math.Min(TargetScreenBounds.Width * 0.78, 1500);
+    private double BigWidth() => Math.Min(TargetScreenBounds.Width * 0.78, 2000);
 
     private void ApplyBigScreenSize()
     {
