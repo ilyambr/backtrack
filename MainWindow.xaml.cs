@@ -180,7 +180,16 @@ public partial class MainWindow : Window
                 RenderDiscoveredDevices();
         });
 
-        _scrim.Dismissed += () => Dispatcher.BeginInvoke(CloseOverlay);
+        // CloseOverlay has an optional parameter (preserveScreen) -- a bare
+        // "CloseOverlay" method-group reference here used to convert cleanly
+        // to a zero-arg delegate back when the method had no parameters, but
+        // a default value only applies at an explicit call site, not when
+        // the method is captured as a stored delegate like this. The
+        // dispatcher later invokes that stored delegate expecting zero args,
+        // but the method genuinely takes one at the IL level -- a real
+        // TargetParameterCountException crash, not hypothetical. The
+        // explicit lambda forces a proper zero-arg closure instead.
+        _scrim.Dismissed += () => Dispatcher.BeginInvoke(() => CloseOverlay());
         KeyDown += MainWindow_KeyDown;
 
         string url;
