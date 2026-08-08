@@ -1334,9 +1334,27 @@ public partial class MainWindow : Window
         });
     }
 
-    private void CloseOverlay()
+    /// <param name="preserveScreen">
+    /// Skip the usual reset-to-Idle (even when nothing critical is in
+    /// progress) and leave whatever screen/panel is currently showing
+    /// exactly as it is -- used by RevealInExplorerAndClose so reopening the
+    /// overlay lands back on the same screen (and, for Gallery, the same
+    /// subfolder) instead of bouncing to Idle. The whole point of that
+    /// action is a quick trip out to Explorer and back, not "I'm done with
+    /// the overlay for now."
+    /// </param>
+    private void CloseOverlay(bool preserveScreen = false)
     {
-        if (!IsCriticalOperationActive())
+        if (preserveScreen)
+        {
+            // Deliberately don't touch ShowScreen/_lastScreen at all here --
+            // Gallery's _currentGalleryFolder and Player's _currentPlayerFile
+            // are untouched by anything in this path, so leaving the current
+            // panel as-is is sufficient; ToggleVisible's reopen path doesn't
+            // call ShowScreen either, so whatever's still active just
+            // reappears exactly as it was.
+        }
+        else if (!IsCriticalOperationActive())
         {
             _lastScreen = Screen.Idle;
             ShowScreen(Screen.Idle);
@@ -1353,6 +1371,28 @@ public partial class MainWindow : Window
         _toastOverlay.UpdatePosition(false);
         _updatePrompt.HidePrompt();
         RefreshOverlayLogVisibilityAndMode();
+    }
+
+    /// <summary>
+    /// "Open file location" from Gallery's context menu / Player's folder
+    /// button -- reveals the file in Explorer and closes the overlay (the
+    /// two windows fighting for screen space/focus otherwise is awkward),
+    /// preserving the current screen so the next open lands right back
+    /// where the user was instead of resetting to Idle.
+    ///
+    /// CloseOverlay's normal path stops any playing video as a side effect
+    /// of switching to Idle (see ShowScreen's own StopPlayerPlayback call) --
+    /// preserveScreen skips that switch entirely, so if this was called from
+    /// the Player screen, playback would otherwise keep running (audio and
+    /// all) behind a hidden window. StopPlayerPlayback is a no-op when
+    /// nothing's playing, so calling it unconditionally is safe from the
+    /// Gallery call site too.
+    /// </summary>
+    private void RevealInExplorerAndClose(string filePath)
+    {
+        Process.Start(new ProcessStartInfo("explorer.exe", $"/select,\"{filePath}\"") { UseShellExecute = true });
+        StopPlayerPlayback();
+        CloseOverlay(preserveScreen: true);
     }
 
     private void MainWindow_KeyDown(object sender, KeyEventArgs e)
@@ -2856,7 +2896,7 @@ public partial class MainWindow : Window
 
         var contextMenu = new ContextMenu { Style = (Style)FindResource("DarkContextMenu") };
         var openFolderItem = new MenuItem { Header = "Open file location", Style = (Style)FindResource("DarkMenuItem") };
-        openFolderItem.Click += (_, _) => Process.Start(new ProcessStartInfo("explorer.exe", $"/select,\"{file.FullName}\"") { UseShellExecute = true });
+        openFolderItem.Click += (_, _) => RevealInExplorerAndClose(file.FullName);
         var deleteItem = new MenuItem { Header = "Delete", Style = (Style)FindResource("DarkMenuItem") };
         deleteItem.Click += (_, _) => DeleteClip(file, card);
         contextMenu.Items.Add(openFolderItem);
@@ -3409,7 +3449,7 @@ public partial class MainWindow : Window
     {
         if (_currentPlayerFile is null)
             return;
-        Process.Start(new ProcessStartInfo("explorer.exe", $"/select,\"{_currentPlayerFile.FullName}\"") { UseShellExecute = true });
+        RevealInExplorerAndClose(_currentPlayerFile.FullName);
     }
 
     /// <summary>
