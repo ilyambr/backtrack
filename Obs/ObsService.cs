@@ -57,6 +57,9 @@ public sealed class ObsService
     /// <summary>Fires the moment OBS's own recording output actually starts/stops -- event-driven, not the 1s poll. Path is only populated on stop.</summary>
     public event Action<bool, string?>? RecordingStateChanged;
 
+    /// <summary>Fires the moment OBS's own stream output actually starts/stops -- event-driven, same idea as RecordingStateChanged.</summary>
+    public event Action<bool>? StreamingStateChanged;
+
     /// <summary>Fires when a Replay Slider row's buffer actually finishes saving: (rowKey, path). This is the real "yes, the clip exists now" confirmation.</summary>
     public event Action<string, string>? ReplaySaved;
 
@@ -92,6 +95,15 @@ public sealed class ObsService
                 RecordingStateChanged?.Invoke(true, null);
             else if (state == "OBS_WEBSOCKET_OUTPUT_STOPPED")
                 RecordingStateChanged?.Invoke(false, data.TryGetProperty("outputPath", out JsonElement pathEl) ? pathEl.GetString() : null);
+        }
+        else if (eventType == "StreamStateChanged" && data.TryGetProperty("outputState", out JsonElement streamStateEl))
+        {
+            // Same double-fire-per-transition reasoning as RecordStateChanged above.
+            string? state = streamStateEl.GetString();
+            if (state == "OBS_WEBSOCKET_OUTPUT_STARTED")
+                StreamingStateChanged?.Invoke(true);
+            else if (state == "OBS_WEBSOCKET_OUTPUT_STOPPED")
+                StreamingStateChanged?.Invoke(false);
         }
         else if (eventType == "VendorEvent" &&
                  data.TryGetProperty("vendorName", out JsonElement vn) && vn.GetString() == "replay-buffer-slider" &&

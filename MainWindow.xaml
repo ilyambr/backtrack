@@ -26,6 +26,7 @@
         <SolidColorBrush x:Key="Accent" Color="#F5F6F8"/>
         <SolidColorBrush x:Key="Rec" Color="#FF5B52"/>
         <SolidColorBrush x:Key="RecDark" Color="#7A1F1F"/>
+        <SolidColorBrush x:Key="Stream" Color="#A855F7"/>
         <SolidColorBrush x:Key="Green" Color="#3ECF8E"/>
         <SolidColorBrush x:Key="RowBg" Color="#0BFFFFFF"/>
         <SolidColorBrush x:Key="RowHoverBg" Color="#17FFFFFF"/>
@@ -574,6 +575,17 @@
                     <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
                         <Ellipse x:Name="ConnDot" Width="8" Height="8" Fill="{StaticResource Text2}" VerticalAlignment="Center" Margin="0,0,7,0"/>
                         <TextBlock x:Name="ConnStatusText" Text="OBS Disconnected" FontSize="11.5" FontWeight="Bold"
+                                   Foreground="{StaticResource Text1}" VerticalAlignment="Center"/>
+                    </StackPanel>
+                </Border>
+
+                <!-- A separate container from the OBS-connected one above, not nested
+                     inside it; only ever appears at all while actually live, as a
+                     plain reminder, same row shape/style as that one. -->
+                <Border x:Name="StreamingStatusBorder" Background="{StaticResource RowBg}" Margin="14,0,14,12" Padding="10,7" Visibility="Collapsed">
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                        <Ellipse Width="8" Height="8" Fill="{StaticResource Stream}" VerticalAlignment="Center" Margin="0,0,7,0"/>
+                        <TextBlock Text="You are currently livestreaming." FontSize="11.5" FontWeight="Bold"
                                    Foreground="{StaticResource Text1}" VerticalAlignment="Center"/>
                     </StackPanel>
                 </Border>

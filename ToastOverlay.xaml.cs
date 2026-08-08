@@ -18,6 +18,7 @@ public partial class ToastOverlay : Window
     private static readonly SolidColorBrush Text2 = new(Color.FromRgb(0x76, 0x7D, 0x87));
     private static readonly SolidColorBrush Green = new(Color.FromRgb(0x3E, 0xCF, 0x8E));
     private static readonly SolidColorBrush Rec = new(Color.FromRgb(0xFF, 0x5B, 0x52));
+    private static readonly SolidColorBrush Stream = new(Color.FromRgb(0xA8, 0x55, 0xF7));
     private static readonly SolidColorBrush Accent = new(Color.FromRgb(0x3E, 0xCF, 0x8E));
 
     private int _activeUndoCount;
@@ -61,6 +62,15 @@ public partial class ToastOverlay : Window
             : GlyphIcon("\u25a0", Text2);
         Show(icon, started ? Rec : Text2, started ? "Recording started" : "Recording saved",
             resolvedPath is null ? null : $"Saved at '{resolvedPath}'");
+    }
+
+    public void ShowStreaming(bool started)
+    {
+        // Same real-Ellipse-for-the-started-dot reasoning as ShowRecording above.
+        UIElement icon = started
+            ? new Ellipse { Width = 10, Height = 10, Fill = Stream, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 10, 0) }
+            : GlyphIcon("■", Text2);
+        Show(icon, started ? Stream : Text2, started ? "Livestream Started" : "Livestream Ended", null);
     }
 
     public void ShowReplaySaved(string label, string resolvedPath) =>
