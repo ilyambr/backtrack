@@ -521,8 +521,17 @@
          StackPanel rather than being direct Window children; the box needs
          to render as a genuinely separate rounded container underneath the
          main pill, not just another row merged inside RootBorder's own
-         single card. -->
-    <StackPanel>
+         single card.
+
+         Background matches PanelBg (not left transparent) because MainWindow
+         itself is AllowsTransparency="False"; any pixels in this
+         StackPanel's own bounds not covered by RootBorder or the streaming
+         box (the gap between them, and the space beside the box now that
+         it's narrower than the window) aren't real transparency, they're
+         exposed opaque black from the window's own non-layered backdrop.
+         Matching the background here makes it read as one continuous panel
+         instead of a black void with two boxes floating on it. -->
+    <StackPanel Background="{StaticResource PanelBg}">
     <Border x:Name="RootBorder" Background="{StaticResource PanelBg}" BorderBrush="{StaticResource Hairline}" BorderThickness="1">
         <Grid>
             <!-- Idle screen: Record / Save Replay / Gallery -->
