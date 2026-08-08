@@ -89,6 +89,7 @@ public partial class MainWindow : Window
     private string? _pendingUpdateName;
     private Action? _pendingUpdateInstall;
     private readonly LogoOverlay _logo;
+    private readonly StreamingStatusOverlay _streamingStatus;
     private readonly PairingRequestOverlay _pairingRequestOverlay;
     private readonly AppSettings _settings;
     private readonly UpdateService _updates = new();
@@ -100,10 +101,10 @@ public partial class MainWindow : Window
     // first click. Doesn't affect the automatic hourly check, which still
     // applies updates on its own the moment it's safe to (see CheckForUpdatesAsync).
     private bool _manualUpdateReady;
-    // Last known streaming state -- StreamingStatusBorder needs both this AND
-    // "Idle is the currently showing screen" true before it's actually
-    // visible (see UpdateStreamingBoxVisibility), and this is the only one of
-    // those two not already readable directly off some existing element.
+    // Last known streaming state -- StreamingStatusOverlay needs this plus 2
+    // more conditions true before it's actually shown (see
+    // UpdateStreamingBoxVisibility), and this is the only one of the 3 not
+    // already readable directly off some existing element/property.
     private bool _isStreaming;
     private readonly PairingService _pairing;
     private readonly Dictionary<string, string> _rowLabels = new();
@@ -158,7 +159,7 @@ public partial class MainWindow : Window
     // BuildClipCard's return value (still just a Border, used everywhere else as one).
     private readonly List<(FileInfo File, Border Circle, Border Thumb)> _galleryCardSelection = new();
 
-    public MainWindow(StatusOverlay statusOverlay, ToastOverlay toastOverlay, ScrimOverlay scrim, DisclaimerOverlay disclaimer, LogoOverlay logo, PairingRequestOverlay pairingRequestOverlay)
+    public MainWindow(StatusOverlay statusOverlay, ToastOverlay toastOverlay, ScrimOverlay scrim, DisclaimerOverlay disclaimer, LogoOverlay logo, StreamingStatusOverlay streamingStatus, PairingRequestOverlay pairingRequestOverlay)
     {
         InitializeComponent();
         _statusOverlay = statusOverlay;
@@ -167,7 +168,15 @@ public partial class MainWindow : Window
         _scrim = scrim;
         _disclaimer = disclaimer;
         _logo = logo;
+        _streamingStatus = streamingStatus;
         _settings = AppSettings.Load();
+
+        // Self-corrects StreamingStatusOverlay's position once this window's
+        // real post-switch bounds actually settle (see UpdateStreamingBoxVisibility's
+        // own comment) -- also just generally keeps it tracking MainWindow if
+        // it ever moves independently of a screen switch.
+        SizeChanged += (_, _) => UpdateStreamingBoxVisibility();
+        LocationChanged += (_, _) => UpdateStreamingBoxVisibility();
 
         _pairing = new PairingService(_settings);
         _pairing.PairingRequested += (deviceName, code, requestId) => Dispatcher.BeginInvoke(() =>
@@ -1460,6 +1469,7 @@ public partial class MainWindow : Window
         _scrim.Hide();
         _disclaimer.Hide();
         _logo.Hide();
+        _streamingStatus.Hide();
         _toastOverlay.UpdatePosition(false);
         _updatePrompt.HidePrompt();
         RefreshOverlayLogVisibilityAndMode();
@@ -1519,6 +1529,10 @@ public partial class MainWindow : Window
 
             if (_settings.ShowDisclaimer)
                 _disclaimer.Show();
+
+            // Otherwise this waits for the next 1s poll tick to reappear if
+            // still streaming -- fine in practice, but immediate is free here.
+            UpdateStreamingBoxVisibility();
         }
     }
 
@@ -1769,19 +1783,32 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// StreamingStatusBorder now lives outside RootBorder entirely (its own
-    /// separate box below the main pill, not merged into it -- see its own
-    /// XAML comment), so it's no longer implicitly hidden just by IdlePanel
-    /// itself going Collapsed the way it was when nested inside it. Needs
-    /// both conditions checked explicitly instead: actually streaming, AND
+    /// StreamingStatusOverlay is its own separate floating window now, not an
+    /// element inside MainWindow (see its own XAML comment for why -- this
+    /// window is AllowsTransparency="False", needed for the VLC video surface
+    /// it hosts to render at all), so it's no longer implicitly shown/hidden
+    /// by anything in here directly. Needs 3 conditions checked explicitly
+    /// instead: actually streaming, this HUD is actually open right now, and
     /// Idle is the screen currently showing (this is a reminder for the main
     /// screen, not something that should linger while looking at Gallery/
-    /// Settings/etc.). Called from every place either of those two can change.
+    /// Settings/etc., or after the HUD's been closed). Called from every
+    /// place any of those three can change, plus MainWindow's own
+    /// SizeChanged/LocationChanged (see constructor) so the reposition below
+    /// self-corrects once this window's real post-switch bounds are known --
+    /// right here, synchronously after a screen switch, ActualHeight in
+    /// particular isn't necessarily settled yet (SizeToContent="Height").
     /// </summary>
     private void UpdateStreamingBoxVisibility()
     {
-        StreamingStatusBorder.Visibility = _isStreaming && IdlePanel.Visibility == Visibility.Visible
-            ? Visibility.Visible : Visibility.Collapsed;
+        if (_isStreaming && IsVisible && IdlePanel.Visibility == Visibility.Visible)
+        {
+            _streamingStatus.Reposition(new Rect(Left, Top, Width, ActualHeight));
+            _streamingStatus.Show();
+        }
+        else
+        {
+            _streamingStatus.Hide();
+        }
     }
 
     private async Task RefreshStatusAsync()

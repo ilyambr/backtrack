@@ -16,6 +16,7 @@ public partial class App : Application
     private ScrimOverlay? _scrim;
     private DisclaimerOverlay? _disclaimer;
     private LogoOverlay? _logo;
+    private StreamingStatusOverlay? _streamingStatus;
     private PairingRequestOverlay? _pairingRequest;
     private MainWindow? _main;
 
@@ -119,6 +120,12 @@ public partial class App : Application
         // lot between the compact pill and the big Gallery/Player panel.
         _logo = new LogoOverlay();
 
+        // Unlike the logo, this one DOES need to track MainWindow's own
+        // position/size (it's meant to read as attached directly underneath
+        // the main pill) -- see MainWindow.UpdateStreamingBoxVisibility and
+        // StreamingStatusOverlay.Reposition.
+        _streamingStatus = new StreamingStatusOverlay();
+
         // A pairing request can arrive at any time (whoever's on the other PC
         // decides when to click "pair"), independent of whether the HUD is open --
         // created up front like the other always-available overlays, but only
@@ -128,7 +135,7 @@ public partial class App : Application
         // MainWindow creates its own HWND immediately (for the global hotkey) but
         // is never Shown until the hotkey is pressed -- it's a summonable overlay,
         // not a normal always-visible window.
-        _main = new MainWindow(_status, _toasts, _scrim, _disclaimer, _logo, _pairingRequest);
+        _main = new MainWindow(_status, _toasts, _scrim, _disclaimer, _logo, _streamingStatus, _pairingRequest);
 
         string? updatedVersion = e.Args
             .FirstOrDefault(a => a.StartsWith("--updated=", StringComparison.Ordinal))
