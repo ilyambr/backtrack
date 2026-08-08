@@ -8,7 +8,13 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>Backtrack</AssemblyName>
     <RootNamespace>Backtrack</RootNamespace>
-    <Version>0.2.4</Version>
+    <!-- This is specifically the Windows build's version; see VERSIONING.md.
+         A Linux build (WPF/net8.0-windows only runs on Windows; a real Linux
+         port would need a separate UI project, likely Avalonia, plus
+         replacements for every Win32-only feature) doesn't exist yet, but
+         when it does it versions independently, starting fresh, not from
+         this number. -->
+    <Version>0.2.5</Version>
     <ApplicationIcon>Assets\app.ico</ApplicationIcon>
     <!-- The OBS link itself is still a hand-rolled obs-websocket v5 client over
          System.Net.WebSockets, no package needed. LibVLC below is the one

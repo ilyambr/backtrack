@@ -133,6 +133,14 @@ public partial class MainWindow : Window
     private string? _currentGalleryFolder;
     private string GalleryFolder => _currentGalleryFolder ?? _settings.ClipsFolder;
 
+    // Whether Gallery is currently browsing this PC's own ClipsFolder or the
+    // paired transmitter PC's, over the pairing connection (see
+    // PairingService.ListRemoteGalleryAsync/DownloadRemoteClipAsync). Reset to
+    // local every time Gallery is (re)opened from Idle -- see GalleryTile_Click.
+    private bool _galleryIsRemote;
+    // Relative to the remote PC's own ClipsFolder root; null means "at that root".
+    private string? _currentRemoteGalleryFolder;
+
     private readonly HashSet<string> _selectedClipPaths = new(StringComparer.OrdinalIgnoreCase);
     // Rebuilt every LoadGallery() call -- lets mass actions and the selection-circle
     // visuals look up a card's controls by file without threading extra state through
@@ -194,9 +202,28 @@ public partial class MainWindow : Window
                 ShowObsModeMessage($"Recording saved to '{path}'");
             }
         });
-        _obs.ReplaySaved += (key, path) => Dispatcher.BeginInvoke(() =>
+        _obs.ReplaySaved += (key, path) => Dispatcher.BeginInvoke(async () =>
         {
-            string label = _rowLabels.TryGetValue(key, out string? l) ? l : key;
+            if (!_rowLabels.TryGetValue(key, out string? label))
+            {
+                // The row's key is a raw obs_source_t* address formatted as a
+                // string, not a real identifier (see obs-replay-slider's
+                // AddRow/RebuildRows: "not all OBS versions... have
+                // obs_source_get_uuid(), so use the source object's own
+                // address instead") -- which is NOT stable across an OBS
+                // restart on the transmitter PC, since every source gets a
+                // new address. A cache built before the last such restart is
+                // silently wrong for every row, not just missing one, which
+                // is exactly what showed up as a meaningless raw number in
+                // the toast instead of the real filter/source name. Retry
+                // once, live, before giving up -- self-heals this toast
+                // immediately instead of waiting for Backtrack's own next
+                // reconnect to refresh the whole cache.
+                await PrefetchRowLabelsAsync();
+                _rowLabels.TryGetValue(key, out label);
+            }
+            label ??= key;
+
             _toastOverlay.ShowReplaySaved(label, path);
             AppLog.Write($"{label} saved to '{path}'");
             ShowObsModeMessage($"Replay saved to '{path}'");
@@ -220,6 +247,14 @@ public partial class MainWindow : Window
             _settings.RamDiskEnabled, _settings.RamDiskDriveLetter, _settings.RamDiskSizeMb,
             RamDisk.IsMounted(_settings.RamDiskDriveLetter));
         _pairing.ApplyRamDiskSnapshot = ApplyRamDiskConfigAsync;
+
+        // Lets a paired receiver PC's remote Gallery tab reuse this instance's
+        // own thumbnail cache instead of PairingService duplicating LibVLC
+        // frame-grab logic it has no access to -- see EnsureThumbnailCachedAsync.
+        _pairing.EnsureThumbnailCachedForRemote = async fullPath => await EnsureThumbnailCachedAsync(new FileInfo(fullPath));
+        // So list_gallery hides obviously-broken/glitched clips the same way
+        // the local Gallery does -- see TryGetCachedDurationMs.
+        _pairing.GetCachedDurationMsForRemote = fullPath => TryGetCachedDurationMs(new FileInfo(fullPath));
 
         // Same reasoning as RAM disk above -- plugin version checks/updates read
         // and write C:\Program Files\obs-studio on THIS machine (see
@@ -596,7 +631,18 @@ public partial class MainWindow : Window
             name => name.Contains("windows-installer", StringComparison.OrdinalIgnoreCase) && name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase),
             () => _settings.LastAppliedSourceRecordReleaseAt, v => _settings.LastAppliedSourceRecordReleaseAt = v,
             () => _settings.LastAppliedSourceRecordDigest, v => _settings.LastAppliedSourceRecordDigest = v);
-        await CheckAndApplySelfUpdateAsync();
+
+        // Never on a dev build (see UpdateService.IsDevBuild): a locally-compiled
+        // binary's digest never matches the official release's, so this would
+        // always think an update is "available" regardless of version string,
+        // and applying it ends in Application.Current.Shutdown() a few lines
+        // into CheckAndApplySelfUpdateAsync -- which used to kill the dev
+        // process out from under whoever just wanted the plugin updates above,
+        // even though those had already applied by that point. Plugins remain
+        // fully updatable from a dev build; only Backtrack's own self-update is
+        // off-limits here.
+        if (!UpdateService.IsDevBuild)
+            await CheckAndApplySelfUpdateAsync();
     }
 
     private void ShowAppStartedToast()
@@ -664,6 +710,22 @@ public partial class MainWindow : Window
 
         bool digestKnownBothSides = release.Digest is not null && lastDigest is not null;
         bool digestChanged = digestKnownBothSides && !string.Equals(release.Digest, lastDigest, StringComparison.OrdinalIgnoreCase);
+
+        // A matching digest is authoritative: it proves the exact bytes of
+        // this release were already installed, regardless of what the
+        // installed binary's OWN self-reported version string claims.
+        // versionBumped compares GitHub's tag against that self-reported
+        // string (see GetInstalledPluginVersion) -- a plugin whose version-
+        // embedding is out of sync with its real content (hit for real in
+        // obs-source-record: CMakeLists.txt's hardcoded version lagged
+        // buildspec.json for several releases) would otherwise make
+        // versionBumped permanently true even once the actual fix is
+        // installed, reinstalling the same already-current release every
+        // single check forever -- closing/reopening OBS each time for
+        // nothing. Trust a matching digest over a version-string mismatch.
+        if (digestKnownBothSides && !digestChanged)
+            return false;
+
         bool republishedByTimestamp = !digestKnownBothSides && release.PublishedAt is not null && lastApplied is not null && release.PublishedAt > lastApplied;
 
         return versionBumped || digestChanged || republishedByTimestamp;
@@ -1605,6 +1667,48 @@ public partial class MainWindow : Window
     {
         ShowScreen(Screen.Gallery);
         _currentGalleryFolder = null;
+        _galleryIsRemote = false;
+        _currentRemoteGalleryFolder = null;
+        RefreshGallerySourceTabsVisibility();
+        LoadGallery();
+    }
+
+    /// <summary>The "This PC"/"Remote" tabs only make sense (and only show) once
+    /// actually paired with a transmitter PC -- call whenever pairing state
+    /// changes, in addition to whenever Gallery itself opens.</summary>
+    private void RefreshGallerySourceTabsVisibility()
+    {
+        bool paired = !string.IsNullOrEmpty(_settings.PairedPeerSecret);
+        GallerySourceTabs.Visibility = paired ? Visibility.Visible : Visibility.Collapsed;
+        if (!paired && _galleryIsRemote)
+        {
+            // Got unpaired while sitting on the Remote tab -- there's nothing
+            // left to show there, so fall back to local rather than leaving
+            // Gallery stuck showing a now-meaningless "Remote" view.
+            _galleryIsRemote = false;
+            _currentRemoteGalleryFolder = null;
+        }
+        GalleryLocalTabButton.FontWeight = _galleryIsRemote ? FontWeights.Normal : FontWeights.Bold;
+        GalleryRemoteTabButton.FontWeight = _galleryIsRemote ? FontWeights.Bold : FontWeights.Normal;
+        GalleryRemoteTabButton.Content = string.IsNullOrEmpty(_settings.PairedPeerName) ? "Remote" : _settings.PairedPeerName;
+    }
+
+    private void GalleryLocalTab_Click(object sender, RoutedEventArgs e)
+    {
+        if (!_galleryIsRemote)
+            return;
+        _galleryIsRemote = false;
+        RefreshGallerySourceTabsVisibility();
+        LoadGallery();
+    }
+
+    private void GalleryRemoteTab_Click(object sender, RoutedEventArgs e)
+    {
+        if (_galleryIsRemote || string.IsNullOrEmpty(_settings.PairedPeerSecret))
+            return;
+        _galleryIsRemote = true;
+        _currentRemoteGalleryFolder = null;
+        RefreshGallerySourceTabsVisibility();
         LoadGallery();
     }
 
@@ -1971,7 +2075,7 @@ public partial class MainWindow : Window
 
     // ---------------------------------------------------------------- gallery
 
-    private static readonly string[] VideoExtensions = { ".mp4", ".mkv", ".flv", ".mov" };
+    private static readonly string[] VideoExtensions = GalleryFormats.VideoExtensions;
 
     private async Task RefreshGalleryCountAsync()
     {
@@ -1996,6 +2100,12 @@ public partial class MainWindow : Window
 
     private void LoadGallery()
     {
+        if (_galleryIsRemote)
+        {
+            _ = LoadRemoteGalleryAsync();
+            return;
+        }
+
         GalleryGrid.Children.Clear();
         _galleryCardSelection.Clear();
         _selectedClipPaths.Clear();
@@ -2080,6 +2190,15 @@ public partial class MainWindow : Window
     /// </summary>
     private void UpdateGalleryPathBar()
     {
+        if (_galleryIsRemote)
+        {
+            bool remoteAtRoot = _currentRemoteGalleryFolder is null;
+            GalleryPathBar.Visibility = remoteAtRoot ? Visibility.Collapsed : Visibility.Visible;
+            if (!remoteAtRoot)
+                GalleryPathText.Text = _currentRemoteGalleryFolder;
+            return;
+        }
+
         bool atRoot = _currentGalleryFolder is null;
         GalleryPathBar.Visibility = atRoot ? Visibility.Collapsed : Visibility.Visible;
         if (atRoot)
@@ -2107,8 +2226,26 @@ public partial class MainWindow : Window
         LoadGallery();
     }
 
+    /// <summary>Descends into a subfolder of the paired PC's own ClipsFolder root -- relativePath uses '/' throughout regardless of either PC's actual OS.</summary>
+    private void OpenRemoteGalleryFolder(string name)
+    {
+        _currentRemoteGalleryFolder = _currentRemoteGalleryFolder is null ? name : $"{_currentRemoteGalleryFolder}/{name}";
+        LoadGallery();
+    }
+
     private void GalleryUp_Click(object sender, MouseButtonEventArgs e)
     {
+        if (_galleryIsRemote)
+        {
+            if (_currentRemoteGalleryFolder is not null)
+            {
+                int lastSlash = _currentRemoteGalleryFolder.LastIndexOf('/');
+                _currentRemoteGalleryFolder = lastSlash < 0 ? null : _currentRemoteGalleryFolder[..lastSlash];
+            }
+            LoadGallery();
+            return;
+        }
+
         string root = Path.GetFullPath(_settings.ClipsFolder).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
         string current = Path.GetFullPath(GalleryFolder).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
 
@@ -2129,6 +2266,245 @@ public partial class MainWindow : Window
             }
         }
         LoadGallery();
+    }
+
+    /// <summary>
+    /// Remote counterpart of the local LoadGallery() above -- same shape (folder
+    /// tiles first, then clip tiles, then a status count), fetched over the
+    /// pairing connection instead of the local filesystem. Thumbnails are
+    /// fetched from the transmitter PC's own local cache (see
+    /// LoadRemoteThumbnailAsync/HandleGetThumbnailAsync), not generated here.
+    /// No selection/mass-actions/trim, though -- those operate on local files
+    /// by design; a remote clip has to be downloaded (see OpenRemoteClipAsync)
+    /// before any of that could apply to it.
+    /// </summary>
+    private async Task LoadRemoteGalleryAsync()
+    {
+        GalleryGrid.Children.Clear();
+        _galleryCardSelection.Clear();
+        _selectedClipPaths.Clear();
+        RefreshGallerySelectionUi();
+        UpdateGalleryPathBar();
+        GalleryStatus.Text = "Loading...";
+
+        RemoteGalleryListing? listing = await _pairing.ListRemoteGalleryAsync(_currentRemoteGalleryFolder ?? "");
+        if (listing is null)
+        {
+            GalleryGrid.Children.Add(new TextBlock
+            {
+                Text = $"Couldn't reach {_settings.PairedPeerName}'s Backtrack -- make sure it's running and paired.",
+                FontSize = 12,
+                Foreground = (Brush)FindResource("Rec"),
+                TextWrapping = TextWrapping.Wrap,
+                Width = BigWidth() - 40,
+            });
+            GalleryStatus.Text = "";
+            return;
+        }
+
+        if (listing.Folders.Count == 0 && listing.Files.Count == 0)
+        {
+            GalleryGrid.Children.Add(new TextBlock
+            {
+                Text = "No clips in this folder yet.",
+                FontSize = 12,
+                Foreground = (Brush)FindResource("Text2"),
+            });
+            GalleryStatus.Text = "0 clips";
+            return;
+        }
+
+        foreach (string name in listing.Folders)
+            GalleryGrid.Children.Add(BuildRemoteFolderCard(name));
+
+        foreach (RemoteGalleryFile file in listing.Files)
+            GalleryGrid.Children.Add(BuildRemoteClipCard(file));
+
+        GalleryStatus.Text = listing.Files.Count == 1 ? "1 clip" : $"{listing.Files.Count} clips";
+    }
+
+    private Border BuildRemoteFolderCard(string name)
+    {
+        var iconHost = new Border
+        {
+            Background = new SolidColorBrush(Color.FromRgb(24, 26, 30)),
+            Height = 118,
+            Cursor = Cursors.Hand,
+        };
+        var folderGlyph = new System.Windows.Shapes.Path
+        {
+            Data = Geometry.Parse("M10,4H4C2.89,4 2,4.89 2,6V18A2,2 0 0,0 4,20H20A2,2 0 0,0 22,18V8C22,6.89 21.1,6 20,6H12L10,4Z"),
+            Fill = (Brush)FindResource("Text1"),
+            Width = 46,
+            Height = 38,
+            Stretch = Stretch.Uniform,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        iconHost.Child = folderGlyph;
+
+        var title = new TextBlock
+        {
+            Text = name,
+            FontWeight = FontWeights.Bold,
+            FontSize = 12.5,
+            Foreground = (Brush)FindResource("Text0"),
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            Margin = new Thickness(0, 7, 0, 1),
+        };
+        var sub = new TextBlock { Text = "Folder", FontSize = 11, Foreground = (Brush)FindResource("Text2") };
+
+        var content = new StackPanel();
+        content.Children.Add(iconHost);
+        content.Children.Add(title);
+        content.Children.Add(sub);
+
+        var card = new Border { Width = 210, Child = content, Cursor = Cursors.Hand };
+        card.MouseLeftButtonUp += (_, _) => OpenRemoteGalleryFolder(name);
+        return card;
+    }
+
+    private Border BuildRemoteClipCard(RemoteGalleryFile file)
+    {
+        var iconHost = new Border
+        {
+            Background = new SolidColorBrush(Color.FromRgb(24, 26, 30)),
+            Height = 118,
+            Cursor = Cursors.Hand,
+            ClipToBounds = true,
+        };
+        // Play-triangle placeholder, shown until the real frame arrives (see
+        // LoadRemoteThumbnailAsync below) -- the transmitter PC already has
+        // this clip thumbnailed for its own local Gallery in the common case
+        // (PrewarmGalleryThumbnailsAsync runs there too), so this is usually
+        // a quick fetch, not a fresh generation.
+        var playGlyph = new System.Windows.Shapes.Path
+        {
+            Data = Geometry.Parse("M8,5.14V19.14L19,12.14L8,5.14Z"),
+            Fill = (Brush)FindResource("Text1"),
+            Width = 38,
+            Height = 38,
+            Stretch = Stretch.Uniform,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        var thumbImage = new Image { Stretch = Stretch.UniformToFill };
+
+        var iconGrid = new Grid();
+        iconGrid.Children.Add(playGlyph);
+        iconGrid.Children.Add(thumbImage);
+        iconHost.Child = iconGrid;
+
+        var title = new TextBlock
+        {
+            Text = file.Name,
+            FontWeight = FontWeights.Bold,
+            FontSize = 12.5,
+            Foreground = (Brush)FindResource("Text0"),
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            Margin = new Thickness(0, 7, 0, 1),
+        };
+        double mb = file.Size / (1024.0 * 1024.0);
+        var sub = new TextBlock
+        {
+            Text = $"{file.Modified.ToLocalTime():MMM d, h:mm tt} · {mb:0.#} MB",
+            FontSize = 11,
+            Foreground = (Brush)FindResource("Text2"),
+        };
+
+        var content = new StackPanel();
+        content.Children.Add(iconHost);
+        content.Children.Add(title);
+        content.Children.Add(sub);
+
+        var card = new Border { Width = 210, Child = content, Cursor = Cursors.Hand };
+        string relativePath = _currentRemoteGalleryFolder is null ? file.Name : $"{_currentRemoteGalleryFolder}/{file.Name}";
+        card.MouseLeftButtonUp += (_, _) => _ = OpenRemoteClipAsync(relativePath, file.Name);
+
+        _ = LoadRemoteThumbnailAsync(relativePath, file, thumbImage);
+        return card;
+    }
+
+    /// <summary>
+    /// Fetches (and locally caches, per peer) a remote clip's thumbnail --
+    /// keyed on relativePath + the file's modified/size as reported by the
+    /// listing (same idea as GetThumbnailCachePath's local key), so a changed
+    /// remote file gets a fresh thumbnail instead of showing a stale frame
+    /// forever. The play-triangle placeholder stays put on any failure --
+    /// not worth surfacing an error over a missing thumbnail.
+    /// </summary>
+    private async Task LoadRemoteThumbnailAsync(string relativePath, RemoteGalleryFile file, Image target)
+    {
+        if (string.IsNullOrEmpty(_settings.PairedPeerDeviceId))
+            return;
+
+        string cacheDir = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "Backtrack", "RemoteThumbnails", _settings.PairedPeerDeviceId);
+        Directory.CreateDirectory(cacheDir);
+        string key = $"{relativePath}|{file.Modified.Ticks}|{file.Size}";
+        string hash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(key)));
+        string cachePath = Path.Combine(cacheDir, $"{hash}.jpg");
+
+        if (!File.Exists(cachePath))
+        {
+            (bool success, _) = await _pairing.DownloadRemoteThumbnailAsync(relativePath, cachePath);
+            if (!success)
+                return;
+        }
+
+        try
+        {
+            var bitmap = new BitmapImage();
+            bitmap.BeginInit();
+            bitmap.CacheOption = BitmapCacheOption.OnLoad;
+            bitmap.UriSource = new Uri(cachePath);
+            bitmap.EndInit();
+            bitmap.Freeze();
+            target.Source = bitmap;
+        }
+        catch
+        {
+            // Cached file is somehow unreadable -- leave the play-triangle placeholder.
+        }
+    }
+
+    /// <summary>
+    /// Downloads a remote clip into a per-peer local cache (so re-opening the
+    /// same clip later doesn't re-download it) and opens it in the existing
+    /// Player -- once it's actually on disk here, it plays exactly like any
+    /// local clip, no separate remote playback path needed.
+    /// </summary>
+    private async Task OpenRemoteClipAsync(string relativePath, string fileName)
+    {
+        if (string.IsNullOrEmpty(_settings.PairedPeerDeviceId))
+            return;
+
+        string cacheDir = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "Backtrack", "RemoteCache", _settings.PairedPeerDeviceId,
+            Path.GetDirectoryName(relativePath.Replace('/', Path.DirectorySeparatorChar)) ?? "");
+        Directory.CreateDirectory(cacheDir);
+        string destPath = Path.Combine(cacheDir, fileName);
+
+        if (File.Exists(destPath))
+        {
+            OpenInPlayer(new FileInfo(destPath));
+            return;
+        }
+
+        string previousStatus = GalleryStatus.Text;
+        var progress = new Progress<double>(p => GalleryStatus.Text = $"Downloading... {p:P0}");
+        (bool success, string? error) = await _pairing.DownloadRemoteClipAsync(relativePath, destPath, progress);
+        GalleryStatus.Text = previousStatus;
+
+        if (!success)
+        {
+            MessageBox.Show(this, $"Couldn't download that clip: {error}", "Backtrack");
+            return;
+        }
+
+        OpenInPlayer(new FileInfo(destPath));
     }
 
     private void ToggleClipSelected(FileInfo file)
@@ -3214,14 +3590,37 @@ public partial class MainWindow : Window
 
         using var exportPlayer = new LibVlc.MediaPlayer(media);
         using var done = new System.Threading.ManualResetEventSlim(false);
+        bool encounteredError = false;
 
         exportPlayer.EndReached += (_, _) => done.Set();
-        exportPlayer.EncounteredError += (_, _) => done.Set();
+        // Previously both handlers just did done.Set() with no way to tell
+        // which one fired -- ExportTrim returned normally either way, and
+        // RunTrimAsync's "Replace original" path then unconditionally
+        // File.Copy(..., overwrite: true)'d whatever (possibly empty or
+        // partial) file resulted, silently destroying the user's saved clip
+        // on a real transcode failure (codec quirk, disk pressure, a seek
+        // LibVLC struggled with).
+        exportPlayer.EncounteredError += (_, _) =>
+        {
+            encounteredError = true;
+            done.Set();
+        };
 
         exportPlayer.Play();
         if (!done.Wait(TimeSpan.FromMinutes(10)))
             throw new TimeoutException("Trim export took too long.");
         exportPlayer.Stop();
+
+        if (encounteredError)
+            throw new InvalidOperationException("LibVLC reported an error during trim export.");
+
+        // Belt-and-suspenders: a transcode can also report success
+        // (EndReached) while still leaving nothing usable on disk (e.g. a
+        // start/stop-time range LibVLC accepted but couldn't actually
+        // produce output for) -- verify a real, non-empty file exists before
+        // the caller trusts this as a successful export.
+        if (!File.Exists(destPath) || new FileInfo(destPath).Length == 0)
+            throw new InvalidOperationException("Trim export produced no output file.");
     }
 
     // --------------------------------------------------------------- settings
@@ -3374,6 +3773,7 @@ public partial class MainWindow : Window
             PairingStatusText.Text = "Not paired";
             UnpairButton.Visibility = Visibility.Collapsed;
         }
+        RefreshGallerySourceTabsVisibility();
     }
 
     private void UnpairButton_Click(object sender, RoutedEventArgs e)
@@ -3785,7 +4185,14 @@ public partial class MainWindow : Window
                 return;
             }
 
-            (bool backtrackAvail, string backtrackVer) = await CheckSelfAvailabilityAsync();
+            // Backtrack's own self-update never runs on a dev build (see the
+            // comment in CheckForUpdatesAsync) -- don't even bother checking
+            // availability here, since a dev build's digest never matches and
+            // would always misreport "update available" for a self-update that
+            // will never actually be offered.
+            (bool backtrackAvail, string backtrackVer) = UpdateService.IsDevBuild
+                ? (false, $"{UpdateService.CurrentAppVersion.ToString(3)} (dev build)")
+                : await CheckSelfAvailabilityAsync();
             (bool replayAvail, string replayVer) = await CheckPluginAvailabilityAsync("obs-replay-slider", "replay-slider.dll",
                 name => name.Contains("windows", StringComparison.OrdinalIgnoreCase) && name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase),
                 () => _settings.LastAppliedReplaySliderReleaseAt, v => _settings.LastAppliedReplaySliderReleaseAt = v,

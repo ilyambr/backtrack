@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Net;
 using System.Net.Sockets;
@@ -26,6 +27,12 @@ public sealed record PluginVersionInfo(string InstalledVersion, bool? Ok);
 
 /// <summary>Result of a remote-triggered check-and-apply for both companion OBS plugins.</summary>
 public sealed record PluginVersionsSnapshot(PluginVersionInfo ReplaySlider, PluginVersionInfo SourceRecord);
+
+/// <summary>One clip file in a paired PC's remote Gallery listing.</summary>
+public sealed record RemoteGalleryFile(string Name, long Size, DateTime Modified);
+
+/// <summary>One folder's worth of a paired PC's ClipsFolder tree -- subfolder names plus clip files, same shape LoadGallery() builds locally.</summary>
+public sealed record RemoteGalleryListing(IReadOnlyList<string> Folders, IReadOnlyList<RemoteGalleryFile> Files);
 
 /// <summary>
 /// Discovery + pairing handshake between two Backtrack installs on the same LAN.
@@ -220,6 +227,23 @@ public sealed class PairingService : IDisposable
                 using JsonDocument doc = JsonDocument.Parse(line);
                 string? type = doc.RootElement.TryGetProperty("type", out JsonElement t) ? t.GetString() : null;
 
+                // get_clip/get_thumbnail are the request types whose response
+                // isn't a single JSON line -- each writes a JSON header line and
+                // then (on success) streams raw bytes directly after it, so they
+                // have to own writing to the connection themselves instead of
+                // going through the uniform "one line in, one line out" dispatch
+                // below.
+                if (type == "get_clip")
+                {
+                    await HandleGetClipAsync(doc.RootElement, client.GetStream());
+                    return;
+                }
+                if (type == "get_thumbnail")
+                {
+                    await HandleGetThumbnailAsync(doc.RootElement, client.GetStream());
+                    return;
+                }
+
                 string response = type switch
                 {
                     "pair_request" => HandlePairRequest(doc.RootElement),
@@ -227,6 +251,7 @@ public sealed class PairingService : IDisposable
                     "get_ramdisk_settings" => HandleGetRamDiskSettings(doc.RootElement),
                     "set_ramdisk_settings" => await HandleSetRamDiskSettingsAsync(doc.RootElement),
                     "check_plugin_updates" => await HandleCheckPluginUpdatesAsync(doc.RootElement),
+                    "list_gallery" => HandleListGallery(doc.RootElement),
                     _ => JsonSerializer.Serialize(new { error = "unknown request type" }),
                 };
 
@@ -353,6 +378,202 @@ public sealed class PairingService : IDisposable
             Encoding.UTF8.GetBytes(secret), Encoding.UTF8.GetBytes(_settings.AuthorizedClientSecret));
     }
 
+    // ---------------------------------------------------- host: remote gallery
+    //
+    // Lets a paired receiver PC browse and play/download this instance's own
+    // ClipsFolder tree remotely -- "Connect to another PC's clips" only ever
+    // actually wired up RAM disk control and plugin updates before this;
+    // Gallery itself was purely local-filesystem regardless of pairing state.
+
+    /// <summary>
+    /// Resolves a client-supplied relative path against this instance's own
+    /// ClipsFolder root, refusing anything that would escape it (../, an
+    /// absolute path, a symlink-style trick via GetFullPath normalization) --
+    /// a paired client is trusted to browse ITS clips, not arbitrary files
+    /// elsewhere on this PC.
+    /// </summary>
+    private bool TryResolveGalleryPath(string relativePath, out string fullPath, out string? error)
+    {
+        string root = Path.GetFullPath(_settings.ClipsFolder).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        string candidate = string.IsNullOrEmpty(relativePath) ? root : Path.GetFullPath(Path.Combine(root, relativePath));
+
+        if (candidate != root && !candidate.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+        {
+            fullPath = "";
+            error = "That path is outside the clips folder.";
+            return false;
+        }
+
+        fullPath = candidate;
+        error = null;
+        return true;
+    }
+
+    /// <summary>
+    /// Set by MainWindow so an authenticated request can reuse this instance's
+    /// own local thumbnail cache (MainWindow.EnsureThumbnailCachedAsync) instead
+    /// of this class duplicating LibVLC frame-grab logic it has no access to --
+    /// takes a resolved local full path, returns the cached .jpg's path (running
+    /// generation first if it wasn't already cached for this PC's own Gallery).
+    /// </summary>
+    public Func<string, Task<string?>>? EnsureThumbnailCachedForRemote { get; set; }
+
+    /// <summary>
+    /// Set by MainWindow so list_gallery can hide obviously-broken/glitched
+    /// clips (e.g. a save triggered right as OBS started) the exact same way
+    /// the local Gallery does -- takes a resolved local full path, returns
+    /// its cached duration in milliseconds if known (null if not yet
+    /// probed, in which case HandleListGallery shows it optimistically
+    /// rather than hiding it on a guess, same as MainWindow.LoadGallery).
+    /// </summary>
+    public Func<string, long?>? GetCachedDurationMsForRemote { get; set; }
+
+    private string HandleListGallery(JsonElement request)
+    {
+        if (!IsAuthorizedClient(request))
+            return JsonSerializer.Serialize(new { error = "Not authorized -- pair with this PC first." });
+
+        string relativePath = request.TryGetProperty("path", out JsonElement p) ? p.GetString() ?? "" : "";
+        if (!TryResolveGalleryPath(relativePath, out string fullPath, out string? pathError))
+            return JsonSerializer.Serialize(new { error = pathError });
+
+        try
+        {
+            if (!Directory.Exists(fullPath))
+                return JsonSerializer.Serialize(new { error = "That folder doesn't exist on this PC." });
+
+            string[] folders = Directory.GetDirectories(fullPath)
+                .Select(d => Path.GetFileName(d) ?? "")
+                .OrderBy(n => n, StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+
+            var files = Directory.EnumerateFiles(fullPath)
+                .Where(f => GalleryFormats.VideoExtensions.Contains(Path.GetExtension(f).ToLowerInvariant()))
+                .Select(f => new FileInfo(f))
+                // Same filter as MainWindow.LoadGallery: hide a clip only once
+                // its duration is actually known and under 2s (a save
+                // triggered right as OBS started, or a buffer barely armed
+                // before saving) -- an unprobed clip (null) shows optimistically
+                // rather than being hidden on a guess.
+                .Where(f => GetCachedDurationMsForRemote?.Invoke(f.FullName) is not < 2000)
+                .OrderByDescending(f => f.LastWriteTimeUtc)
+                .Select(f => new { name = f.Name, size = f.Length, modified = f.LastWriteTimeUtc })
+                .ToArray();
+
+            return JsonSerializer.Serialize(new { folders, files });
+        }
+        catch (Exception ex)
+        {
+            return JsonSerializer.Serialize(new { error = ex.Message });
+        }
+    }
+
+    /// <summary>
+    /// Writes a JSON header line ({"success":true,"size":N} or
+    /// {"success":false,"error":"..."}), then on success streams the raw file
+    /// bytes directly after it -- the one request type in this protocol that
+    /// isn't a single JSON-line response, since a clip can be way too large
+    /// to buffer into one JSON string first.
+    /// </summary>
+    private async Task HandleGetClipAsync(JsonElement request, NetworkStream stream)
+    {
+        if (!IsAuthorizedClient(request))
+        {
+            await WriteLineAsync(stream, JsonSerializer.Serialize(new { success = false, error = "Not authorized -- pair with this PC first." }));
+            return;
+        }
+
+        string relativePath = request.TryGetProperty("path", out JsonElement p) ? p.GetString() ?? "" : "";
+        if (!TryResolveGalleryPath(relativePath, out string fullPath, out string? pathError) ||
+            !GalleryFormats.VideoExtensions.Contains(Path.GetExtension(fullPath).ToLowerInvariant()))
+        {
+            await WriteLineAsync(stream, JsonSerializer.Serialize(new { success = false, error = pathError ?? "Not a clip file." }));
+            return;
+        }
+
+        if (!File.Exists(fullPath))
+        {
+            await WriteLineAsync(stream, JsonSerializer.Serialize(new { success = false, error = "That clip doesn't exist on this PC anymore." }));
+            return;
+        }
+
+        await StreamFileResponseAsync(stream, fullPath);
+    }
+
+    /// <summary>
+    /// Same wire shape as HandleGetClipAsync (JSON header line, then raw bytes
+    /// on success), but for one clip's thumbnail -- reuses this instance's own
+    /// local thumbnail cache (see EnsureThumbnailCachedForRemote) rather than
+    /// duplicating LibVLC frame-grab logic here, so a clip already thumbnailed
+    /// for this PC's own Gallery (see PrewarmGalleryThumbnailsAsync) is usually
+    /// an instant response, not a fresh generation per remote request.
+    /// </summary>
+    private async Task HandleGetThumbnailAsync(JsonElement request, NetworkStream stream)
+    {
+        if (!IsAuthorizedClient(request))
+        {
+            await WriteLineAsync(stream, JsonSerializer.Serialize(new { success = false, error = "Not authorized -- pair with this PC first." }));
+            return;
+        }
+
+        string relativePath = request.TryGetProperty("path", out JsonElement p) ? p.GetString() ?? "" : "";
+        if (!TryResolveGalleryPath(relativePath, out string fullPath, out string? pathError) ||
+            !GalleryFormats.VideoExtensions.Contains(Path.GetExtension(fullPath).ToLowerInvariant()))
+        {
+            await WriteLineAsync(stream, JsonSerializer.Serialize(new { success = false, error = pathError ?? "Not a clip file." }));
+            return;
+        }
+
+        if (!File.Exists(fullPath))
+        {
+            await WriteLineAsync(stream, JsonSerializer.Serialize(new { success = false, error = "That clip doesn't exist on this PC anymore." }));
+            return;
+        }
+
+        if (EnsureThumbnailCachedForRemote is null)
+        {
+            await WriteLineAsync(stream, JsonSerializer.Serialize(new { success = false, error = "Thumbnails aren't available on this PC right now." }));
+            return;
+        }
+
+        string? thumbnailPath;
+        try
+        {
+            thumbnailPath = await EnsureThumbnailCachedForRemote(fullPath);
+        }
+        catch (Exception ex)
+        {
+            await WriteLineAsync(stream, JsonSerializer.Serialize(new { success = false, error = ex.Message }));
+            return;
+        }
+
+        if (thumbnailPath is null || !File.Exists(thumbnailPath))
+        {
+            await WriteLineAsync(stream, JsonSerializer.Serialize(new { success = false, error = "Couldn't generate a thumbnail for that clip." }));
+            return;
+        }
+
+        await StreamFileResponseAsync(stream, thumbnailPath);
+    }
+
+    private static async Task StreamFileResponseAsync(NetworkStream stream, string localPath)
+    {
+        try
+        {
+            using FileStream fileStream = File.OpenRead(localPath);
+            await WriteLineAsync(stream, JsonSerializer.Serialize(new { success = true, size = fileStream.Length }));
+            await fileStream.CopyToAsync(stream);
+            await stream.FlushAsync();
+        }
+        catch (Exception ex)
+        {
+            // Too late to send a clean JSON error once bytes may already be
+            // flowing -- just drop the connection, the client's own read will
+            // come up short of the promised size and treat that as a failure.
+            System.Diagnostics.Debug.WriteLine($"File stream response failed mid-transfer: {ex.Message}");
+        }
+    }
+
     // ---------------------------------------------- client: remote RAM disk control
 
     /// <summary>Fetches the paired transmitter PC's current RAM disk configuration. Null if not paired, unreachable, or denied.</summary>
@@ -410,6 +631,118 @@ public sealed class PairingService : IDisposable
             bool success = doc.RootElement.TryGetProperty("success", out JsonElement s) && s.GetBoolean();
             string? error = doc.RootElement.TryGetProperty("error", out JsonElement er) ? er.GetString() : null;
             return (success, error);
+        }
+        catch (Exception ex)
+        {
+            return (false, ex.Message);
+        }
+    }
+
+    // ---------------------------------------------------- client: remote gallery
+
+    /// <summary>Lists one folder (relative to the paired transmitter PC's own ClipsFolder root; empty = root) of its clips. Null if not paired, unreachable, or denied.</summary>
+    public async Task<RemoteGalleryListing?> ListRemoteGalleryAsync(string relativePath)
+    {
+        if (string.IsNullOrEmpty(_settings.PairedPeerHost) || string.IsNullOrEmpty(_settings.PairedPeerSecret))
+            return null;
+
+        try
+        {
+            using var client = new TcpClient();
+            await client.ConnectAsync(_settings.PairedPeerHost, _settings.PairedPeerPort);
+            string request = JsonSerializer.Serialize(new { type = "list_gallery", secret = _settings.PairedPeerSecret, path = relativePath });
+            await WriteLineAsync(client.GetStream(), request);
+            string? responseLine = await ReadLineAsync(client.GetStream());
+            if (responseLine is null)
+                return null;
+
+            using JsonDocument doc = JsonDocument.Parse(responseLine);
+            if (doc.RootElement.TryGetProperty("error", out _))
+                return null;
+
+            List<string> folders = doc.RootElement.GetProperty("folders").EnumerateArray()
+                .Select(e => e.GetString() ?? "").ToList();
+            List<RemoteGalleryFile> files = doc.RootElement.GetProperty("files").EnumerateArray()
+                .Select(e => new RemoteGalleryFile(
+                    e.GetProperty("name").GetString() ?? "",
+                    e.GetProperty("size").GetInt64(),
+                    e.GetProperty("modified").GetDateTime()))
+                .ToList();
+            return new RemoteGalleryListing(folders, files);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Downloads one clip (relative path, as returned by ListRemoteGalleryAsync)
+    /// from the paired transmitter PC into destPath, overwriting it. Reports
+    /// (0-1) progress as bytes arrive, since a clip can be large enough that a
+    /// silent multi-second wait would otherwise look like Backtrack hung.
+    /// </summary>
+    public Task<(bool Success, string? Error)> DownloadRemoteClipAsync(string relativePath, string destPath, IProgress<double>? progress = null) =>
+        DownloadStreamedFileAsync("get_clip", relativePath, destPath, progress);
+
+    /// <summary>Same idea as DownloadRemoteClipAsync, but for one clip's thumbnail -- see HandleGetThumbnailAsync on the host side.</summary>
+    public Task<(bool Success, string? Error)> DownloadRemoteThumbnailAsync(string relativePath, string destPath) =>
+        DownloadStreamedFileAsync("get_thumbnail", relativePath, destPath);
+
+    private async Task<(bool Success, string? Error)> DownloadStreamedFileAsync(string requestType, string relativePath, string destPath, IProgress<double>? progress = null)
+    {
+        if (string.IsNullOrEmpty(_settings.PairedPeerHost) || string.IsNullOrEmpty(_settings.PairedPeerSecret))
+            return (false, "Not paired with a transmitter PC.");
+
+        try
+        {
+            using var client = new TcpClient();
+            await client.ConnectAsync(_settings.PairedPeerHost, _settings.PairedPeerPort);
+            string request = JsonSerializer.Serialize(new { type = requestType, secret = _settings.PairedPeerSecret, path = relativePath });
+            NetworkStream stream = client.GetStream();
+            await WriteLineAsync(stream, request);
+
+            string? headerLine = await ReadLineAsync(stream);
+            if (headerLine is null)
+                return (false, "No response from the transmitter PC.");
+
+            using JsonDocument doc = JsonDocument.Parse(headerLine);
+            bool success = doc.RootElement.TryGetProperty("success", out JsonElement s) && s.GetBoolean();
+            if (!success)
+                return (false, doc.RootElement.TryGetProperty("error", out JsonElement er) ? er.GetString() : "Download failed.");
+
+            long size = doc.RootElement.GetProperty("size").GetInt64();
+
+            // ReadLineAsync above consumes the header line byte-by-byte up to and
+            // including its trailing '\n' and nothing past it (see its own
+            // implementation), so the stream is positioned exactly at the start
+            // of the raw file bytes that follow -- safe to read directly here.
+            string tempPath = destPath + ".partial";
+            long received = 0;
+            var buffer = new byte[81920];
+            await using (var file = System.IO.File.Create(tempPath))
+            {
+                while (received < size)
+                {
+                    int toRead = (int)Math.Min(buffer.Length, size - received);
+                    int read = await stream.ReadAsync(buffer.AsMemory(0, toRead));
+                    if (read == 0)
+                        break; // connection dropped mid-transfer
+                    await file.WriteAsync(buffer.AsMemory(0, read));
+                    received += read;
+                    progress?.Report(size > 0 ? (double)received / size : 1.0);
+                }
+            }
+
+            if (received != size)
+            {
+                System.IO.File.Delete(tempPath);
+                return (false, "Connection dropped before the whole file arrived.");
+            }
+
+            System.IO.File.Delete(destPath); // ok if it doesn't exist
+            System.IO.File.Move(tempPath, destPath);
+            return (true, null);
         }
         catch (Exception ex)
         {

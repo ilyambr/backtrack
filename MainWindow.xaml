@@ -596,6 +596,16 @@
                     </StackPanel>
                 </Grid>
 
+                <!-- Only shown at all once paired with a transmitter PC (see
+                     RefreshGallerySourceTabsVisibility); switches LoadGallery
+                     between this PC's own ClipsFolder and the paired PC's, over
+                     the pairing connection (see PairingService's list_gallery/
+                     get_clip). -->
+                <StackPanel x:Name="GallerySourceTabs" DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,12" Visibility="Collapsed">
+                    <Button x:Name="GalleryLocalTabButton" Content="This PC" Style="{StaticResource FlatButton}" Margin="0,0,8,0" Click="GalleryLocalTab_Click"/>
+                    <Button x:Name="GalleryRemoteTabButton" Content="Remote" Style="{StaticResource FlatButton}" Click="GalleryRemoteTab_Click"/>
+                </StackPanel>
+
                 <!-- Folder breadcrumb: collapsed at the clips-folder root, shown once
                      you've navigated into a subfolder via a folder tile below. -->
                 <StackPanel x:Name="GalleryPathBar" DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,12" Visibility="Collapsed">

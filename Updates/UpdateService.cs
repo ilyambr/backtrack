@@ -333,7 +333,26 @@ public sealed class UpdateService
                  timeout /t 1 /nobreak >NUL
                  goto wait
              )
-             robocopy "{extractDir}" "{installDir}" /E /IS /IT
+             rem Bounded retries -- robocopy defaults to up to 1,000,000 retries
+             rem at 30s apart (effectively unbounded) if any target file is
+             rem briefly locked (e.g. antivirus scanning the freshly-extracted
+             rem files), which used to leave Backtrack closed and not coming
+             rem back for a very long time with zero feedback. /R:5 /W:2 caps
+             rem that to roughly 10 extra seconds.
+             robocopy "{extractDir}" "{installDir}" /E /IS /IT /R:5 /W:2
+             if %errorlevel% GEQ 8 (
+                 rem Exit codes 0-7 are robocopy's various shades of success;
+                 rem 8+ is a real failure. Don't delete the extracted files or
+                 rem this script on failure -- keep them around for a human to
+                 rem inspect/retry instead of silently discarding the only
+                 rem evidence something went wrong. The old install should
+                 rem still be intact and launchable either way, since a
+                 rem failed copy means it was never (fully) overwritten;
+                 rem relaunch it plain, with no --updated= flag, so it doesn't
+                 rem claim an update that didn't actually apply.
+                 start "" "{exePath}"
+                 exit /b 1
+             )
              del "{zipPath}"
              rmdir /S /Q "{extractDir}"
              start "" "{exePath}" --updated={version}
