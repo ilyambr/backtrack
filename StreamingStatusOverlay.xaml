@@ -24,7 +24,7 @@
       shown/hidden in lockstep with the HUD's own open/close state, not an
       always-on fixture like Status/Toast.
     -->
-    <Border Background="#101113" BorderBrush="#33FFFFFF" BorderThickness="1" CornerRadius="4" Padding="10,7">
+    <Border Background="#101113" BorderBrush="#1FFFFFFF" BorderThickness="1" Padding="10,7">
         <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
             <Ellipse Width="8" Height="8" Fill="#A855F7" VerticalAlignment="Center" Margin="0,0,7,0"/>
             <TextBlock Text="You are currently livestreaming." FontSize="11.5" FontWeight="Bold"
