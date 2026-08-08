@@ -418,6 +418,16 @@ public sealed class PairingService : IDisposable
     /// </summary>
     public Func<string, Task<string?>>? EnsureThumbnailCachedForRemote { get; set; }
 
+    /// <summary>
+    /// Set by MainWindow so list_gallery can hide obviously-broken/glitched
+    /// clips (e.g. a save triggered right as OBS started) the exact same way
+    /// the local Gallery does -- takes a resolved local full path, returns
+    /// its cached duration in milliseconds if known (null if not yet
+    /// probed, in which case HandleListGallery shows it optimistically
+    /// rather than hiding it on a guess, same as MainWindow.LoadGallery).
+    /// </summary>
+    public Func<string, long?>? GetCachedDurationMsForRemote { get; set; }
+
     private string HandleListGallery(JsonElement request)
     {
         if (!IsAuthorizedClient(request))
@@ -440,6 +450,12 @@ public sealed class PairingService : IDisposable
             var files = Directory.EnumerateFiles(fullPath)
                 .Where(f => GalleryFormats.VideoExtensions.Contains(Path.GetExtension(f).ToLowerInvariant()))
                 .Select(f => new FileInfo(f))
+                // Same filter as MainWindow.LoadGallery: hide a clip only once
+                // its duration is actually known and under 2s (a save
+                // triggered right as OBS started, or a buffer barely armed
+                // before saving) -- an unprobed clip (null) shows optimistically
+                // rather than being hidden on a guess.
+                .Where(f => GetCachedDurationMsForRemote?.Invoke(f.FullName) is not < 2000)
                 .OrderByDescending(f => f.LastWriteTimeUtc)
                 .Select(f => new { name = f.Name, size = f.Length, modified = f.LastWriteTimeUtc })
                 .ToArray();

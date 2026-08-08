@@ -252,6 +252,9 @@ public partial class MainWindow : Window
         // own thumbnail cache instead of PairingService duplicating LibVLC
         // frame-grab logic it has no access to -- see EnsureThumbnailCachedAsync.
         _pairing.EnsureThumbnailCachedForRemote = async fullPath => await EnsureThumbnailCachedAsync(new FileInfo(fullPath));
+        // So list_gallery hides obviously-broken/glitched clips the same way
+        // the local Gallery does -- see TryGetCachedDurationMs.
+        _pairing.GetCachedDurationMsForRemote = fullPath => TryGetCachedDurationMs(new FileInfo(fullPath));
 
         // Same reasoning as RAM disk above -- plugin version checks/updates read
         // and write C:\Program Files\obs-studio on THIS machine (see
