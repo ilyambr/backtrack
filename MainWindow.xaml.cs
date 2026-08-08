@@ -3691,6 +3691,22 @@ public partial class MainWindow : Window
         ShowScreen(Screen.Player);
         PlayerTitle.Text = Path.GetFileNameWithoutExtension(file.Name);
 
+        // ShowScreen's own "IsOpen = screen == Screen.Player" is a no-op when
+        // Player was already the active screen (e.g. reopening a different
+        // clip without going back to Gallery first) -- WPF's Placement=
+        // "Relative" Popup only reliably recomputes its position on an actual
+        // false->true IsOpen transition, not while it stays open across a
+        // content change underneath it, which is exactly the "works once,
+        // then stuck at a stale position for every clip after" pattern this
+        // was causing. Force a real close+reopen every time instead. Deferred
+        // to DispatcherPriority.Loaded (after this call's own layout pass,
+        // not immediately) since PlayerVideoView's ActualWidth/position right
+        // here, synchronously after ShowScreen just changed Visibility, isn't
+        // necessarily settled yet -- reopening too early would just cache
+        // another stale position instead of fixing anything.
+        PlayerOverlayPopup.IsOpen = false;
+        Dispatcher.BeginInvoke(new Action(() => PlayerOverlayPopup.IsOpen = true), DispatcherPriority.Loaded);
+
         StatSize.Text = $"{file.Length / 1024.0 / 1024.0:0.#} MB";
         StatDate.Text = $"{file.LastWriteTime:MMM d, yyyy h:mm tt}";
         StatResolution.Text = "";
