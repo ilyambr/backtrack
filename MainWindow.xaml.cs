@@ -26,7 +26,7 @@ namespace Backtrack;
 
 public partial class MainWindow : Window
 {
-    private enum Screen { Idle, SaveReplay, Gallery, Player, Settings }
+    private enum Screen { Idle, SaveReplay, StartRecord, Gallery, Player, Settings }
 
     private const double CompactWidth = 460;
     private const double WideWidth = 680;
@@ -61,6 +61,11 @@ public partial class MainWindow : Window
     // (rendered from a separate, independently-timed call) kept showing green.
     private bool _lastKnownAnyRowActive;
     private bool _lastKnownAnyRowError;
+    private int _lastKnownActiveRecordRowCount;
+    // Set the moment a filter-only recording (main not active) is first
+    // noticed, cleared once nothing's recording -- see RefreshStatusAsync's
+    // own comment on why this is an approximation, not a true start time.
+    private DateTime? _recordRowActiveSinceUtc;
 
     private readonly DispatcherTimer _pollTimer;
     private readonly DispatcherTimer _micTimer;
@@ -75,7 +80,7 @@ public partial class MainWindow : Window
     private readonly DisclaimerOverlay _disclaimer;
 
     // Set when an update was found but deferred because OBS is actively
-    // recording/streaming/replaying (see ObsService.IsAnyOutputActiveAsync).
+    // recording/streaming (see ObsService.IsRecordingOrStreamingAsync).
     // Only one tracked at a time -- good enough in practice, since hitting
     // this at all is already the rare case. RefreshUpdatePromptVisibility
     // shows/hides _updatePrompt to match both "is there one pending" and
@@ -180,7 +185,16 @@ public partial class MainWindow : Window
                 RenderDiscoveredDevices();
         });
 
-        _scrim.Dismissed += () => Dispatcher.BeginInvoke(CloseOverlay);
+        // CloseOverlay has an optional parameter (preserveScreen) -- a bare
+        // "CloseOverlay" method-group reference here used to convert cleanly
+        // to a zero-arg delegate back when the method had no parameters, but
+        // a default value only applies at an explicit call site, not when
+        // the method is captured as a stored delegate like this. The
+        // dispatcher later invokes that stored delegate expecting zero args,
+        // but the method genuinely takes one at the IL level -- a real
+        // TargetParameterCountException crash, not hypothetical. The
+        // explicit lambda forces a proper zero-arg closure instead.
+        _scrim.Dismissed += () => Dispatcher.BeginInvoke(() => CloseOverlay());
         KeyDown += MainWindow_KeyDown;
 
         string url;
@@ -623,6 +637,27 @@ public partial class MainWindow : Window
     /// </summary>
     private async Task CheckForUpdatesAsync()
     {
+        // _obs.Start() (constructor) kicks off connecting to OBS in the
+        // background with nothing awaiting it, and this method is called
+        // right after in that same constructor with no synchronization
+        // between the two. CheckAndApplyPluginUpdateAsync's own safety check
+        // (IsRecordingOrStreamingAsync) treats "not connected to OBS yet" the
+        // same as "confirmed nothing is active" -- correct if OBS genuinely
+        // isn't running, but wrong if OBS IS running and actively
+        // recording/streaming RIGHT NOW and this connection attempt just
+        // hasn't finished its handshake yet. In practice the
+        // GitHub API round-trip inside CheckAndApplyPluginUpdateAsync usually
+        // gives the local OBS handshake enough of a head start to land first
+        // anyway, but "usually" isn't a real guarantee -- and the UI visibly
+        // shows "Disconnected" for close to a second on a normal launch,
+        // proving this race window is real, not theoretical. Give the
+        // connection attempt a bounded chance to actually resolve (success or
+        // "OBS isn't there") before trusting that check with something as
+        // disruptive as closing OBS to install an update.
+        var obsConnectDeadline = DateTime.UtcNow + TimeSpan.FromSeconds(3);
+        while (!_obs.IsConnected && DateTime.UtcNow < obsConnectDeadline)
+            await Task.Delay(100);
+
         await CheckAndApplyPluginUpdateAsync("obs-replay-slider", "Replay Slider", "replay-slider.dll", ReplaySliderStatusDot, ReplaySliderVersionText,
             name => name.Contains("windows", StringComparison.OrdinalIgnoreCase) && name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase),
             () => _settings.LastAppliedReplaySliderReleaseAt, v => _settings.LastAppliedReplaySliderReleaseAt = v,
@@ -800,9 +835,9 @@ public partial class MainWindow : Window
             // -- never worth it mid-recording/stream/replay without asking
             // first. Deferred to the bottom-left prompt instead, so the user
             // can force it through right now if they'd rather do that.
-            if (await _obs.IsAnyOutputActiveAsync())
+            if (await _obs.IsRecordingOrStreamingAsync())
             {
-                SetUpdateStatus(dot, versionText, $"{installed.ToString(3)} (update waiting for OBS to be idle)", ok: null);
+                SetUpdateStatus(dot, versionText, $"{installed.ToString(3)} (waiting for OBS)", ok: null);
                 SetPendingUpdate(displayName, () => _ = ApplyAsync());
                 return new PluginVersionInfo(installed.ToString(3), null);
             }
@@ -863,9 +898,9 @@ public partial class MainWindow : Window
             // actively relying on this instance's hotkey/tray/overlay without
             // asking first. Deferred to the bottom-left prompt instead, so the
             // user can force it through right now if they'd rather do that.
-            if (await _obs.IsAnyOutputActiveAsync())
+            if (await _obs.IsRecordingOrStreamingAsync())
             {
-                SetUpdateStatus(BacktrackStatusDot, BacktrackVersionText, $"{installed.ToString(3)} (update waiting for OBS to be idle)", ok: null);
+                SetUpdateStatus(BacktrackStatusDot, BacktrackVersionText, $"{installed.ToString(3)} (waiting for OBS)", ok: null);
                 SetPendingUpdate("Backtrack", () => _ = ApplyAsync());
                 return;
             }
@@ -1313,9 +1348,29 @@ public partial class MainWindow : Window
         });
     }
 
-    private void CloseOverlay()
+    /// <param name="preserveScreen">
+    /// Skip the usual reset-to-Idle (even when nothing critical is in
+    /// progress) and leave whatever screen/panel is currently showing
+    /// exactly as it is -- used by RevealInExplorerAndClose and
+    /// PlayerFolder_Click so reopening the overlay lands back on the same
+    /// screen (and, for Gallery, the same subfolder) instead of bouncing to
+    /// Idle. The whole point of that action is a quick trip out to Explorer
+    /// and back, not "I'm done with the overlay for now." Callers must
+    /// already have switched away from Player before passing true -- Player
+    /// doesn't survive a hide/show round trip (see PlayerFolder_Click).
+    /// </param>
+    private void CloseOverlay(bool preserveScreen = false)
     {
-        if (!IsCriticalOperationActive())
+        if (preserveScreen)
+        {
+            // Deliberately don't touch ShowScreen/_lastScreen at all here --
+            // Gallery's _currentGalleryFolder and Player's _currentPlayerFile
+            // are untouched by anything in this path, so leaving the current
+            // panel as-is is sufficient; ToggleVisible's reopen path doesn't
+            // call ShowScreen either, so whatever's still active just
+            // reappears exactly as it was.
+        }
+        else if (!IsCriticalOperationActive())
         {
             _lastScreen = Screen.Idle;
             ShowScreen(Screen.Idle);
@@ -1332,6 +1387,16 @@ public partial class MainWindow : Window
         _toastOverlay.UpdatePosition(false);
         _updatePrompt.HidePrompt();
         RefreshOverlayLogVisibilityAndMode();
+    }
+
+    private static void RevealInExplorer(string filePath) =>
+        Process.Start(new ProcessStartInfo("explorer.exe", $"/select,\"{filePath}\"") { UseShellExecute = true });
+
+    private void RevealInExplorerAndClose(string filePath)
+    {
+        RevealInExplorer(filePath);
+        StopPlayerPlayback();
+        CloseOverlay(preserveScreen: true);
     }
 
     private void MainWindow_KeyDown(object sender, KeyEventArgs e)
@@ -1403,22 +1468,51 @@ public partial class MainWindow : Window
     {
         Screen.Idle => IdlePanel,
         Screen.SaveReplay => SaveReplayPanel,
+        Screen.StartRecord => StartRecordPanel,
         Screen.Gallery => GalleryPanel,
         Screen.Player => PlayerPanel,
         Screen.Settings => SettingsPanel,
         _ => IdlePanel,
     };
 
-    /// <summary>Fade + slight slide-up on whichever panel just became active, purely cosmetic (BeginAnimation, not a blocking wait) so it doesn't change ShowScreen's own synchronous behavior -- every caller that populates content right after (LoadGallery, etc.) still runs immediately, unaffected.</summary>
+    /// <summary>
+    /// Fade + a subtle scale-in on whichever panel just became active, purely
+    /// cosmetic (BeginAnimation, not a blocking wait) so it doesn't change
+    /// ShowScreen's own synchronous behavior -- every caller that populates
+    /// content right after (LoadGallery, etc.) still runs immediately,
+    /// unaffected.
+    ///
+    /// Deliberately not a crossfade -- two different attempts at keeping the
+    /// outgoing panel visible-and-fading (instead of collapsing it
+    /// immediately, like this one does) both looked worse in practice than
+    /// the old panel just disappearing outright: fixing the window resize
+    /// timing traded a content-clipping glitch for an empty-dead-space
+    /// glitch instead. Collapsing the old panel synchronously sidesteps that
+    /// whole class of problem.
+    ///
+    /// No slide either -- an earlier version added one and it read as
+    /// awkward: sliding an entire panel's worth of tiles/text/buttons as one
+    /// block draws the eye to everything moving at once and looks "swimmy"
+    /// rather than smooth. CubicEase (no overshoot) for opacity, since
+    /// overshooting a fade looks like flicker; BackEase's slight overshoot-
+    /// then-settle on the scale specifically is what reads as "alive"
+    /// rather than mechanical.
+    /// </summary>
     private static void AnimatePanelIn(FrameworkElement panel)
     {
-        var slide = new TranslateTransform(0, 10);
-        panel.RenderTransform = slide;
+        var duration = TimeSpan.FromMilliseconds(220);
+        var scale = new ScaleTransform(0.96, 0.96);
+        panel.RenderTransform = scale;
+        panel.RenderTransformOrigin = new Point(0.5, 0.5);
         panel.Opacity = 0;
 
-        var ease = new QuadraticEase { EasingMode = EasingMode.EaseOut };
-        panel.BeginAnimation(OpacityProperty, new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(160)) { EasingFunction = ease });
-        slide.BeginAnimation(TranslateTransform.YProperty, new DoubleAnimation(10, 0, TimeSpan.FromMilliseconds(160)) { EasingFunction = ease });
+        var fadeEase = new CubicEase { EasingMode = EasingMode.EaseOut };
+        // Small amplitude -- enough to feel like a real settle, not a bounce.
+        var settleEase = new BackEase { EasingMode = EasingMode.EaseOut, Amplitude = 0.35 };
+
+        panel.BeginAnimation(OpacityProperty, new DoubleAnimation(0, 1, duration) { EasingFunction = fadeEase });
+        scale.BeginAnimation(ScaleTransform.ScaleXProperty, new DoubleAnimation(0.96, 1, duration) { EasingFunction = settleEase });
+        scale.BeginAnimation(ScaleTransform.ScaleYProperty, new DoubleAnimation(0.96, 1, duration) { EasingFunction = settleEase });
     }
 
     private void ShowScreen(Screen screen)
@@ -1428,6 +1522,7 @@ public partial class MainWindow : Window
 
         IdlePanel.Visibility = screen == Screen.Idle ? Visibility.Visible : Visibility.Collapsed;
         SaveReplayPanel.Visibility = screen == Screen.SaveReplay ? Visibility.Visible : Visibility.Collapsed;
+        StartRecordPanel.Visibility = screen == Screen.StartRecord ? Visibility.Visible : Visibility.Collapsed;
         GalleryPanel.Visibility = screen == Screen.Gallery ? Visibility.Visible : Visibility.Collapsed;
         PlayerPanel.Visibility = screen == Screen.Player ? Visibility.Visible : Visibility.Collapsed;
         SettingsPanel.Visibility = screen == Screen.Settings ? Visibility.Visible : Visibility.Collapsed;
@@ -1476,7 +1571,7 @@ public partial class MainWindow : Window
         if (screen != Screen.Player)
             StopPlayerPlayback();
 
-        if (screen is Screen.Idle or Screen.SaveReplay or Screen.Gallery or Screen.Settings)
+        if (screen is Screen.Idle or Screen.SaveReplay or Screen.StartRecord or Screen.Gallery or Screen.Settings)
             _lastScreen = screen;
 
         IntPtr toastHwnd = new WindowInteropHelper(_toastOverlay).Handle;
@@ -1494,8 +1589,18 @@ public partial class MainWindow : Window
     /// absurd on huge monitors); since the window uses SizeToContent="Height",
     /// the actual on-screen height is driven by content, not a Window.Height
     /// set here.
+    ///
+    /// The cap used to be 1500 -- right around what 78% of a 1080p screen's
+    /// width already comes out to (1920 * 0.78 ~= 1498), so it only ever
+    /// bound 1080p in practice. A 1440p screen (2560 * 0.78 ~= 1998) hit that
+    /// exact same 1500 cap instead of actually getting bigger, so Gallery/
+    /// Player looked identically sized on both -- not "capped for huge
+    /// monitors" like the comment always meant, just silently capped for
+    /// everyone above 1080p. Raised to 2000 so 1440p gets its real,
+    /// essentially-uncapped size and only screens meaningfully bigger than
+    /// that (4K and up) actually hit the ceiling.
     /// </summary>
-    private double BigWidth() => Math.Min(TargetScreenBounds.Width * 0.78, 1500);
+    private double BigWidth() => Math.Min(TargetScreenBounds.Width * 0.78, 2000);
 
     private void ApplyBigScreenSize()
     {
@@ -1573,16 +1678,62 @@ public partial class MainWindow : Window
         try
         {
             RecordStatus recStatus = await _obs.GetRecordStatusAsync();
-            // Label stays "Stop Recording" even while paused -- clicking it calls
-            // ToggleRecordAsync, which only ever sends Start/StopRecord (there's no
-            // pause/resume button here), so "Resume Recording" would be a lie about
-            // what a click actually does.
-            RecordLabel.Text = recStatus.Active ? "Stop Recording" : "Start Recording";
-            SetRecordIcon(recStatus.Active);
-            RecordStatusText.Text = !recStatus.Active ? "--:--"
-                : recStatus.Paused ? $"{FormatDuration(recStatus.DurationMs)} (Paused)"
-                : FormatDuration(recStatus.DurationMs);
-            _statusOverlay.SetRecording(recStatus.Active);
+            // Not just OBS's single global recording: a Source Record filter can be
+            // recording independently of it (started from its own row in the Start
+            // Recording menu, or from ControlPanelDock's own button in OBS), so the
+            // Idle tile must reflect that too -- otherwise it can sit idle while a
+            // filter is visibly recording, same backwards-looking problem the Save
+            // Replay pill's own row aggregation (right below) already solves for
+            // buffers. The count (not just whether any are active) is what
+            // RecordTile_Click itself uses to decide direct-stop vs. menu, so the
+            // label below mirrors that exact logic instead of guessing separately.
+            int activeRecordRowCount;
+            try
+            {
+                List<RecordRow> recordRows = await _obs.ListRecordRowsAsync();
+                activeRecordRowCount = recordRows.Count(r => r.Status == RecordStatusRecording);
+                _lastKnownActiveRecordRowCount = activeRecordRowCount;
+            }
+            catch
+            {
+                activeRecordRowCount = _lastKnownActiveRecordRowCount;
+            }
+            bool anyRecordRowActive = activeRecordRowCount > 0;
+            bool recordingAnything = recStatus.Active || anyRecordRowActive;
+
+            // "Stop Recording" only when a click would actually stop something
+            // directly (see RecordTile_Click) -- exactly one thing recording total,
+            // main or a single filter row. Nothing recording, or more than one
+            // thing recording at once (ambiguous which to stop), both fall back to
+            // the menu instead, so "Start Recording" stays accurate as what a click
+            // actually does in either of those cases too.
+            bool singleActiveTarget = (recStatus.Active && activeRecordRowCount == 0) || (!recStatus.Active && activeRecordRowCount == 1);
+            RecordLabel.Text = singleActiveTarget ? "Stop Recording" : "Start Recording";
+            SetRecordIcon(recordingAnything);
+
+            // No per-filter duration is available from the bridge -- when only a
+            // filter (not the main recording) is active, this instead times "since
+            // Backtrack first noticed it recording", which can undercount if it was
+            // already running before Backtrack opened or this poll caught it (e.g.
+            // started from ControlPanelDock's own button in OBS). recStatus's own
+            // duration above is exact -- obs-websocket tracks the real start time
+            // for the main output specifically.
+            if (recStatus.Active)
+            {
+                _recordRowActiveSinceUtc = null;
+                RecordStatusText.Text = recStatus.Paused ? $"{FormatDuration(recStatus.DurationMs)} (Paused)" : FormatDuration(recStatus.DurationMs);
+            }
+            else if (anyRecordRowActive)
+            {
+                _recordRowActiveSinceUtc ??= DateTime.UtcNow;
+                RecordStatusText.Text = FormatDuration((long)(DateTime.UtcNow - _recordRowActiveSinceUtc.Value).TotalMilliseconds);
+            }
+            else
+            {
+                _recordRowActiveSinceUtc = null;
+                RecordStatusText.Text = "--:--";
+            }
+            _statusOverlay.SetRecording(recordingAnything);
 
             // Not just OBS's single global replay-buffer flag: obs-replay-slider (and
             // obs-source-record, exposed through the same bridge) can each have their
@@ -1644,12 +1795,47 @@ public partial class MainWindow : Window
 
     private async void RecordTile_Click(object sender, RoutedEventArgs e)
     {
+        // Starting (nothing recording yet) opens the same kind of menu Save
+        // Replay does, since obs-replay-slider's Control Panel dock means
+        // there can be several independent per-source recordings to choose
+        // from, not just the one global one. Stopping is a direct toggle
+        // instead ONLY when there's exactly one thing recording right now
+        // (main, or a single filter row) -- there's nothing to choose between
+        // in that case. If more than one thing is recording at once, it's
+        // ambiguous which this click should stop, so that also falls back to
+        // the menu rather than guessing.
         try
         {
             if (!_obs.IsConnected)
                 return;
-            await _obs.ToggleRecordAsync();
-            await RefreshStatusAsync();
+
+            RecordStatus mainStatus = await _obs.GetRecordStatusAsync();
+            List<RecordRow> activeRows = (await _obs.ListRecordRowsAsync()).Where(r => r.Status == RecordStatusRecording).ToList();
+
+            if (mainStatus.Active && activeRows.Count == 0)
+            {
+                await _obs.StopMainRecordAsync();
+                await RefreshStatusAsync();
+            }
+            else if (!mainStatus.Active && activeRows.Count == 1)
+            {
+                RecordRow row = activeRows[0];
+                await _obs.StopRecordRowAsync(row.Key);
+                // No RecordStateChanged-style event exists for a filter's own
+                // recording (that's specific to OBS's own main output), so this
+                // is the only place a stop notification for it can come from.
+                string? path = !string.IsNullOrEmpty(row.Path) ? row.Path
+                    : (!string.IsNullOrEmpty(row.SourceName) && !string.IsNullOrEmpty(row.FilterName)
+                        ? await _obs.GetRecordRowDestinationFolderAsync(row.SourceName, row.FilterName)
+                        : null);
+                _toastOverlay.ShowRecording(started: false, path);
+                await RefreshStatusAsync();
+            }
+            else
+            {
+                ShowScreen(Screen.StartRecord);
+                _ = LoadRecordRowsAsync();
+            }
         }
         catch (Exception ex)
         {
@@ -1717,6 +1903,7 @@ public partial class MainWindow : Window
         ShowScreen(Screen.Settings);
         LoadSettingsUi();
         _ = LoadBufferVisibilityUi();
+        _ = LoadRecordFolderUi();
         RefreshRamDiskRemoteGating();
         RefreshPluginStatusRemoteGating();
     }
@@ -1818,6 +2005,128 @@ public partial class MainWindow : Window
             BufferVisibilityPanel.Children.Add(BuildBufferVisibilityRow(row));
     }
 
+    private async Task LoadRecordFolderUi()
+    {
+        RecordFolderPanel.Children.Clear();
+
+        if (!_obs.IsConnected)
+        {
+            AddInfoLine(RecordFolderPanel, "Not connected to OBS.");
+            return;
+        }
+
+        List<RecordRow> rows;
+        try
+        {
+            rows = await _obs.ListRecordRowsAsync();
+        }
+        catch (Exception ex)
+        {
+            AddInfoLine(RecordFolderPanel, $"Could not reach the Replay Slider bridge: {ex.Message}");
+            return;
+        }
+
+        if (rows.Count == 0)
+        {
+            AddInfoLine(RecordFolderPanel, "No Source Record filters found.");
+            return;
+        }
+
+        foreach (RecordRow row in rows)
+        {
+            if (!string.IsNullOrEmpty(row.SourceName) && !string.IsNullOrEmpty(row.FilterName))
+            {
+                RecordFolderPanel.Children.Add(await BuildRecordFolderRowAsync(row));
+            }
+        }
+    }
+
+    private async Task<Border> BuildRecordFolderRowAsync(RecordRow row)
+    {
+        string label = row.Label;
+        string? currentFolder = await _obs.GetRecordRowDestinationFolderAsync(row.SourceName, row.FilterName);
+
+        var toggle = new ToggleButton { Style = (Style)FindResource("AppToggle"), VerticalAlignment = VerticalAlignment.Center };
+        toggle.IsChecked = !_settings.HiddenBufferLabels.Contains(label);
+
+        var name = new TextBlock { Text = label, FontSize = 13, FontWeight = FontWeights.Bold, Foreground = (Brush)FindResource("Text0"), VerticalAlignment = VerticalAlignment.Center };
+
+        var topGrid = new Grid();
+        topGrid.ColumnDefinitions.Add(new ColumnDefinition());
+        topGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        Grid.SetColumn(name, 0);
+        Grid.SetColumn(toggle, 1);
+        topGrid.Children.Add(name);
+        topGrid.Children.Add(toggle);
+
+        var folderLabel = new TextBlock
+        {
+            Text = DescribeRecordRowDestDir(currentFolder),
+            FontSize = 11,
+            Foreground = (Brush)FindResource("Text2"),
+            VerticalAlignment = VerticalAlignment.Center,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+        };
+        var folderButton = BuildFolderIconButton(async (_, _) => await PickRecordRowFolderAsync(row.SourceName, row.FilterName, folderLabel));
+
+        var bottomGrid = new Grid
+        {
+            Margin = new Thickness(0, 8, 0, 0),
+            Visibility = toggle.IsChecked == true ? Visibility.Visible : Visibility.Collapsed,
+        };
+        bottomGrid.ColumnDefinitions.Add(new ColumnDefinition());
+        bottomGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        Grid.SetColumn(folderLabel, 0);
+        Grid.SetColumn(folderButton, 1);
+        bottomGrid.Children.Add(folderLabel);
+        bottomGrid.Children.Add(folderButton);
+
+        toggle.Click += (_, _) =>
+        {
+            if (toggle.IsChecked == true)
+                _settings.HiddenBufferLabels.Remove(label);
+            else
+                _settings.HiddenBufferLabels.Add(label);
+            _settings.Save();
+            bottomGrid.Visibility = toggle.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
+        };
+
+        var container = new StackPanel();
+        container.Children.Add(topGrid);
+        container.Children.Add(bottomGrid);
+
+        return new Border { Style = (Style)FindResource("SettingsRow"), Child = container };
+    }
+
+    private string DescribeRecordRowDestDir(string? destDir)
+    {
+        if (string.IsNullOrEmpty(destDir))
+            return "Not set -- recordings stay wherever this filter writes them";
+        return IsWithinClipsFolder(destDir, out string relative)
+            ? (relative.Length == 0 ? "Main clips folder" : relative)
+            : destDir;
+    }
+
+    private async Task PickRecordRowFolderAsync(string sourceName, string filterName, TextBlock folderLabel)
+    {
+        try
+        {
+            Directory.CreateDirectory(_settings.ClipsFolder);
+            var dialog = new OpenFolderDialog { InitialDirectory = _settings.ClipsFolder };
+            if (dialog.ShowDialog(this) != true)
+                return;
+
+            string selectedFolder = dialog.FolderName;
+            await _obs.SetRecordRowDestinationFolderAsync(sourceName, filterName, selectedFolder);
+            folderLabel.Text = DescribeRecordRowDestDir(selectedFolder);
+            AppLog.Write($"Set recording folder for '{sourceName} - {filterName}' to '{selectedFolder}'");
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, $"Couldn't update recording folder: {ex.Message}", "Backtrack");
+        }
+    }
+
     private Border BuildBufferVisibilityRow(ReplayRow row)
     {
         string label = row.Label;
@@ -1841,8 +2150,7 @@ public partial class MainWindow : Window
             VerticalAlignment = VerticalAlignment.Center,
             TextTrimming = TextTrimming.CharacterEllipsis,
         };
-        var folderButton = new Button { Content = "Folder", Style = (Style)FindResource("FlatButton"), VerticalAlignment = VerticalAlignment.Center };
-        folderButton.Click += async (_, _) => await PickBufferDestFolderAsync(row.Key, folderLabel);
+        var folderButton = BuildFolderIconButton(async (_, _) => await PickBufferDestFolderAsync(row.Key, folderLabel));
 
         var bottomGrid = new Grid
         {
@@ -1876,6 +2184,34 @@ public partial class MainWindow : Window
         return new Border { Style = (Style)FindResource("SettingsRow"), Child = container };
     }
 
+    private Button BuildFolderIconButton(RoutedEventHandler onClick)
+    {
+        var iconPath = new System.Windows.Shapes.Path
+        {
+            Data = Geometry.Parse("M10 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.89 2 1.99 2H20c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z"),
+            Fill = (Brush)FindResource("Text1"),
+            Width = 15,
+            Height = 15,
+            Stretch = Stretch.Uniform,
+            VerticalAlignment = VerticalAlignment.Center,
+            HorizontalAlignment = HorizontalAlignment.Center
+        };
+
+        var button = new Button
+        {
+            Content = iconPath,
+            Style = (Style)FindResource("BareIconButton"),
+            Padding = new Thickness(4),
+            VerticalAlignment = VerticalAlignment.Center,
+            ToolTip = "Choose destination folder"
+        };
+
+        button.MouseEnter += (_, _) => iconPath.Fill = (Brush)FindResource("Text0");
+        button.MouseLeave += (_, _) => iconPath.Fill = (Brush)FindResource("Text1");
+
+        button.Click += onClick;
+        return button;
+    }
     private string DescribeRowDestDir(string destDir)
     {
         if (string.IsNullOrEmpty(destDir))
@@ -1991,6 +2327,169 @@ public partial class MainWindow : Window
         return button;
     }
 
+    // ------------------------------------------------------------ start recording
+
+    // Mirrors obs-replay-slider's ControlPanelDock status-int convention (see
+    // its own control-panel-dock.cpp) -- kept in sync by hand since there's no
+    // shared header across the process boundary, same as several other
+    // setting-name/value conventions this file already relies on matching.
+    private const int RecordStatusInactive = 0;  // underlying source isn't actively capturing anything
+    private const int RecordStatusStopped = 1;   // capturing fine, just not recording
+    private const int RecordStatusRecording = 2;
+    private const int RecordStatusError = 3;     // was recording, the output stopped with a failure
+
+    /// <summary>
+    /// "Main" (OBS's own single global recording) plus one row per Source
+    /// Record filter obs-replay-slider's Control Panel dock is tracking --
+    /// same shape as LoadReplayRowsAsync, but each row is a start/stop toggle
+    /// instead of a one-shot save.
+    /// </summary>
+    private async Task LoadRecordRowsAsync()
+    {
+        RecRowsPanel.Children.Clear();
+
+        if (!_obs.IsConnected)
+        {
+            AddInfoLine(RecRowsPanel, !_serverEnabledAtStartup
+                ? "OBS's WebSocket server is disabled -- enable it in OBS: Tools > WebSocket Server Settings."
+                : "Not connected to OBS.");
+            return;
+        }
+
+        // Always shown first, even if no Source Record filters exist yet --
+        // this is the same recording the Idle tile's own icon reflects. Only
+        // ever Recording/Stopped -- OBS's plain GetRecordStatus has no
+        // equivalent of a filter's "underlying source inactive" or "error"
+        // signal for the whole scene.
+        try
+        {
+            RecordStatus mainStatus = await _obs.GetRecordStatusAsync();
+            RecRowsPanel.Children.Add(BuildRecordRowButton("Full Scene", mainStatus.Active ? RecordStatusRecording : RecordStatusStopped,
+                start: _obs.StartMainRecordAsync, stop: _obs.StopMainRecordAsync, showToast: false));
+        }
+        catch (Exception ex)
+        {
+            AddInfoLine(RecRowsPanel, $"Couldn't read OBS's recording status: {ex.Message}");
+        }
+
+        List<RecordRow> rows;
+        try
+        {
+            rows = await _obs.ListRecordRowsAsync();
+        }
+        catch (Exception ex)
+        {
+            AddInfoLine(RecRowsPanel, $"Could not reach the Replay Slider bridge: {ex.Message}");
+            AddInfoLine(RecRowsPanel, "Needs the patched obs-replay-slider build (see vendor/obs-replay-slider).");
+            return;
+        }
+
+        List<RecordRow> visibleRows = rows.Where(r => !_settings.HiddenBufferLabels.Contains(r.Label)).ToList();
+        foreach (RecordRow row in visibleRows)
+        {
+            string key = row.Key;
+            RecRowsPanel.Children.Add(BuildRecordRowButton(row.Label, row.Status,
+                start: () => _obs.StartRecordRowAsync(key), stop: () => _obs.StopRecordRowAsync(key),
+                sourceName: row.SourceName, filterName: row.FilterName, rowPath: row.Path));
+        }
+    }
+
+    private Button BuildRecordRowButton(string label, int status, Func<Task> start, Func<Task> stop, bool showToast = true,
+        string? sourceName = null, string? filterName = null, string? rowPath = null)
+    {
+        bool recording = status == RecordStatusRecording;
+
+        (string brushKey, string stateLabel) = status switch
+        {
+            RecordStatusRecording => ("Rec", "Recording"),
+            RecordStatusError => ("RecDark", "Error"),
+            RecordStatusInactive => ("Text2", "Inactive"),
+            _ => ("Text2", "Stopped"),
+        };
+
+        var dot = new System.Windows.Shapes.Ellipse
+        {
+            Width = 7,
+            Height = 7,
+            Fill = (Brush)FindResource(brushKey),
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(0, 0, 6, 0),
+        };
+
+        var name = new TextBlock { Text = label, FontWeight = FontWeights.Bold, FontSize = 12.5, Foreground = (Brush)FindResource("Text0") };
+        var stateText = new TextBlock
+        {
+            Text = stateLabel,
+            FontSize = 11,
+            Foreground = (Brush)FindResource("Text2"),
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+
+        var statePanel = new StackPanel { Orientation = Orientation.Horizontal };
+        statePanel.Children.Add(dot);
+        statePanel.Children.Add(stateText);
+
+        var content = new Grid();
+        content.ColumnDefinitions.Add(new ColumnDefinition());
+        content.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        Grid.SetColumn(name, 0);
+        Grid.SetColumn(statePanel, 1);
+        content.Children.Add(name);
+        content.Children.Add(statePanel);
+
+        string styleKey = recording ? "BufRowButton" : "BufRowButtonNoHover";
+        var button = new Button { Style = (Style)FindResource(styleKey), Content = content };
+        button.Click += async (_, _) =>
+        {
+            button.IsEnabled = false;
+            try
+            {
+                // Nothing to choose between except "recording" vs "everything
+                // else" -- Inactive/Stopped/Error all just attempt a start,
+                // same as clicking the equivalent button in ControlPanelDock
+                // itself would (e.g. retrying a row stuck in Error).
+                await (recording ? stop() : start());
+                // No RecordStateChanged-style event exists for a filter's own
+                // recording (that's specific to OBS's own main output), so this
+                // is the only place a "started"/"stopped" notification for this
+                // row can come from at all. The Full Scene row skips this --
+                // RecordingStateChanged already toasts for it, and would double
+                // up with this if it toasted here too.
+                if (showToast)
+                {
+                    // Only fetch/show a folder when STOPPING (recording == true
+                    // means this click just stopped it) -- matches the native
+                    // toast's own behavior exactly: "Saved at" only ever makes
+                    // sense once something has actually been saved, never on
+                    // start. Passing a folder unconditionally here before was
+                    // the bug: it showed "Saved at" on the START toast too,
+                    // before anything had been written.
+                    string? path = recording ? (!string.IsNullOrEmpty(rowPath) ? rowPath
+                        : (!string.IsNullOrEmpty(sourceName) && !string.IsNullOrEmpty(filterName)
+                            ? await _obs.GetRecordRowDestinationFolderAsync(sourceName, filterName)
+                            : null)) : null;
+                    _toastOverlay.ShowRecording(started: !recording, path);
+                }
+                // Keep this row disabled for a couple seconds before it can be
+                // toggled again -- rapid-fire start/stop (e.g. an accidental
+                // double click) can starve GPU encoder sessions across cycles
+                // the same way hammering OBS's own native Start/Stop Recording
+                // button would; this isn't fixing that mechanism (out of this
+                // app's control), just making an accidental repeat click less
+                // likely. Also covers record_mode taking effect asynchronously,
+                // same reasoning as the row buttons in obs-replay-slider's own dock.
+                await Task.Delay(TimeSpan.FromSeconds(2));
+                await LoadRecordRowsAsync();
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(this, $"Couldn't {(recording ? "stop" : "start")} recording: {ex.Message}", "Backtrack");
+                button.IsEnabled = true;
+            }
+        };
+        return button;
+    }
+
     /// <summary>
     /// One slider for every buffer -- simpler than juggling a separate length
     /// per row, at the cost of them no longer being independently adjustable.
@@ -2012,12 +2511,32 @@ public partial class MainWindow : Window
         return t * 1000.0;
     }
 
+    /// <summary>Sets a Slider's Value from a mouse position, clamped to the slider's own bounds/range -- shared by the length slider's mouse-down and mouse-move handlers so both compute it identically.</summary>
+    private static void SetSliderValueFromMouse(Slider slider, Point mousePos)
+    {
+        double width = slider.ActualWidth;
+        if (width <= 0)
+            return;
+        double ratio = Math.Clamp(mousePos.X / width, 0.0, 1.0);
+        slider.Value = slider.Minimum + ratio * (slider.Maximum - slider.Minimum);
+    }
+
     private Border BuildSharedClipLengthControl(List<ReplayRow> rows)
     {
         int initial = rows.Count > 0 ? rows[0].LengthSeconds : 60;
 
         var label = new TextBlock { Text = "Clip length", FontSize = 12, FontWeight = FontWeights.Bold, Foreground = (Brush)FindResource("Text1"), VerticalAlignment = VerticalAlignment.Center };
-        var slider = new Slider { Style = (Style)FindResource("RowLengthSlider"), Value = SecondsToSliderPos(initial), Margin = new Thickness(10, 0, 10, 0) };
+        // IsMoveToPointEnabled jumps the value on click but doesn't hand off
+        // to a drag session unless the click happened to land exactly on the
+        // thumb -- clicking anywhere else and dragging just didn't do
+        // anything after that first jump, unlike the Player's seek bar
+        // (PlayerSeekTrack_MouseDown/Move), which captures the mouse itself
+        // and recomputes the value on every move regardless of where the
+        // drag started. Same fix here instead of relying on the Slider's own
+        // click-to-point handling: explicit mouse capture below replicates
+        // that "click anywhere, then drag, it just works" feel, while the
+        // slider's actual visual style (RowLengthSlider) is untouched.
+        var slider = new Slider { Style = (Style)FindResource("RowLengthSlider"), Value = SecondsToSliderPos(initial), Margin = new Thickness(10, 0, 10, 0), IsMoveToPointEnabled = false };
         var lengthText = new TextBlock
         {
             Text = FormatDuration(initial * 1000L),
@@ -2029,9 +2548,23 @@ public partial class MainWindow : Window
             TextAlignment = TextAlignment.Right,
         };
         slider.ValueChanged += (_, e) => lengthText.Text = FormatDuration(SliderPosToSeconds(e.NewValue) * 1000L);
+
+        slider.PreviewMouseLeftButtonDown += (_, e) =>
+        {
+            slider.CaptureMouse();
+            SetSliderValueFromMouse(slider, e.GetPosition(slider));
+            e.Handled = true; // stop the native Thumb/Track drag logic from also engaging
+        };
+        slider.PreviewMouseMove += (_, e) =>
+        {
+            if (slider.IsMouseCaptured)
+                SetSliderValueFromMouse(slider, e.GetPosition(slider));
+        };
         slider.PreviewMouseLeftButtonUp += async (_, e) =>
         {
             e.Handled = true;
+            slider.ReleaseMouseCapture();
+
             int seconds = SliderPosToSeconds(slider.Value);
             foreach (ReplayRow row in _lastReplayRows)
             {
@@ -2797,7 +3330,7 @@ public partial class MainWindow : Window
 
         var contextMenu = new ContextMenu { Style = (Style)FindResource("DarkContextMenu") };
         var openFolderItem = new MenuItem { Header = "Open file location", Style = (Style)FindResource("DarkMenuItem") };
-        openFolderItem.Click += (_, _) => Process.Start(new ProcessStartInfo("explorer.exe", $"/select,\"{file.FullName}\"") { UseShellExecute = true });
+        openFolderItem.Click += (_, _) => RevealInExplorerAndClose(file.FullName);
         var deleteItem = new MenuItem { Header = "Delete", Style = (Style)FindResource("DarkMenuItem") };
         deleteItem.Click += (_, _) => DeleteClip(file, card);
         contextMenu.Items.Add(openFolderItem);
@@ -3346,11 +3879,29 @@ public partial class MainWindow : Window
         PlayerVideoView.MediaPlayer = null;
     }
 
+    /// <summary>
+    /// Reveals the clip in Explorer and closes the overlay, same idea as
+    /// RevealInExplorerAndClose -- but lands back on Gallery instead of
+    /// trying to resume Player. Player's video surface is a native VLC HWND
+    /// and its floating overlay Popup is placed relative to it (see
+    /// PlayerOverlayPopup's own comment on "airspace"); neither survives a
+    /// hide/show round trip the way ShowScreen normally drives them; leaving
+    /// Player "as-is" through that trip previously left the video black and
+    /// the Popup stuck at its pre-hide screen position, and going Idle then
+    /// back into Gallery afterward could crash on the half-torn-down state.
+    /// Gallery is plain WPF state and reopens exactly as it was left, with
+    /// the clip still right there to reopen in one click -- consistent with
+    /// _lastScreen elsewhere in this file never treating Player as a screen
+    /// safe to auto-resume either.
+    /// </summary>
     private void PlayerFolder_Click(object sender, RoutedEventArgs e)
     {
         if (_currentPlayerFile is null)
             return;
-        Process.Start(new ProcessStartInfo("explorer.exe", $"/select,\"{_currentPlayerFile.FullName}\"") { UseShellExecute = true });
+        RevealInExplorer(_currentPlayerFile.FullName);
+        ShowScreen(Screen.Gallery);
+        LoadGallery();
+        CloseOverlay(preserveScreen: true);
     }
 
     /// <summary>
@@ -4180,16 +4731,14 @@ public partial class MainWindow : Window
             if (_manualUpdateReady)
             {
                 _manualUpdateReady = false;
-                CheckUpdatesButton.Content = "Check now";
+                CheckUpdatesButton.Content = "Applying...";
                 await CheckForUpdatesAsync();
+                CheckUpdatesButton.Content = "Check now";
                 return;
             }
 
-            // Backtrack's own self-update never runs on a dev build (see the
-            // comment in CheckForUpdatesAsync) -- don't even bother checking
-            // availability here, since a dev build's digest never matches and
-            // would always misreport "update available" for a self-update that
-            // will never actually be offered.
+            CheckUpdatesButton.Content = "Checking...";
+
             (bool backtrackAvail, string backtrackVer) = UpdateService.IsDevBuild
                 ? (false, $"{UpdateService.CurrentAppVersion.ToString(3)} (dev build)")
                 : await CheckSelfAvailabilityAsync();
@@ -4207,7 +4756,7 @@ public partial class MainWindow : Window
             SetUpdateStatus(SourceRecordStatusDot, SourceRecordVersionText, sourceAvail ? $"{sourceVer} (update available)" : sourceVer, ok: sourceAvail ? null : true);
 
             _manualUpdateReady = backtrackAvail || replayAvail || sourceAvail;
-            CheckUpdatesButton.Content = _manualUpdateReady ? "Update" : "Check now";
+            CheckUpdatesButton.Content = _manualUpdateReady ? "Apply" : "Check now";
         }
         finally
         {
