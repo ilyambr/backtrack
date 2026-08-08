@@ -2050,6 +2050,13 @@ public partial class MainWindow : Window
             return;
         }
 
+        // Always first, same as the Start Recording menu's own "Full Scene"
+        // row -- this is OBS's own global recording, not a Source Record
+        // filter, so it doesn't come from the bridge at all (native
+        // obs-websocket only) and exists independently of whether any
+        // filters are found below.
+        RecordFolderPanel.Children.Add(await BuildMainRecordFolderRowAsync());
+
         List<RecordRow> rows;
         try
         {
@@ -2073,6 +2080,68 @@ public partial class MainWindow : Window
             {
                 RecordFolderPanel.Children.Add(await BuildRecordFolderRowAsync(row));
             }
+        }
+    }
+
+    private async Task<Border> BuildMainRecordFolderRowAsync()
+    {
+        string? currentFolder = await _obs.GetMainRecordDirectoryAsync();
+
+        var name = new TextBlock { Text = "Full Scene", FontSize = 13, FontWeight = FontWeights.Bold, Foreground = (Brush)FindResource("Text0"), VerticalAlignment = VerticalAlignment.Center };
+
+        var folderLabel = new TextBlock
+        {
+            Text = DescribeRecordRowDestDir(currentFolder),
+            FontSize = 11,
+            Foreground = (Brush)FindResource("Text2"),
+            VerticalAlignment = VerticalAlignment.Center,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+        };
+        var folderButton = BuildFolderIconButton(async (_, _) => await PickMainRecordFolderAsync(folderLabel));
+
+        var bottomGrid = new Grid { Margin = new Thickness(0, 8, 0, 0) };
+        bottomGrid.ColumnDefinitions.Add(new ColumnDefinition());
+        bottomGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        Grid.SetColumn(folderLabel, 0);
+        Grid.SetColumn(folderButton, 1);
+        bottomGrid.Children.Add(folderLabel);
+        bottomGrid.Children.Add(folderButton);
+
+        var container = new StackPanel();
+        container.Children.Add(name);
+        container.Children.Add(bottomGrid);
+
+        return new Border { Style = (Style)FindResource("SettingsRow"), Child = container };
+    }
+
+    /// <summary>
+    /// Unlike a Source Record filter's folder (constrained to somewhere inside
+    /// ClipsFolder, since Gallery only ever browses within that tree -- see
+    /// PickRecordRowFolderAsync/PickBufferDestFolderAsync), OBS's own global
+    /// recording path is deliberately NOT constrained here: it's the same
+    /// setting as OBS's own Settings > Output > Recording Path, which
+    /// legitimately might point somewhere entirely outside Backtrack's clips
+    /// folder (a separate drive, an existing recordings library, etc.), and
+    /// this is just exposing OBS's own setting, not a Backtrack-specific
+    /// per-row override like the filter case is.
+    /// </summary>
+    private async Task PickMainRecordFolderAsync(TextBlock folderLabel)
+    {
+        try
+        {
+            string initialDir = await _obs.GetMainRecordDirectoryAsync() ?? _settings.ClipsFolder;
+            var dialog = new OpenFolderDialog { InitialDirectory = Directory.Exists(initialDir) ? initialDir : _settings.ClipsFolder };
+            if (dialog.ShowDialog(this) != true)
+                return;
+
+            string selectedFolder = dialog.FolderName;
+            await _obs.SetMainRecordDirectoryAsync(selectedFolder);
+            folderLabel.Text = DescribeRecordRowDestDir(selectedFolder);
+            AppLog.Write($"Set OBS's main recording path to '{selectedFolder}'");
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, $"Couldn't update recording folder: {ex.Message}", "Backtrack");
         }
     }
 

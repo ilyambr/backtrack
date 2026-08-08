@@ -269,6 +269,31 @@ public sealed class ObsService
     /// current state is already known so a toggle would be redundant/racy.</summary>
     public async Task StartMainRecordAsync() => await _client.RequestAsync("StartRecord");
     public async Task StopMainRecordAsync() => await _client.RequestAsync("StopRecord");
+
+    /// <summary>
+    /// OBS's own single global recording output directory (Settings > Output >
+    /// Recording Path) -- native obs-websocket requests, same idea as
+    /// GetRecordRowDestinationFolderAsync/SetRecordRowDestinationFolderAsync
+    /// for a Source Record filter's own path, just for the "Full Scene" row
+    /// instead of a per-filter one. No plugin bridge involved.
+    /// </summary>
+    public async Task<string?> GetMainRecordDirectoryAsync()
+    {
+        try
+        {
+            JsonElement d = await _client.RequestAsync("GetRecordDirectory");
+            string? value = d.ValueKind == JsonValueKind.Object && d.TryGetProperty("recordDirectory", out JsonElement dir)
+                ? dir.GetString() : null;
+            return string.IsNullOrEmpty(value) ? null : value;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    public async Task SetMainRecordDirectoryAsync(string newPath) =>
+        await _client.RequestAsync("SetRecordDirectory", new Dictionary<string, object?> { ["recordDirectory"] = newPath });
     /// <summary>
     /// Raw counters behind OBS's own status-bar-style overload warnings --
     /// there's no request/event that hands over the literal status bar text
