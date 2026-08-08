@@ -1668,7 +1668,16 @@ public partial class MainWindow : Window
         }
 
         newPanel.Visibility = Visibility.Visible;
-        UpdateStreamingBoxVisibility();
+        // Deferred, not called inline here -- UpdateStreamingBoxVisibility can
+        // Show()/reposition a SEPARATE top-level window (StreamingStatusOverlay),
+        // and doing that synchronously in the middle of ShowScreen can pump the
+        // Windows message queue enough to force MainWindow itself to repaint
+        // before its own Visibility/resize work above has actually settled --
+        // reintroducing the exact same resize/repaint race this method was
+        // reordered to fix in the first place, just triggered by this call
+        // instead of the Width/Left/Top assignments this time. Same lesson,
+        // same fix: let this transition finish completely first.
+        Dispatcher.BeginInvoke(new Action(UpdateStreamingBoxVisibility), DispatcherPriority.Loaded);
 
         // GalleryStatus is the SAME TextBlock as the Idle tile's "X clips"
         // subtitle -- LoadGallery() (browsing) sets it to a SHALLOW count of
