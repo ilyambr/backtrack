@@ -2137,8 +2137,15 @@ public partial class MainWindow : Window
     {
         if (string.IsNullOrEmpty(destDir))
             return "Not set -- recordings stay wherever this filter writes them";
+        // Unlike a Replay row's DestDir (Backtrack's own optional override,
+        // genuinely absent until someone explicitly picks a folder), a Source
+        // Record filter's "path" setting always has some real value in OBS --
+        // there's no true "unset" state to read here. Sitting at the plain
+        // clips folder root with no subfolder reads the same as "nobody's
+        // customized this" to a user, so treat that the same as Not Set too,
+        // rather than showing "Main clips folder" for every untouched filter.
         return IsWithinClipsFolder(destDir, out string relative)
-            ? (relative.Length == 0 ? "Main clips folder" : relative)
+            ? (relative.Length == 0 ? "Not set -- recordings stay wherever this filter writes them" : relative)
             : destDir;
     }
 
