@@ -25,6 +25,7 @@
         <SolidColorBrush x:Key="Text2" Color="#767D87"/>
         <SolidColorBrush x:Key="Accent" Color="#F5F6F8"/>
         <SolidColorBrush x:Key="Rec" Color="#FF5B52"/>
+        <SolidColorBrush x:Key="RecDark" Color="#7A1F1F"/>
         <SolidColorBrush x:Key="Green" Color="#3ECF8E"/>
         <SolidColorBrush x:Key="RowBg" Color="#0BFFFFFF"/>
         <SolidColorBrush x:Key="RowHoverBg" Color="#17FFFFFF"/>
@@ -317,6 +318,24 @@
             <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
         </Style>
 
+        <Style x:Key="BareIconButton" TargetType="Button">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Padding" Value="4"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Focusable" Value="False"/>
+            <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border Background="Transparent" Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
         <!-- Flat, dark ComboBox for the audio track selector, since the stock one
              renders with white system chrome that clashes badly with this theme. -->
         <Style x:Key="ModernComboBox" TargetType="ComboBox">
@@ -582,6 +601,18 @@
                     <TextBlock Text="Save which buffer?" Style="{StaticResource ScreenTitle}"/>
                 </StackPanel>
                 <StackPanel x:Name="BufRowsPanel"/>
+            </DockPanel>
+
+            <!-- Start Recording screen -->
+            <DockPanel x:Name="StartRecordPanel" Visibility="Collapsed" Margin="14,12,14,14">
+                <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,10">
+                    <Grid Style="{StaticResource BackButtonHost}" MouseLeftButtonUp="BackToIdle_Click">
+                        <Ellipse Fill="#14FFFFFF"/>
+                        <TextBlock Style="{StaticResource BackButtonGlyph}"/>
+                    </Grid>
+                    <TextBlock Text="Record which source?" Style="{StaticResource ScreenTitle}"/>
+                </StackPanel>
+                <StackPanel x:Name="RecRowsPanel"/>
             </DockPanel>
 
             <!-- Gallery screen -->
@@ -998,6 +1029,12 @@
                             <TextBlock Text="Hide a buffer to drop it from the &quot;Save which buffer?&quot; screen -- it keeps buffering and can still be saved from its own OBS hotkey, it just won't show as a button here until you turn it back on."
                                        FontSize="11" Foreground="{StaticResource Text2}" TextWrapping="Wrap" Margin="0,0,0,10"/>
                             <StackPanel x:Name="BufferVisibilityPanel"/>
+                        </StackPanel>
+                        <TextBlock Text="RECORDINGS" Style="{StaticResource SettingsSectionHeader}"/>
+                        <StackPanel Margin="0,0,0,10">
+                            <TextBlock Text="Configure destination folders for each Source Record filter tracked by OBS."
+                                       FontSize="11" Foreground="{StaticResource Text2}" TextWrapping="Wrap" Margin="0,0,0,10"/>
+                            <StackPanel x:Name="RecordFolderPanel"/>
                         </StackPanel>
 
                         <TextBlock Text="OBS" Style="{StaticResource SettingsSectionHeader}"/>

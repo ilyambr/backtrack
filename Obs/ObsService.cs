@@ -8,6 +8,16 @@ namespace Backtrack.Obs;
 
 public sealed record ReplayRow(string Key, string Label, string Hotkey, int Status, int LengthSeconds, string DestDir);
 
+/// <summary>
+/// One Source Record filter tracked by obs-replay-slider's ControlPanelDock -- see ListRecordRowsAsync.
+/// Status: 0 Inactive (the underlying source isn't actively capturing anything,
+/// e.g. a Window Capture with no window selected), 1 Stopped (capturing fine,
+/// just not recording), 2 Recording, 3 Error (was recording, the output
+/// stopped with a failure). SourceName/FilterName (not Label, which is the
+/// "{source} - {filter}" display string) are for looking this filter's own
+/// settings up via GetRecordRowDestinationFolderAsync.
+/// </summary>
+public sealed record RecordRow(string Key, string Label, int Status, string SourceName, string FilterName, string Path = "");
 public sealed record RecordStatus(bool Active, long DurationMs, bool Paused);
 
 public sealed record ObsStats(long RenderTotalFrames, long RenderSkippedFrames, long OutputTotalFrames, long OutputSkippedFrames);
@@ -254,6 +264,11 @@ public sealed class ObsService
         await _client.RequestAsync(status.Active ? "StopRecord" : "StartRecord");
     }
 
+    /// <summary>Explicit start/stop of OBS's own single global recording -- used by the
+    /// "main" row on the Start Recording menu (see LoadRecordRowsAsync), where the
+    /// current state is already known so a toggle would be redundant/racy.</summary>
+    public async Task StartMainRecordAsync() => await _client.RequestAsync("StartRecord");
+    public async Task StopMainRecordAsync() => await _client.RequestAsync("StopRecord");
     /// <summary>
     /// Raw counters behind OBS's own status-bar-style overload warnings --
     /// there's no request/event that hands over the literal status bar text
@@ -287,26 +302,27 @@ public sealed class ObsService
     }
 
     /// <summary>
-    /// True if recording, streaming, or any replay buffer (OBS's own single
-    /// global one, or a per-source obs-replay-slider/obs-source-record row) is
-    /// currently active -- used to defer auto-updates rather than yank OBS out
-    /// from under a live recording/stream/replay. Same "replay active" definition
-    /// as the Save Replay pill (see RefreshStatusAsync): a row showing armed
-    /// (Status == 1) counts even if OBS's own global replay-buffer flag doesn't,
-    /// since those buffers can run independently of it.
+    /// True if OBS is actually recording or streaming right now (main output,
+    /// or a Source Record filter's own per-source recording) -- used to defer
+    /// auto-updates rather than yank OBS out from under something genuinely
+    /// being captured. Deliberately does NOT count a replay buffer just being
+    /// armed (main or per-row, Status == 1) -- an armed-but-not-saving buffer
+    /// isn't writing anything to disk that an update would interrupt, and
+    /// buffers being armed is the normal resting state most of the time, so
+    /// counting that here meant updates almost never applied automatically.
     /// </summary>
-    public async Task<bool> IsAnyOutputActiveAsync()
+    public async Task<bool> IsRecordingOrStreamingAsync()
     {
         if (!IsConnected)
             return false;
 
         try
         {
-            if ((await GetRecordStatusAsync()).Active || await GetStreamActiveAsync() || await GetReplayBufferActiveAsync())
+            if ((await GetRecordStatusAsync()).Active || await GetStreamActiveAsync())
                 return true;
 
-            List<ReplayRow> rows = await ListReplayRowsAsync();
-            return rows.Any(r => r.Status == 1);
+            List<RecordRow> recordRows = await ListRecordRowsAsync();
+            return recordRows.Any(r => r.Status == 2); // 2 == Recording, see RecordRow's own doc comment
         }
         catch
         {
@@ -343,6 +359,115 @@ public sealed class ObsService
             }
         }
         return rows;
+    }
+
+    /// <summary>
+    /// One row per Source Record filter obs-replay-slider's ControlPanelDock is
+    /// currently tracking -- distinct from ListReplayRowsAsync's rows: no "main"
+    /// entry here (ControlPanelDock doesn't track OBS's own global recording),
+    /// and each row is a start/stop toggle rather than a one-shot save. Needs
+    /// the list_record_rows bridge PR merged into the plugin; older builds just
+    /// return an empty list harmlessly.
+    /// </summary>
+    public async Task<List<RecordRow>> ListRecordRowsAsync()
+    {
+        JsonElement d = await _client.RequestAsync("CallVendorRequest", new Dictionary<string, object?>
+        {
+            ["vendorName"] = "replay-buffer-slider",
+            ["requestType"] = "list_record_rows",
+            ["requestData"] = new Dictionary<string, object?>(),
+        });
+
+        var rows = new List<RecordRow>();
+        if (d.ValueKind == JsonValueKind.Object &&
+            d.TryGetProperty("responseData", out JsonElement rd) &&
+            rd.TryGetProperty("rows", out JsonElement arr))
+        {
+            foreach (JsonElement item in arr.EnumerateArray())
+            {
+                rows.Add(new RecordRow(
+                    item.GetProperty("key").GetString() ?? "",
+                    item.GetProperty("label").GetString() ?? "",
+                    item.TryGetProperty("status", out JsonElement st) ? st.GetInt32() : 0,
+                    item.TryGetProperty("source", out JsonElement sn) ? sn.GetString() ?? "" : "",
+                    item.TryGetProperty("filter", out JsonElement fn) ? fn.GetString() ?? "" : "",
+                    item.TryGetProperty("path", out JsonElement pt) ? pt.GetString() ?? "" : ""));
+            }
+        }
+        return rows;
+    }
+
+    /// <summary>
+    /// Reads a Source Record filter's own configured output folder ("path" in
+    /// its settings) via the plain obs-websocket GetSourceFilterList request --
+    /// no plugin bridge involved, this is regular filter-settings data any
+    /// obs-websocket client can already read. Returns null if the source/filter
+    /// can't be found or has no path set (recordings stay wherever the filter's
+    /// own default/relative location resolves to).
+    /// </summary>
+    public async Task<string?> GetRecordRowDestinationFolderAsync(string sourceName, string filterName)
+    {
+        try
+        {
+            JsonElement d = await _client.RequestAsync("GetSourceFilterList", new Dictionary<string, object?> { ["sourceName"] = sourceName });
+            if (d.ValueKind != JsonValueKind.Object || !d.TryGetProperty("filters", out JsonElement filters))
+                return null;
+
+            foreach (JsonElement filter in filters.EnumerateArray())
+            {
+                if (!filter.TryGetProperty("filterName", out JsonElement fn) || fn.GetString() != filterName)
+                    continue;
+                if (filter.TryGetProperty("filterSettings", out JsonElement settings) &&
+                    settings.TryGetProperty("path", out JsonElement path) &&
+                    path.ValueKind == JsonValueKind.String)
+                {
+                    string? value = path.GetString();
+                    return string.IsNullOrEmpty(value) ? null : value;
+                }
+                return null;
+            }
+        }
+        catch
+        {
+            // Bridge/request unreachable -- just means the toast won't show a
+            // folder this one time, not worth surfacing as an error.
+        }
+        return null;
+    }
+
+    public async Task SetRecordRowDestinationFolderAsync(string sourceName, string filterName, string newPath)
+    {
+        await _client.RequestAsync("SetSourceFilterSettings", new Dictionary<string, object?>
+        {
+            ["sourceName"] = sourceName,
+            ["filterName"] = filterName,
+            ["filterSettings"] = new Dictionary<string, object?>
+            {
+                ["path"] = newPath,
+                ["directory"] = newPath
+            },
+            ["overlay"] = true
+        });
+    }
+
+    public async Task StartRecordRowAsync(string key)
+    {
+        await _client.RequestAsync("CallVendorRequest", new Dictionary<string, object?>
+        {
+            ["vendorName"] = "replay-buffer-slider",
+            ["requestType"] = "start_record_row",
+            ["requestData"] = new Dictionary<string, object?> { ["key"] = key },
+        });
+    }
+
+    public async Task StopRecordRowAsync(string key)
+    {
+        await _client.RequestAsync("CallVendorRequest", new Dictionary<string, object?>
+        {
+            ["vendorName"] = "replay-buffer-slider",
+            ["requestType"] = "stop_record_row",
+            ["requestData"] = new Dictionary<string, object?> { ["key"] = key },
+        });
     }
 
     public async Task SaveReplayRowAsync(string key)
