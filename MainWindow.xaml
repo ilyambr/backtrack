@@ -516,6 +516,13 @@
          the compact pill and the big Gallery/Player panel). It's now its own
          separate, fixed-position window (see LogoOverlay.xaml), shown/hidden in
          lockstep with the HUD by MainWindow.ToggleVisible/CloseOverlay. -->
+    <!-- A Window can only ever have one root child, so RootBorder (the main
+         pill) and the streaming status box below it are both wrapped in this
+         StackPanel rather than being direct Window children; the box needs
+         to render as a genuinely separate rounded container underneath the
+         main pill, not just another row merged inside RootBorder's own
+         single card. -->
+    <StackPanel>
     <Border x:Name="RootBorder" Background="{StaticResource PanelBg}" BorderBrush="{StaticResource Hairline}" BorderThickness="1">
         <Grid>
             <!-- Idle screen: Record / Save Replay / Gallery -->
@@ -575,17 +582,6 @@
                     <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
                         <Ellipse x:Name="ConnDot" Width="8" Height="8" Fill="{StaticResource Text2}" VerticalAlignment="Center" Margin="0,0,7,0"/>
                         <TextBlock x:Name="ConnStatusText" Text="OBS Disconnected" FontSize="11.5" FontWeight="Bold"
-                                   Foreground="{StaticResource Text1}" VerticalAlignment="Center"/>
-                    </StackPanel>
-                </Border>
-
-                <!-- A separate container from the OBS-connected one above, not nested
-                     inside it; only ever appears at all while actually live, as a
-                     plain reminder, same row shape/style as that one. -->
-                <Border x:Name="StreamingStatusBorder" Background="{StaticResource RowBg}" Margin="14,0,14,12" Padding="10,7" Visibility="Collapsed">
-                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
-                        <Ellipse Width="8" Height="8" Fill="{StaticResource Stream}" VerticalAlignment="Center" Margin="0,0,7,0"/>
-                        <TextBlock Text="You are currently livestreaming." FontSize="11.5" FontWeight="Bold"
                                    Foreground="{StaticResource Text1}" VerticalAlignment="Center"/>
                     </StackPanel>
                 </Border>
@@ -1249,4 +1245,17 @@
             </DockPanel>
         </Grid>
     </Border>
+
+    <!-- Its own separate box below the main pill, not merged into it; only
+         shown at all while both actually live AND the Idle screen is what's
+         currently showing (see UpdateStreamingBoxVisibility). -->
+    <Border x:Name="StreamingStatusBorder" Background="{StaticResource PanelBg}" BorderBrush="{StaticResource Hairline}" BorderThickness="1"
+            Margin="0,8,0,0" Padding="10,7" Visibility="Collapsed">
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+            <Ellipse Width="8" Height="8" Fill="{StaticResource Stream}" VerticalAlignment="Center" Margin="0,0,7,0"/>
+            <TextBlock Text="You are currently livestreaming." FontSize="11.5" FontWeight="Bold"
+                       Foreground="{StaticResource Text1}" VerticalAlignment="Center"/>
+        </StackPanel>
+    </Border>
+    </StackPanel>
 </Window>

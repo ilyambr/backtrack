@@ -100,6 +100,11 @@ public partial class MainWindow : Window
     // first click. Doesn't affect the automatic hourly check, which still
     // applies updates on its own the moment it's safe to (see CheckForUpdatesAsync).
     private bool _manualUpdateReady;
+    // Last known streaming state -- StreamingStatusBorder needs both this AND
+    // "Idle is the currently showing screen" true before it's actually
+    // visible (see UpdateStreamingBoxVisibility), and this is the only one of
+    // those two not already readable directly off some existing element.
+    private bool _isStreaming;
     private readonly PairingService _pairing;
     private readonly Dictionary<string, string> _rowLabels = new();
     private List<ReplayRow> _lastReplayRows = new();
@@ -221,7 +226,8 @@ public partial class MainWindow : Window
         {
             _toastOverlay.ShowStreaming(active);
             AppLog.Write(active ? "Livestream started" : "Livestream ended");
-            StreamingStatusBorder.Visibility = active ? Visibility.Visible : Visibility.Collapsed;
+            _isStreaming = active;
+            UpdateStreamingBoxVisibility();
         });
         _obs.ReplaySaved += (key, path) => Dispatcher.BeginInvoke(async () =>
         {
@@ -1648,6 +1654,7 @@ public partial class MainWindow : Window
         }
 
         newPanel.Visibility = Visibility.Visible;
+        UpdateStreamingBoxVisibility();
 
         // GalleryStatus is the SAME TextBlock as the Idle tile's "X clips"
         // subtitle -- LoadGallery() (browsing) sets it to a SHALLOW count of
@@ -1761,6 +1768,22 @@ public partial class MainWindow : Window
         RecordSquare.Visibility = active ? Visibility.Visible : Visibility.Collapsed;
     }
 
+    /// <summary>
+    /// StreamingStatusBorder now lives outside RootBorder entirely (its own
+    /// separate box below the main pill, not merged into it -- see its own
+    /// XAML comment), so it's no longer implicitly hidden just by IdlePanel
+    /// itself going Collapsed the way it was when nested inside it. Needs
+    /// both conditions checked explicitly instead: actually streaming, AND
+    /// Idle is the screen currently showing (this is a reminder for the main
+    /// screen, not something that should linger while looking at Gallery/
+    /// Settings/etc.). Called from every place either of those two can change.
+    /// </summary>
+    private void UpdateStreamingBoxVisibility()
+    {
+        StreamingStatusBorder.Visibility = _isStreaming && IdlePanel.Visibility == Visibility.Visible
+            ? Visibility.Visible : Visibility.Collapsed;
+    }
+
     private async Task RefreshStatusAsync()
     {
         _trayManager?.UpdateStatus(_obs.IsConnected, _statusOverlay.IsVisible);
@@ -1781,7 +1804,8 @@ public partial class MainWindow : Window
             _statusOverlay.SetRecording(false);
             _statusOverlay.SetReplayOnline(false);
             _statusOverlay.SetMicStatus(MicStatus.Hidden);
-            StreamingStatusBorder.Visibility = Visibility.Collapsed;
+            _isStreaming = false;
+            UpdateStreamingBoxVisibility();
             return;
         }
 
@@ -1908,7 +1932,8 @@ public partial class MainWindow : Window
             // event alone would never fire for.
             try
             {
-                StreamingStatusBorder.Visibility = await streamActiveTask ? Visibility.Visible : Visibility.Collapsed;
+                _isStreaming = await streamActiveTask;
+                UpdateStreamingBoxVisibility();
             }
             catch
             {
