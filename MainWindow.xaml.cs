@@ -233,9 +233,19 @@ public partial class MainWindow : Window
         });
         _obs.StreamingStateChanged += active => Dispatcher.BeginInvoke(() =>
         {
+            // obs-websocket appears to genuinely emit two separate stop
+            // transitions when Twitch Enhanced Broadcasting/multitrack is
+            // active (its own underlying RTMP sub-output stopping alongside
+            // the regular stream output) -- reported live as "Livestream
+            // Ended" toasting twice back to back. Skip re-announcing a state
+            // that's already current instead of trying to filter by exact
+            // cause.
+            if (active == _isStreaming)
+                return;
             _toastOverlay.ShowStreaming(active);
             AppLog.Write(active ? "Livestream started" : "Livestream ended");
             _isStreaming = active;
+            _statusOverlay.SetStreaming(active);
             UpdateStreamingBoxVisibility();
         });
         _obs.ReplaySaved += (key, path) => Dispatcher.BeginInvoke(async () =>
@@ -1840,6 +1850,7 @@ public partial class MainWindow : Window
             _statusOverlay.SetRecording(false);
             _statusOverlay.SetReplayOnline(false);
             _statusOverlay.SetMicStatus(MicStatus.Hidden);
+            _statusOverlay.SetStreaming(false);
             _isStreaming = false;
             UpdateStreamingBoxVisibility();
             return;
@@ -1969,6 +1980,7 @@ public partial class MainWindow : Window
             try
             {
                 _isStreaming = await streamActiveTask;
+                _statusOverlay.SetStreaming(_isStreaming);
                 UpdateStreamingBoxVisibility();
             }
             catch

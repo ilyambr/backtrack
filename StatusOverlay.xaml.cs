@@ -56,6 +56,8 @@ public partial class StatusOverlay : Window
 
     public void SetRecording(bool active) => RecBadge.Visibility = active ? Visibility.Visible : Visibility.Collapsed;
 
+    public void SetStreaming(bool active) => StreamBadge.Visibility = active ? Visibility.Visible : Visibility.Collapsed;
+
     public void SetReplayOnline(bool active) => ReplayBadge.Visibility = active ? Visibility.Visible : Visibility.Collapsed;
 
     public void SetMicStatus(MicStatus status)
