@@ -623,6 +623,27 @@ public partial class MainWindow : Window
     /// </summary>
     private async Task CheckForUpdatesAsync()
     {
+        // _obs.Start() (constructor) kicks off connecting to OBS in the
+        // background with nothing awaiting it, and this method is called
+        // right after in that same constructor with no synchronization
+        // between the two. CheckAndApplyPluginUpdateAsync's own safety check
+        // (IsAnyOutputActiveAsync) treats "not connected to OBS yet" the same
+        // as "confirmed nothing is active" -- correct if OBS genuinely isn't
+        // running, but wrong if OBS IS running and actively
+        // recording/streaming/replay-buffering RIGHT NOW and this connection
+        // attempt just hasn't finished its handshake yet. In practice the
+        // GitHub API round-trip inside CheckAndApplyPluginUpdateAsync usually
+        // gives the local OBS handshake enough of a head start to land first
+        // anyway, but "usually" isn't a real guarantee -- and the UI visibly
+        // shows "Disconnected" for close to a second on a normal launch,
+        // proving this race window is real, not theoretical. Give the
+        // connection attempt a bounded chance to actually resolve (success or
+        // "OBS isn't there") before trusting that check with something as
+        // disruptive as closing OBS to install an update.
+        var obsConnectDeadline = DateTime.UtcNow + TimeSpan.FromSeconds(3);
+        while (!_obs.IsConnected && DateTime.UtcNow < obsConnectDeadline)
+            await Task.Delay(100);
+
         await CheckAndApplyPluginUpdateAsync("obs-replay-slider", "Replay Slider", "replay-slider.dll", ReplaySliderStatusDot, ReplaySliderVersionText,
             name => name.Contains("windows", StringComparison.OrdinalIgnoreCase) && name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase),
             () => _settings.LastAppliedReplaySliderReleaseAt, v => _settings.LastAppliedReplaySliderReleaseAt = v,
