@@ -890,7 +890,7 @@
                                          grey/blue scale, not an invented dark variant. -->
                                     <Border x:Name="YamiThemeSwatch" Width="122" Height="78" CornerRadius="6" Background="#1D1F26"
                                             BorderThickness="2" BorderBrush="Transparent" Cursor="Hand"
-                                            MouseLeftButtonUp="YamiThemeSwatch_Click">
+                                            MouseLeftButtonUp="YamiThemeSwatch_Click" Margin="0,0,12,0">
                                         <StackPanel Margin="10">
                                             <StackPanel Orientation="Horizontal">
                                                 <Ellipse Width="8" Height="8" Fill="#718CDC" VerticalAlignment="Center" Margin="0,0,6,0"/>
@@ -900,11 +900,27 @@
                                             <Rectangle Height="5" Width="50" Fill="#969696" RadiusX="2" RadiusY="2" Margin="0,6,0,0"/>
                                         </StackPanel>
                                     </Border>
+                                    <!-- True #000000, not just a very dark grey; see Theme.Amoled.xaml's
+                                         own comment for why (real OLED power savings, sidesteps the
+                                         near-black color-crush issue #080808 hit on some monitors). -->
+                                    <Border x:Name="AmoledThemeSwatch" Width="122" Height="78" CornerRadius="6" Background="#000000"
+                                            BorderThickness="2" BorderBrush="Transparent" Cursor="Hand"
+                                            MouseLeftButtonUp="AmoledThemeSwatch_Click">
+                                        <StackPanel Margin="10">
+                                            <StackPanel Orientation="Horizontal">
+                                                <Ellipse Width="8" Height="8" Fill="#FF5B52" VerticalAlignment="Center" Margin="0,0,6,0"/>
+                                                <Rectangle Height="6" Width="46" Fill="#FFFFFF" RadiusX="3" RadiusY="3"/>
+                                            </StackPanel>
+                                            <Rectangle Height="5" Width="70" Fill="#757575" RadiusX="2" RadiusY="2" Margin="0,12,0,0"/>
+                                            <Rectangle Height="5" Width="50" Fill="#757575" RadiusX="2" RadiusY="2" Margin="0,6,0,0"/>
+                                        </StackPanel>
+                                    </Border>
                                 </StackPanel>
                                 <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
                                     <TextBlock Text="Dark" Width="134" FontSize="11" FontWeight="Bold" Foreground="{DynamicResource Text2}"/>
                                     <TextBlock Text="Light" Width="134" FontSize="11" FontWeight="Bold" Foreground="{DynamicResource Text2}"/>
-                                    <TextBlock Text="Yami (OBS)" FontSize="11" FontWeight="Bold" Foreground="{DynamicResource Text2}"/>
+                                    <TextBlock Text="Yami (OBS)" Width="134" FontSize="11" FontWeight="Bold" Foreground="{DynamicResource Text2}"/>
+                                    <TextBlock Text="AMOLED" FontSize="11" FontWeight="Bold" Foreground="{DynamicResource Text2}"/>
                                 </StackPanel>
                             </StackPanel>
                         </Border>

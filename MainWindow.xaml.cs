@@ -5035,6 +5035,8 @@ public partial class MainWindow : Window
 
     private void YamiThemeSwatch_Click(object sender, MouseButtonEventArgs e) => ApplyTheme(AppTheme.Yami);
 
+    private void AmoledThemeSwatch_Click(object sender, MouseButtonEventArgs e) => ApplyTheme(AppTheme.Amoled);
+
     private void ApplyTheme(AppTheme theme)
     {
         ThemeManager.Apply(theme);
@@ -5045,7 +5047,7 @@ public partial class MainWindow : Window
 
     // Highlight ring around whichever swatch matches the currently active
     // theme; Green isn't tied to "success" here, just the app's one
-    // consistent selection accent, and it reads fine over all three swatches
+    // consistent selection accent, and it reads fine over all four swatches
     // since it's a fixed brand color, not a themed neutral.
     private void RefreshThemeSwatchSelection()
     {
@@ -5053,6 +5055,7 @@ public partial class MainWindow : Window
         DarkThemeSwatch.BorderBrush = ThemeManager.Current == AppTheme.Dark ? selected : Brushes.Transparent;
         LightThemeSwatch.BorderBrush = ThemeManager.Current == AppTheme.Light ? selected : Brushes.Transparent;
         YamiThemeSwatch.BorderBrush = ThemeManager.Current == AppTheme.Yami ? selected : Brushes.Transparent;
+        AmoledThemeSwatch.BorderBrush = ThemeManager.Current == AppTheme.Amoled ? selected : Brushes.Transparent;
     }
 
     private void ShowDisclaimerToggle_Click(object sender, RoutedEventArgs e)
