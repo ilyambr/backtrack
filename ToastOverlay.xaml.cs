@@ -98,25 +98,42 @@ public partial class ToastOverlay : Window
     };
 
     /// <summary>Shows a 5-second toast with sliding status indicator and Undo button; calls onExpire only if not undone.</summary>
-    public void ShowDeleteUndo(string clipName, Action onExpire, Action? onUndo = null)
+    public void ShowDeleteUndo(string clipName, Action onExpire, Action? onUndo = null) =>
+        ShowDeleteUndoToast("Clip deleted", clipName, onExpire, onUndo);
+
+    /// <summary>
+    /// Same idea as ShowDeleteUndo, one toast for a whole batch instead of one
+    /// per clip -- deleting several clips at once used to fire ShowDeleteUndo
+    /// in a loop, stacking that many separate toasts (each with its own
+    /// 60fps DispatcherTimer for the progress bar), which was the actual
+    /// cause of the reported slowdown, not just visual clutter.
+    /// </summary>
+    public void ShowMultiDeleteUndo(int count, Action onExpire, Action? onUndo = null) =>
+        ShowDeleteUndoToast("Multi Deletion", $"{count} clips deleted", onExpire, onUndo);
+
+    private void ShowDeleteUndoToast(string title, string subtitle, Action onExpire, Action? onUndo)
     {
         _activeUndoCount++;
         IntPtr hwnd = new WindowInteropHelper(this).Handle;
         ClickThrough.Disable(hwnd);
         WindowZOrder.BringToFrontWithoutActivating(hwnd);
 
-        var iconBlock = new TextBlock
+        // Same Material "delete" icon as the Player screen's own Delete
+        // button, not the old Segoe MDL2 Assets trash glyph -- that one
+        // looked visually inconsistent with the rest of the icon set.
+        var iconBlock = new System.Windows.Shapes.Path
         {
-            Text = "\uE74D", // Segoe MDL2 Assets Trash icon
-            FontFamily = new FontFamily("Segoe MDL2 Assets"),
-            FontSize = 14,
-            Foreground = Rec,
+            Data = Geometry.Parse("M6,19c0,1.1,0.9,2,2,2h8c1.1,0,2,-0.9,2,-2V7H6V19zM19,4h-3.5l-1,-1h-5l-1,1H5v2h14V4z"),
+            Fill = Rec,
+            Width = 14,
+            Height = 14,
+            Stretch = Stretch.Uniform,
             Margin = new Thickness(0, 1, 10, 0),
             VerticalAlignment = VerticalAlignment.Center
         };
 
-        var msg = new TextBlock { Text = "Clip deleted", FontWeight = FontWeights.Bold, FontSize = 12.5, Foreground = Text0, HorizontalAlignment = HorizontalAlignment.Left };
-        var sub = new TextBlock { Text = clipName, FontSize = 10.5, Foreground = Text2, Margin = new Thickness(0, 2, 0, 0), TextTrimming = TextTrimming.CharacterEllipsis, MaxWidth = 140, HorizontalAlignment = HorizontalAlignment.Left };
+        var msg = new TextBlock { Text = title, FontWeight = FontWeights.Bold, FontSize = 12.5, Foreground = Text0, HorizontalAlignment = HorizontalAlignment.Left };
+        var sub = new TextBlock { Text = subtitle, FontSize = 10.5, Foreground = Text2, Margin = new Thickness(0, 2, 0, 0), TextTrimming = TextTrimming.CharacterEllipsis, MaxWidth = 140, HorizontalAlignment = HorizontalAlignment.Left };
         var body = new StackPanel { HorizontalAlignment = HorizontalAlignment.Left, VerticalAlignment = VerticalAlignment.Center };
         body.Children.Add(msg);
         body.Children.Add(sub);

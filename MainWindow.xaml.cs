@@ -3383,10 +3383,10 @@ public partial class MainWindow : Window
             if (confirmed)
             {
                 _selectedClipPaths.Clear();
-                foreach (FileInfo file in targets)
-                {
-                    QueueDeleteWithUndo(file);
-                }
+                if (targets.Count == 1)
+                    QueueDeleteWithUndo(targets[0]);
+                else
+                    QueueMultiDeleteWithUndo(targets);
             }
         });
     }
@@ -3905,6 +3905,53 @@ public partial class MainWindow : Window
             onUndo: () =>
             {
                 _pendingDeletePaths.Remove(fullPath);
+                Dispatcher.BeginInvoke(() => LoadGallery());
+            });
+    }
+
+    /// <summary>
+    /// One toast for the whole batch instead of QueueDeleteWithUndo called in
+    /// a loop -- that used to fire a separate ShowDeleteUndo per clip (each
+    /// with its own 60fps DispatcherTimer for the progress bar), which was
+    /// the actual cause of Backtrack visibly slowing down when deleting
+    /// several clips at once, not just visual clutter from the stacked
+    /// toasts. Undo/expire both apply to the entire batch together, same as
+    /// a single delete's own all-or-nothing behavior.
+    /// </summary>
+    private void QueueMultiDeleteWithUndo(List<FileInfo> files)
+    {
+        var fullPaths = files.Select(f => Path.GetFullPath(f.FullName)).ToList();
+        foreach (string fullPath in fullPaths)
+            _pendingDeletePaths.Add(fullPath);
+        LoadGallery();
+
+        _toastOverlay.ShowMultiDeleteUndo(files.Count,
+            onExpire: () =>
+            {
+                var failed = new List<string>();
+                foreach (string fullPath in fullPaths)
+                {
+                    _pendingDeletePaths.Remove(fullPath);
+                    if (!RecycleBin.Delete(fullPath))
+                        failed.Add(Path.GetFileName(fullPath));
+                }
+                if (failed.Count > 0)
+                {
+                    Dispatcher.BeginInvoke(() => MessageBox.Show(this,
+                        $"Couldn't delete {failed.Count} clip(s): {string.Join(", ", failed)}.", "Backtrack"));
+                }
+                Dispatcher.BeginInvoke(() =>
+                {
+                    if (GalleryPanel.Visibility == Visibility.Visible)
+                        LoadGallery();
+                    else
+                        _ = RefreshGalleryCountAsync();
+                });
+            },
+            onUndo: () =>
+            {
+                foreach (string fullPath in fullPaths)
+                    _pendingDeletePaths.Remove(fullPath);
                 Dispatcher.BeginInvoke(() => LoadGallery());
             });
     }
