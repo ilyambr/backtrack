@@ -32,7 +32,7 @@
                 <ControlTemplate TargetType="Button">
                     <Grid>
                         <Ellipse Fill="{TemplateBinding Background}"/>
-                        <Path Data="M4,4 L14,14 M14,4 L4,14" Stroke="#F5F6F8" StrokeThickness="2"
+                        <Path Data="M4,4 L14,14 M14,4 L4,14" Stroke="#F6F6F6" StrokeThickness="2"
                               StrokeStartLineCap="Round" StrokeEndLineCap="Round"
                               Width="14" Height="14" Stretch="Uniform"
                               HorizontalAlignment="Center" VerticalAlignment="Center"/>
