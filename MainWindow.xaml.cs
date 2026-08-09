@@ -2758,15 +2758,15 @@ public partial class MainWindow : Window
                             : null)) : null;
                     _toastOverlay.ShowRecording(started: !recording, path);
                 }
-                // Keep this row disabled briefly before it can be toggled again
-                // -- rapid-fire start/stop (e.g. an accidental double click) can
-                // starve GPU encoder sessions across cycles the same way
-                // hammering OBS's own native Start/Stop Recording button would;
-                // this isn't fixing that mechanism (out of this app's control),
-                // just making an accidental repeat click less likely. Also
-                // covers record_mode taking effect asynchronously, same
-                // reasoning as the row buttons in obs-replay-slider's own dock.
-                await Task.Delay(TimeSpan.FromMilliseconds(500));
+                // Keep this row disabled for a couple seconds before it can be
+                // toggled again -- rapid-fire start/stop (e.g. an accidental
+                // double click) can starve GPU encoder sessions across cycles
+                // the same way hammering OBS's own native Start/Stop Recording
+                // button would; this isn't fixing that mechanism (out of this
+                // app's control), just making an accidental repeat click less
+                // likely. Also covers record_mode taking effect asynchronously,
+                // same reasoning as the row buttons in obs-replay-slider's own dock.
+                await Task.Delay(TimeSpan.FromSeconds(2));
                 await LoadRecordRowsAsync();
             }
             catch (Exception ex)
