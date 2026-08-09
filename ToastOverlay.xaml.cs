@@ -19,6 +19,7 @@ public partial class ToastOverlay : Window
     private static readonly SolidColorBrush Green = new(Color.FromRgb(0x3E, 0xCF, 0x8E));
     private static readonly SolidColorBrush Rec = new(Color.FromRgb(0xFF, 0x5B, 0x52));
     private static readonly SolidColorBrush Stream = new(Color.FromRgb(0xA8, 0x55, 0xF7));
+    private static readonly SolidColorBrush Warning = new(Color.FromRgb(0xF0, 0xA0, 0x20));
     private static readonly SolidColorBrush Accent = new(Color.FromRgb(0x3E, 0xCF, 0x8E));
 
     private int _activeUndoCount;
@@ -63,6 +64,10 @@ public partial class ToastOverlay : Window
         Show(icon, started ? Rec : Text2, started ? "Recording started" : "Recording saved",
             resolvedPath is null ? null : $"Saved at '{resolvedPath}'");
     }
+
+    /// <summary>See ObsService.EncoderOverloadDetected -- summary is a plain-English list of what's actually dropping frames right now (already built by the caller, this just displays it).</summary>
+    public void ShowEncoderOverload(string summary) =>
+        Show(GlyphIcon("⚠", Warning), Warning, "Encoder overloaded", summary);
 
     public void ShowStreaming(bool started)
     {

@@ -22,6 +22,17 @@ public sealed record RecordStatus(bool Active, long DurationMs, bool Paused);
 
 public sealed record ObsStats(long RenderTotalFrames, long RenderSkippedFrames, long OutputTotalFrames, long OutputSkippedFrames);
 
+/// <summary>
+/// One or more of these is true whenever obs-source-record's own
+/// check_encoder_overload (0.4.19+) detects a real recent dropped-frame rate
+/// on that specific output -- see ObsService.EncoderOverloadDetected.
+/// MainStream can also mean network/bandwidth congestion, not necessarily
+/// the encoder itself; the plugin can't tell those apart for a streaming
+/// output, only file outputs (recording/replay buffer/this filter) reliably
+/// mean encoder-side lag.
+/// </summary>
+public sealed record EncoderOverloadInfo(bool ThisFilter, bool MainRecording, bool MainStream, bool MainReplayBuffer, string Source, string Filter);
+
 public enum MicStatus { Hidden, Silent, MutedOrQuiet }
 
 /// <summary>
@@ -62,6 +73,9 @@ public sealed class ObsService
 
     /// <summary>Fires when a Replay Slider row's buffer actually finishes saving: (rowKey, path). This is the real "yes, the clip exists now" confirmation.</summary>
     public event Action<string, string>? ReplaySaved;
+
+    /// <summary>Fires roughly every ~2s while obs-source-record detects a real recent dropped-frame rate somewhere (this filter, main recording, main stream, or main replay buffer) -- see EncoderOverloadInfo.</summary>
+    public event Action<EncoderOverloadInfo>? EncoderOverloadDetected;
 
     public ObsService(string url, string? password)
     {
@@ -104,6 +118,19 @@ public sealed class ObsService
                 StreamingStateChanged?.Invoke(true);
             else if (state == "OBS_WEBSOCKET_OUTPUT_STOPPED")
                 StreamingStateChanged?.Invoke(false);
+        }
+        else if (eventType == "VendorEvent" &&
+                 data.TryGetProperty("vendorName", out JsonElement overloadVn) && overloadVn.GetString() == "source-record" &&
+                 data.TryGetProperty("eventType", out JsonElement overloadEt) && overloadEt.GetString() == "encoder_overload" &&
+                 data.TryGetProperty("eventData", out JsonElement overloadEd))
+        {
+            EncoderOverloadDetected?.Invoke(new EncoderOverloadInfo(
+                ThisFilter: overloadEd.TryGetProperty("this_filter", out JsonElement tf) && tf.GetBoolean(),
+                MainRecording: overloadEd.TryGetProperty("main_recording", out JsonElement mr) && mr.GetBoolean(),
+                MainStream: overloadEd.TryGetProperty("main_stream", out JsonElement ms) && ms.GetBoolean(),
+                MainReplayBuffer: overloadEd.TryGetProperty("main_replay_buffer", out JsonElement mrb) && mrb.GetBoolean(),
+                Source: overloadEd.TryGetProperty("source", out JsonElement os) ? os.GetString() ?? "" : "",
+                Filter: overloadEd.TryGetProperty("filter", out JsonElement of) ? of.GetString() ?? "" : ""));
         }
         else if (eventType == "VendorEvent" &&
                  data.TryGetProperty("vendorName", out JsonElement vn) && vn.GetString() == "replay-buffer-slider" &&

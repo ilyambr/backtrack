@@ -106,6 +106,9 @@ public partial class MainWindow : Window
     // UpdateStreamingBoxVisibility), and this is the only one of the 3 not
     // already readable directly off some existing element/property.
     private bool _isStreaming;
+    // Cooldown gate for the EncoderOverloadDetected toast -- see that
+    // subscription's own comment for why this isn't a plain de-dup.
+    private DateTime _lastEncoderOverloadToastUtc = DateTime.MinValue;
     private readonly PairingService _pairing;
     private readonly Dictionary<string, string> _rowLabels = new();
     private List<ReplayRow> _lastReplayRows = new();
@@ -247,6 +250,36 @@ public partial class MainWindow : Window
             _isStreaming = active;
             _statusOverlay.SetStreaming(active);
             UpdateStreamingBoxVisibility();
+        });
+        _obs.EncoderOverloadDetected += info => Dispatcher.BeginInvoke(() =>
+        {
+            // The plugin re-emits this roughly every ~2s for as long as the
+            // condition holds, not just once on a transition -- showing a
+            // fresh toast every single time would spam the screen for a
+            // sustained overload. Cooldown instead of full de-dup, since
+            // which specific output is affected can genuinely change
+            // between checks and a plain "already showing this" guard
+            // wouldn't catch a NEW cause starting right after an old one
+            // stopped, mid-cooldown.
+            if (DateTime.UtcNow - _lastEncoderOverloadToastUtc < TimeSpan.FromSeconds(30))
+                return;
+            _lastEncoderOverloadToastUtc = DateTime.UtcNow;
+
+            var causes = new List<string>();
+            if (info.MainStream)
+                causes.Add("the stream (encoder or network)");
+            if (info.MainRecording)
+                causes.Add("the main recording");
+            if (info.MainReplayBuffer)
+                causes.Add("the main replay buffer");
+            if (info.ThisFilter)
+                causes.Add($"'{info.Filter}' on '{info.Source}'");
+            if (causes.Count == 0)
+                return;
+
+            string summary = string.Join(", ", causes);
+            _toastOverlay.ShowEncoderOverload(summary);
+            AppLog.Write($"Encoder overload detected: {summary}");
         });
         _obs.ReplaySaved += (key, path) => Dispatcher.BeginInvoke(async () =>
         {
