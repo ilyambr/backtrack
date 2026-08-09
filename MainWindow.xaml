@@ -875,7 +875,7 @@
                                     </Border>
                                     <Border x:Name="LightThemeSwatch" Width="122" Height="78" CornerRadius="6" Background="#F7F7F8"
                                             BorderThickness="2" BorderBrush="Transparent" Cursor="Hand"
-                                            MouseLeftButtonUp="LightThemeSwatch_Click">
+                                            MouseLeftButtonUp="LightThemeSwatch_Click" Margin="0,0,12,0">
                                         <StackPanel Margin="10">
                                             <StackPanel Orientation="Horizontal">
                                                 <Ellipse Width="8" Height="8" Fill="#FF5B52" VerticalAlignment="Center" Margin="0,0,6,0"/>
@@ -885,10 +885,26 @@
                                             <Rectangle Height="5" Width="50" Fill="#82868E" RadiusX="2" RadiusY="2" Margin="0,6,0,0"/>
                                         </StackPanel>
                                     </Border>
+                                    <!-- Ported from OBS's own default "Yami" theme palette (see
+                                         Theme.Yami.xaml's comment); swatch mockup uses its real
+                                         grey/blue scale, not an invented dark variant. -->
+                                    <Border x:Name="YamiThemeSwatch" Width="122" Height="78" CornerRadius="6" Background="#1D1F26"
+                                            BorderThickness="2" BorderBrush="Transparent" Cursor="Hand"
+                                            MouseLeftButtonUp="YamiThemeSwatch_Click">
+                                        <StackPanel Margin="10">
+                                            <StackPanel Orientation="Horizontal">
+                                                <Ellipse Width="8" Height="8" Fill="#718CDC" VerticalAlignment="Center" Margin="0,0,6,0"/>
+                                                <Rectangle Height="6" Width="46" Fill="#FFFFFF" RadiusX="3" RadiusY="3"/>
+                                            </StackPanel>
+                                            <Rectangle Height="5" Width="70" Fill="#969696" RadiusX="2" RadiusY="2" Margin="0,12,0,0"/>
+                                            <Rectangle Height="5" Width="50" Fill="#969696" RadiusX="2" RadiusY="2" Margin="0,6,0,0"/>
+                                        </StackPanel>
+                                    </Border>
                                 </StackPanel>
                                 <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
                                     <TextBlock Text="Dark" Width="134" FontSize="11" FontWeight="Bold" Foreground="{DynamicResource Text2}"/>
-                                    <TextBlock Text="Light" FontSize="11" FontWeight="Bold" Foreground="{DynamicResource Text2}"/>
+                                    <TextBlock Text="Light" Width="134" FontSize="11" FontWeight="Bold" Foreground="{DynamicResource Text2}"/>
+                                    <TextBlock Text="Yami (OBS)" FontSize="11" FontWeight="Bold" Foreground="{DynamicResource Text2}"/>
                                 </StackPanel>
                             </StackPanel>
                         </Border>

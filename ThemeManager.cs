@@ -3,15 +3,18 @@ using System.Windows;
 
 namespace Backtrack;
 
-public enum AppTheme { Dark, Light }
+// Appended after Light (not inserted before it) -- AppSettings persists this
+// as JsonSerializer's default numeric enum value, so an existing settings
+// file's stored 0/1 must keep meaning Dark/Light.
+public enum AppTheme { Dark, Light, Yami }
 
 /// <summary>
-/// Loads/swaps the app-wide theme resource dictionary (Theme.Dark.xaml or
-/// Theme.Light.xaml) into Application.Resources -- every window references
-/// the same shared keys (PanelBg, Text0, Rec, ...) via DynamicResource
-/// (never StaticResource, which wouldn't react to a runtime swap), so a
-/// single Apply() call here updates every open window at once, no per-window
-/// plumbing needed.
+/// Loads/swaps the app-wide theme resource dictionary (Theme.Dark.xaml,
+/// Theme.Light.xaml, or Theme.Yami.xaml) into Application.Resources -- every
+/// window references the same shared keys (PanelBg, Text0, Rec, ...) via
+/// DynamicResource (never StaticResource, which wouldn't react to a runtime
+/// swap), so a single Apply() call here updates every open window at once,
+/// no per-window plumbing needed.
 /// </summary>
 public static class ThemeManager
 {
@@ -20,10 +23,13 @@ public static class ThemeManager
     public static void Apply(AppTheme theme)
     {
         Current = theme;
-        var dict = new ResourceDictionary
+        string file = theme switch
         {
-            Source = new Uri(theme == AppTheme.Dark ? "Theme.Dark.xaml" : "Theme.Light.xaml", UriKind.Relative)
+            AppTheme.Light => "Theme.Light.xaml",
+            AppTheme.Yami => "Theme.Yami.xaml",
+            _ => "Theme.Dark.xaml",
         };
+        var dict = new ResourceDictionary { Source = new Uri(file, UriKind.Relative) };
 
         Application app = Application.Current;
         // Removes any previously-merged theme dictionary by content (has a
