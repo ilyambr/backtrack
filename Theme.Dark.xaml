@@ -22,8 +22,8 @@
       a literal color picker. Every neutral in this file is now R=G=B,
       picked to keep the same relative brightness as before.
     -->
-    <SolidColorBrush x:Key="PanelBg" Color="#111111"/>
-    <SolidColorBrush x:Key="PanelBgOpaque" Color="#EC111111"/>
+    <SolidColorBrush x:Key="PanelBg" Color="#080808"/>
+    <SolidColorBrush x:Key="PanelBgOpaque" Color="#EC080808"/>
     <SolidColorBrush x:Key="Hairline" Color="#1FFFFFFF"/>
     <SolidColorBrush x:Key="Text0" Color="#F6F6F6"/>
     <SolidColorBrush x:Key="Text1" Color="#B5B5B5"/>

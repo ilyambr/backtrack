@@ -861,7 +861,7 @@
                                          values), NOT DynamicResource; these need to keep showing
                                          what dark/light actually look like regardless of which one
                                          is currently active, so they can't react to the live swap. -->
-                                    <Border x:Name="DarkThemeSwatch" Width="122" Height="78" CornerRadius="6" Background="#111111"
+                                    <Border x:Name="DarkThemeSwatch" Width="122" Height="78" CornerRadius="6" Background="#080808"
                                             BorderThickness="2" BorderBrush="Transparent" Cursor="Hand"
                                             MouseLeftButtonUp="DarkThemeSwatch_Click" Margin="0,0,12,0">
                                         <StackPanel Margin="10">
