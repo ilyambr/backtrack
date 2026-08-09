@@ -12,15 +12,26 @@ namespace Backtrack;
 
 public partial class ToastOverlay : Window
 {
-    private static readonly SolidColorBrush PanelBg = new(Color.FromArgb(240, 20, 21, 24));
-    private static readonly SolidColorBrush Hairline = new(Color.FromArgb(31, 255, 255, 255));
-    private static readonly SolidColorBrush Text0 = new(Color.FromRgb(0xF5, 0xF6, 0xF8));
-    private static readonly SolidColorBrush Text2 = new(Color.FromRgb(0x76, 0x7D, 0x87));
+    // Rec/Stream/Green/Warning/Accent are brand/status accent colors, deliberately
+    // IDENTICAL in both themes (see Theme.Dark.xaml's own comment on this), so
+    // caching them once as static brushes is fine. PanelBg/Hairline/Text0/Text2
+    // are neutrals that DO differ by theme -- toasts are built entirely in code
+    // (not XAML), so they can't use DynamicResource; instead these are looked
+    // up from the CURRENT theme dictionary at the moment each toast is built
+    // (see ThemeBrush below), so a runtime theme swap is picked up by the next
+    // toast shown rather than needing a cached brush to somehow update itself.
     private static readonly SolidColorBrush Green = new(Color.FromRgb(0x3E, 0xCF, 0x8E));
     private static readonly SolidColorBrush Rec = new(Color.FromRgb(0xFF, 0x5B, 0x52));
     private static readonly SolidColorBrush Stream = new(Color.FromRgb(0xA8, 0x55, 0xF7));
     private static readonly SolidColorBrush Warning = new(Color.FromRgb(0xF0, 0xA0, 0x20));
     private static readonly SolidColorBrush Accent = new(Color.FromRgb(0x3E, 0xCF, 0x8E));
+
+    private static Brush PanelBg => ThemeBrush("PanelBg");
+    private static Brush Hairline => ThemeBrush("Hairline");
+    private static Brush Text0 => ThemeBrush("Text0");
+    private static Brush Text2 => ThemeBrush("Text2");
+
+    private static Brush ThemeBrush(string key) => (Brush)Application.Current.Resources[key];
 
     private int _activeUndoCount;
     private bool _overlayActive;
@@ -169,7 +180,7 @@ public partial class ToastOverlay : Window
         mainRow.Children.Add(undoButton);
 
         // Sliding Status Indicator (Progress Bar at Bottom)
-        var progressTrack = new Grid { Height = 3, Background = new SolidColorBrush(Color.FromArgb(40, 255, 255, 255)), VerticalAlignment = VerticalAlignment.Bottom };
+        var progressTrack = new Grid { Height = 3, Background = ThemeBrush("BorderMedium"), VerticalAlignment = VerticalAlignment.Bottom };
         var progressFill = new Border { Background = Rec, HorizontalAlignment = HorizontalAlignment.Left };
         progressTrack.Children.Add(progressFill);
 
@@ -259,7 +270,7 @@ public partial class ToastOverlay : Window
         row.Children.Add(body);
 
         // Sliding Status Indicator (Progress Bar at Bottom)
-        var progressTrack = new Grid { Height = 3, Background = new SolidColorBrush(Color.FromArgb(40, 255, 255, 255)), VerticalAlignment = VerticalAlignment.Bottom };
+        var progressTrack = new Grid { Height = 3, Background = ThemeBrush("BorderMedium"), VerticalAlignment = VerticalAlignment.Bottom };
         var progressFill = new Border { Background = accentColor, HorizontalAlignment = HorizontalAlignment.Left };
         progressTrack.Children.Add(progressFill);
 

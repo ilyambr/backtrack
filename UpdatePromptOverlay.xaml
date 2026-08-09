@@ -19,16 +19,15 @@
       got the HUD open, not as a persistent always-visible nag.
     -->
     <Window.Resources>
-        <SolidColorBrush x:Key="Text0" Color="#F5F6F8"/>
-        <SolidColorBrush x:Key="Text1" Color="#AEB4BD"/>
-        <SolidColorBrush x:Key="Rec" Color="#FF5B52"/>
+        <!-- Text0/Text1/Rec used to be defined locally here; now DynamicResource
+             into the shared theme, same reason as every other overlay window. -->
 
         <!-- Same FlatButton style as MainWindow's, kept in sync by hand since
              this is a separate window with its own resource scope, same reason
-             the brushes above are duplicated instead of shared. -->
+             it's duplicated instead of shared. -->
         <Style x:Key="FlatButton" TargetType="Button">
-            <Setter Property="Background" Value="#1AFFFFFF"/>
-            <Setter Property="Foreground" Value="{StaticResource Text0}"/>
+            <Setter Property="Background" Value="{DynamicResource BorderMedium}"/>
+            <Setter Property="Foreground" Value="{DynamicResource Text0}"/>
             <Setter Property="BorderThickness" Value="0"/>
             <Setter Property="Padding" Value="10,5"/>
             <Setter Property="FontSize" Value="11.5"/>
@@ -44,10 +43,10 @@
             <ColumnDefinition Width="Auto"/>
         </Grid.ColumnDefinitions>
         <StackPanel Grid.Column="0" VerticalAlignment="Center" Margin="0,0,14,0">
-            <TextBlock Text="Update Available" FontWeight="Bold" FontSize="12.5" Foreground="{StaticResource Text0}"/>
-            <TextBlock x:Name="BodyText" FontSize="11" Foreground="{StaticResource Text1}" TextWrapping="Wrap" Margin="0,5,0,0"/>
+            <TextBlock Text="Update Available" FontWeight="Bold" FontSize="12.5" Foreground="{DynamicResource Text0}"/>
+            <TextBlock x:Name="BodyText" FontSize="11" Foreground="{DynamicResource Text1}" TextWrapping="Wrap" Margin="0,5,0,0"/>
             <TextBlock Text="Warning: Installing this update will close Backtrack and OBS. Any unsaved recordings, settings, or other work will be lost.."
-                       FontSize="10" Foreground="{StaticResource Rec}" TextWrapping="Wrap" Margin="0,6,0,0"/>
+                       FontSize="10" Foreground="{DynamicResource Rec}" TextWrapping="Wrap" Margin="0,6,0,0"/>
         </StackPanel>
         <Button x:Name="InstallButton" Grid.Column="1" Content="Install" Style="{StaticResource FlatButton}" VerticalAlignment="Center"
                 Click="InstallButton_Click"/>

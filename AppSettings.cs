@@ -37,6 +37,8 @@ public sealed class AppSettings
 
     public bool ShowDisclaimer { get; set; } = true;
 
+    public AppTheme Theme { get; set; } = AppTheme.Dark;
+
     // Which monitor the overlay and all its auxiliary windows appear on --
     // Win32's own per-monitor device name (e.g. "\\.\DISPLAY1"), not an index,
     // since indices can silently renumber when a monitor is plugged/unplugged

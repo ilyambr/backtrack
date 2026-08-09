@@ -19,13 +19,13 @@
     <!-- Wide enough that the middle sentence fits on one line at this font
          size instead of wrapping mid-sentence; the explicit LineBreaks
          below are what control where it actually splits, not this. -->
-    <TextBlock TextAlignment="Center" TextWrapping="Wrap" FontSize="10.5" Foreground="#AEB4BD" MaxWidth="720">
-        <Run x:Name="VersionRun" FontWeight="Bold" Foreground="#F5F6F8" Text="Backtrack Alpha"/>
+    <TextBlock TextAlignment="Center" TextWrapping="Wrap" FontSize="10.5" Foreground="{DynamicResource Text1}" MaxWidth="720">
+        <Run x:Name="VersionRun" FontWeight="Bold" Foreground="{DynamicResource Text0}" Text="Backtrack Alpha"/>
         <LineBreak/>
         <Run Text="This software is currently in alpha. Features are experimental and may be unstable, incomplete, or not work as intended."/>
         <LineBreak/>
         <Run Text="Report issues on GitHub: "/>
-        <Hyperlink NavigateUri="https://github.com/ilyambr/backtrack/issues" RequestNavigate="Hyperlink_RequestNavigate" Foreground="#F5F6F8">
+        <Hyperlink NavigateUri="https://github.com/ilyambr/backtrack/issues" RequestNavigate="Hyperlink_RequestNavigate" Foreground="{DynamicResource Text0}">
             <Run Text="https://github.com/ilyambr/backtrack/issues"/>
         </Hyperlink>
     </TextBlock>

@@ -27,6 +27,11 @@ public partial class App : Application
     {
         base.OnStartup(e);
 
+        // Before any window is created -- DynamicResource lookups on a
+        // window's very first Loaded pass should already see the right
+        // theme, not flash the default one then swap.
+        ThemeManager.Apply(AppSettings.Load().Theme);
+
         // %AppData%\Backtrack, same folder settings.json already lives in --
         // not a bare relative "crash.log", which lands wherever the process
         // happens to think its working directory is (inconsistent depending

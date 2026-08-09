@@ -4576,6 +4576,8 @@ public partial class MainWindow : Window
 
     private void LoadSettingsUi()
     {
+        RefreshThemeSwatchSelection();
+
         LaunchWithWindowsToggle.IsChecked = _settings.LaunchWithWindows;
         ClipsFolderText.Text = _settings.ClipsFolder;
         BufferDurationSlider.Value = _settings.ReplayBufferMinutes;
@@ -5025,6 +5027,29 @@ public partial class MainWindow : Window
         {
             CheckRemotePluginsButton.IsEnabled = true;
         }
+    }
+
+    private void DarkThemeSwatch_Click(object sender, MouseButtonEventArgs e) => ApplyTheme(AppTheme.Dark);
+
+    private void LightThemeSwatch_Click(object sender, MouseButtonEventArgs e) => ApplyTheme(AppTheme.Light);
+
+    private void ApplyTheme(AppTheme theme)
+    {
+        ThemeManager.Apply(theme);
+        _settings.Theme = theme;
+        _settings.Save();
+        RefreshThemeSwatchSelection();
+    }
+
+    // Highlight ring around whichever swatch matches the currently active
+    // theme; Green isn't tied to "success" here, just the app's one
+    // consistent selection accent, and it reads fine over both swatches
+    // since it's a fixed brand color, not a themed neutral.
+    private void RefreshThemeSwatchSelection()
+    {
+        var selected = new SolidColorBrush(Color.FromRgb(0x3E, 0xCF, 0x8E));
+        DarkThemeSwatch.BorderBrush = ThemeManager.Current == AppTheme.Dark ? selected : Brushes.Transparent;
+        LightThemeSwatch.BorderBrush = ThemeManager.Current == AppTheme.Light ? selected : Brushes.Transparent;
     }
 
     private void ShowDisclaimerToggle_Click(object sender, RoutedEventArgs e)

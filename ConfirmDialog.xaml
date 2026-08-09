@@ -11,21 +11,21 @@
         ShowInTaskbar="False"
         ResizeMode="NoResize"
         Topmost="True">
-    <Border Background="#101113" BorderBrush="#1FFFFFFF" BorderThickness="1" Padding="20,18">
+    <Border Background="{DynamicResource PanelBg}" BorderBrush="{DynamicResource Hairline}" BorderThickness="1" Padding="20,18">
         <StackPanel>
             <TextBlock x:Name="MessageText" Text="Are you sure?" FontSize="13" FontWeight="Bold"
-                       Foreground="#F5F6F8" TextWrapping="Wrap" LineHeight="18"/>
+                       Foreground="{DynamicResource Text0}" TextWrapping="Wrap" LineHeight="18"/>
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,18,0,0">
                 <Button x:Name="CancelButton" Content="Cancel" Click="CancelButton_Click"
-                        Foreground="#F5F6F8" Margin="0,0,8,0" Cursor="Hand" Focusable="False">
+                        Foreground="{DynamicResource Text0}" Margin="0,0,8,0" Cursor="Hand" Focusable="False">
                     <Button.Template>
                         <ControlTemplate TargetType="Button">
-                            <Border x:Name="Bg" Background="#1AFFFFFF" Padding="14,7">
+                            <Border x:Name="Bg" Background="{DynamicResource BorderMedium}" Padding="14,7">
                                 <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
                             </Border>
                             <ControlTemplate.Triggers>
                                 <Trigger Property="IsMouseOver" Value="True">
-                                    <Setter TargetName="Bg" Property="Background" Value="#2AFFFFFF"/>
+                                    <Setter TargetName="Bg" Property="Background" Value="{DynamicResource BorderStrong}"/>
                                 </Trigger>
                             </ControlTemplate.Triggers>
                         </ControlTemplate>
@@ -35,7 +35,7 @@
                         Foreground="#FFFFFF" Cursor="Hand" Focusable="False">
                     <Button.Template>
                         <ControlTemplate TargetType="Button">
-                            <Border x:Name="Bg" Background="#FF5B52" Padding="14,7">
+                            <Border x:Name="Bg" Background="{DynamicResource Rec}" Padding="14,7">
                                 <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
                             </Border>
                             <ControlTemplate.Triggers>
