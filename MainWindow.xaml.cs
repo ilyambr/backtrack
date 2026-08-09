@@ -1508,9 +1508,7 @@ public partial class MainWindow : Window
             ShowScreen(_lastScreen);
         }
 
-        WindowFade.FadeOut(this);
         Hide();
-        WindowFade.FadeOut(_scrim);
         _scrim.Hide();
         _disclaimer.Hide();
         _logo.Hide();
@@ -1560,10 +1558,8 @@ public partial class MainWindow : Window
         }
         else
         {
-            WindowFade.FadeIn(_scrim);
             _scrim.Show();
             _logo.ShowWithIntro();
-            WindowFade.FadeIn(this);
             Show();
             Activate();
             _statusOverlay.Show();
