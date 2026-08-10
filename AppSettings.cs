@@ -37,6 +37,20 @@ public sealed class AppSettings
 
     public bool ShowDisclaimer { get; set; } = true;
 
+    public AppTheme Theme { get; set; } = AppTheme.Dark;
+
+    // Off by default -- see MainWindow's ShowScreen/ToggleVisible/CloseOverlay
+    // for the AllowsTransparency="True" experiment these gate. That change
+    // enabled a genuine screen-transition fade/scale and a real window-level
+    // open/close fade, but on a layered window ANY animation means a full
+    // software re-composite of the whole window on every frame, which reads
+    // as smooth on some setups and janky/frame-dropped on others depending
+    // on hardware, drivers, and what's on screen underneath (a game with its
+    // own heavy GPU load in particular). Instant show/hide is the safe,
+    // guaranteed-smooth-because-there's-nothing-to-drop-frames-on default;
+    // this is the escape hatch for turning the animated version back on.
+    public bool EnableAnimations { get; set; } = false;
+
     // Which monitor the overlay and all its auxiliary windows appear on --
     // Win32's own per-monitor device name (e.g. "\\.\DISPLAY1"), not an index,
     // since indices can silently renumber when a monitor is plugged/unplugged

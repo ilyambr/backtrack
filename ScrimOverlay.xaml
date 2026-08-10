@@ -15,6 +15,12 @@
       summoned, dimming the desktop; and since it isn't click-through, unlike
       StatusOverlay/ToastOverlay) actually blocks clicks from reaching whatever
       is behind it. Clicking the dimmed area itself dismisses the HUD.
+
+      Deliberately NOT themed: this dims whatever's behind it (desktop/game
+      content), not an app panel, so it stays black regardless of light/dark
+      mode; same reasoning for the exit button's own fixed dark chip and
+      white X glyph, which floats over that dimmed backdrop, not over a
+      themed surface.
     -->
     <Grid>
         <!-- A real, discoverable exit control at the screen's actual top-left

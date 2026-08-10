@@ -7,8 +7,8 @@ namespace Backtrack;
 
 /// <summary>
 /// Bottom-left, screen-anchored prompt shown when an update was found but
-/// deferred because OBS is actively recording/streaming/replaying (see
-/// ObsService.IsAnyOutputActiveAsync and its callers in MainWindow). Unlike
+/// deferred because OBS is actively recording/streaming (see
+/// ObsService.IsRecordingOrStreamingAsync and its callers in MainWindow). Unlike
 /// ToastOverlay/StatusOverlay, this is NOT click-through and NOT always-on --
 /// it needs to receive the Install button's clicks, and MainWindow shows/hides
 /// it in lockstep with its own visibility (ToggleVisible/CloseOverlay) so it

@@ -62,6 +62,7 @@ public partial class MainWindow : Window
     private bool _lastKnownAnyRowActive;
     private bool _lastKnownAnyRowError;
     private int _lastKnownActiveRecordRowCount;
+    private bool _refreshStatusRunning;
     // Set the moment a filter-only recording (main not active) is first
     // noticed, cleared once nothing's recording -- see RefreshStatusAsync's
     // own comment on why this is an approximation, not a true start time.
@@ -88,6 +89,7 @@ public partial class MainWindow : Window
     private string? _pendingUpdateName;
     private Action? _pendingUpdateInstall;
     private readonly LogoOverlay _logo;
+    private readonly StreamingStatusOverlay _streamingStatus;
     private readonly PairingRequestOverlay _pairingRequestOverlay;
     private readonly AppSettings _settings;
     private readonly UpdateService _updates = new();
@@ -99,6 +101,14 @@ public partial class MainWindow : Window
     // first click. Doesn't affect the automatic hourly check, which still
     // applies updates on its own the moment it's safe to (see CheckForUpdatesAsync).
     private bool _manualUpdateReady;
+    // Last known streaming state -- StreamingStatusOverlay needs this plus 2
+    // more conditions true before it's actually shown (see
+    // UpdateStreamingBoxVisibility), and this is the only one of the 3 not
+    // already readable directly off some existing element/property.
+    private bool _isStreaming;
+    // Cooldown gate for the EncoderOverloadDetected toast -- see that
+    // subscription's own comment for why this isn't a plain de-dup.
+    private DateTime _lastEncoderOverloadToastUtc = DateTime.MinValue;
     private readonly PairingService _pairing;
     private readonly Dictionary<string, string> _rowLabels = new();
     private List<ReplayRow> _lastReplayRows = new();
@@ -152,7 +162,7 @@ public partial class MainWindow : Window
     // BuildClipCard's return value (still just a Border, used everywhere else as one).
     private readonly List<(FileInfo File, Border Circle, Border Thumb)> _galleryCardSelection = new();
 
-    public MainWindow(StatusOverlay statusOverlay, ToastOverlay toastOverlay, ScrimOverlay scrim, DisclaimerOverlay disclaimer, LogoOverlay logo, PairingRequestOverlay pairingRequestOverlay)
+    public MainWindow(StatusOverlay statusOverlay, ToastOverlay toastOverlay, ScrimOverlay scrim, DisclaimerOverlay disclaimer, LogoOverlay logo, StreamingStatusOverlay streamingStatus, PairingRequestOverlay pairingRequestOverlay)
     {
         InitializeComponent();
         _statusOverlay = statusOverlay;
@@ -161,7 +171,15 @@ public partial class MainWindow : Window
         _scrim = scrim;
         _disclaimer = disclaimer;
         _logo = logo;
+        _streamingStatus = streamingStatus;
         _settings = AppSettings.Load();
+
+        // Self-corrects StreamingStatusOverlay's position once this window's
+        // real post-switch bounds actually settle (see UpdateStreamingBoxVisibility's
+        // own comment) -- also just generally keeps it tracking MainWindow if
+        // it ever moves independently of a screen switch.
+        SizeChanged += (_, _) => UpdateStreamingBoxVisibility();
+        LocationChanged += (_, _) => UpdateStreamingBoxVisibility();
 
         _pairing = new PairingService(_settings);
         _pairing.PairingRequested += (deviceName, code, requestId) => Dispatcher.BeginInvoke(() =>
@@ -215,6 +233,53 @@ public partial class MainWindow : Window
                 AppLog.Write($"Recording saved to '{path}'");
                 ShowObsModeMessage($"Recording saved to '{path}'");
             }
+        });
+        _obs.StreamingStateChanged += active => Dispatcher.BeginInvoke(() =>
+        {
+            // obs-websocket appears to genuinely emit two separate stop
+            // transitions when Twitch Enhanced Broadcasting/multitrack is
+            // active (its own underlying RTMP sub-output stopping alongside
+            // the regular stream output) -- reported live as "Livestream
+            // Ended" toasting twice back to back. Skip re-announcing a state
+            // that's already current instead of trying to filter by exact
+            // cause.
+            if (active == _isStreaming)
+                return;
+            _toastOverlay.ShowStreaming(active);
+            AppLog.Write(active ? "Livestream started" : "Livestream ended");
+            _isStreaming = active;
+            _statusOverlay.SetStreaming(active);
+            UpdateStreamingBoxVisibility();
+        });
+        _obs.EncoderOverloadDetected += info => Dispatcher.BeginInvoke(() =>
+        {
+            // The plugin re-emits this roughly every ~2s for as long as the
+            // condition holds, not just once on a transition -- showing a
+            // fresh toast every single time would spam the screen for a
+            // sustained overload. Cooldown instead of full de-dup, since
+            // which specific output is affected can genuinely change
+            // between checks and a plain "already showing this" guard
+            // wouldn't catch a NEW cause starting right after an old one
+            // stopped, mid-cooldown.
+            if (DateTime.UtcNow - _lastEncoderOverloadToastUtc < TimeSpan.FromSeconds(30))
+                return;
+            _lastEncoderOverloadToastUtc = DateTime.UtcNow;
+
+            var causes = new List<string>();
+            if (info.MainStream)
+                causes.Add("the stream (encoder or network)");
+            if (info.MainRecording)
+                causes.Add("the main recording");
+            if (info.MainReplayBuffer)
+                causes.Add("the main replay buffer");
+            if (info.ThisFilter)
+                causes.Add($"'{info.Filter}' on '{info.Source}'");
+            if (causes.Count == 0)
+                return;
+
+            string summary = string.Join(", ", causes);
+            _toastOverlay.ShowEncoderOverload(summary);
+            AppLog.Write($"Encoder overload detected: {summary}");
         });
         _obs.ReplaySaved += (key, path) => Dispatcher.BeginInvoke(async () =>
         {
@@ -279,21 +344,47 @@ public partial class MainWindow : Window
         // directly.
         _pairing.CheckAndApplyPluginUpdatesRemotely = async () =>
         {
+            // isManualTrigger: true -- a remote request to check-and-apply right
+            // now is just as much an explicit "yes, install it" as the local
+            // Settings button, not a silent background check.
             PluginVersionInfo replaySlider = await await Dispatcher.InvokeAsync(() =>
                 CheckAndApplyPluginUpdateAsync("obs-replay-slider", "Replay Slider", "replay-slider.dll", ReplaySliderStatusDot, ReplaySliderVersionText,
                     name => name.Contains("windows", StringComparison.OrdinalIgnoreCase) && name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase),
                     () => _settings.LastAppliedReplaySliderReleaseAt, v => _settings.LastAppliedReplaySliderReleaseAt = v,
-                    () => _settings.LastAppliedReplaySliderDigest, v => _settings.LastAppliedReplaySliderDigest = v));
+                    () => _settings.LastAppliedReplaySliderDigest, v => _settings.LastAppliedReplaySliderDigest = v, isManualTrigger: true));
             PluginVersionInfo sourceRecord = await await Dispatcher.InvokeAsync(() =>
                 CheckAndApplyPluginUpdateAsync("obs-source-record", "Source Record", "source-record.dll", SourceRecordStatusDot, SourceRecordVersionText,
                     name => name.Contains("windows-installer", StringComparison.OrdinalIgnoreCase) && name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase),
                     () => _settings.LastAppliedSourceRecordReleaseAt, v => _settings.LastAppliedSourceRecordReleaseAt = v,
-                    () => _settings.LastAppliedSourceRecordDigest, v => _settings.LastAppliedSourceRecordDigest = v));
+                    () => _settings.LastAppliedSourceRecordDigest, v => _settings.LastAppliedSourceRecordDigest = v, isManualTrigger: true));
             return new PluginVersionsSnapshot(replaySlider, sourceRecord);
         };
 
         _pollTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
-        _pollTimer.Tick += async (_, _) => await RefreshStatusAsync();
+        _pollTimer.Tick += async (_, _) =>
+        {
+            // Re-entrancy guard: RefreshStatusAsync now makes 4 sequential OBS
+            // round-trips (2 more than it used to, for the Start Recording
+            // aggregation) -- if one tick ever takes longer than the 1s interval
+            // to finish (a slow bridge round-trip, OBS's own UI thread briefly
+            // busy, etc.), the timer fires again anyway and a second overlapping
+            // call starts racing the first, both touching the same UI elements
+            // and connection. That pileup is what a sudden "everything feels
+            // laggy" (and, downstream, WPF layout passes falling behind enough
+            // for the Player overlay Popup to end up looking stale) turned out
+            // to be -- skip this tick entirely rather than let them stack.
+            if (_refreshStatusRunning)
+                return;
+            _refreshStatusRunning = true;
+            try
+            {
+                await RefreshStatusAsync();
+            }
+            finally
+            {
+                _refreshStatusRunning = false;
+            }
+        };
 
         _micTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
         _micTimer.Tick += (_, _) => _statusOverlay.SetMicStatus(_obs.GetMicStatus());
@@ -635,7 +726,7 @@ public partial class MainWindow : Window
     /// others. Updates the Settings SHARING rows directly (dot + version)
     /// regardless of whether that screen is currently visible.
     /// </summary>
-    private async Task CheckForUpdatesAsync()
+    private async Task CheckForUpdatesAsync(bool isManualTrigger = false)
     {
         // _obs.Start() (constructor) kicks off connecting to OBS in the
         // background with nothing awaiting it, and this method is called
@@ -661,11 +752,11 @@ public partial class MainWindow : Window
         await CheckAndApplyPluginUpdateAsync("obs-replay-slider", "Replay Slider", "replay-slider.dll", ReplaySliderStatusDot, ReplaySliderVersionText,
             name => name.Contains("windows", StringComparison.OrdinalIgnoreCase) && name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase),
             () => _settings.LastAppliedReplaySliderReleaseAt, v => _settings.LastAppliedReplaySliderReleaseAt = v,
-            () => _settings.LastAppliedReplaySliderDigest, v => _settings.LastAppliedReplaySliderDigest = v);
+            () => _settings.LastAppliedReplaySliderDigest, v => _settings.LastAppliedReplaySliderDigest = v, isManualTrigger);
         await CheckAndApplyPluginUpdateAsync("obs-source-record", "Source Record", "source-record.dll", SourceRecordStatusDot, SourceRecordVersionText,
             name => name.Contains("windows-installer", StringComparison.OrdinalIgnoreCase) && name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase),
             () => _settings.LastAppliedSourceRecordReleaseAt, v => _settings.LastAppliedSourceRecordReleaseAt = v,
-            () => _settings.LastAppliedSourceRecordDigest, v => _settings.LastAppliedSourceRecordDigest = v);
+            () => _settings.LastAppliedSourceRecordDigest, v => _settings.LastAppliedSourceRecordDigest = v, isManualTrigger);
 
         // Never on a dev build (see UpdateService.IsDevBuild): a locally-compiled
         // binary's digest never matches the official release's, so this would
@@ -789,7 +880,7 @@ public partial class MainWindow : Window
     }
 
     private async Task<PluginVersionInfo> CheckAndApplyPluginUpdateAsync(string repo, string displayName, string dllFileName, System.Windows.Shapes.Ellipse dot, TextBlock versionText, Func<string, bool> assetPredicate,
-        Func<DateTimeOffset?> getLastApplied, Action<DateTimeOffset?> setLastApplied, Func<string?> getLastDigest, Action<string?> setLastDigest)
+        Func<DateTimeOffset?> getLastApplied, Action<DateTimeOffset?> setLastApplied, Func<string?> getLastDigest, Action<string?> setLastDigest, bool isManualTrigger = false)
     {
         // No local OBS install (e.g. a receiver-only PC paired to a transmitter's
         // OBS over the network) -- nothing to check a plugin version against and
@@ -821,6 +912,21 @@ public partial class MainWindow : Window
 
             async Task ApplyAsync()
             {
+                // Defense in depth, not the primary gate below -- this is what
+                // actually runs the install regardless of which of the 3 paths
+                // got here (auto-check, the manual Apply button, or later
+                // clicking the deferred bottom-left prompt's Install button,
+                // which bypasses the primary gate entirely since it's a
+                // captured closure). A livestream starting in between the
+                // primary gate passing and this actually running is a tiny
+                // window, but a real one -- never let a plugin update land
+                // while genuinely live, full stop.
+                if (await _obs.GetStreamActiveAsync())
+                {
+                    MessageBox.Show(this, $"You're currently livestreaming. End your stream before updating {displayName}.", "Backtrack");
+                    SetUpdateStatus(dot, versionText, $"{installed.ToString(3)} (blocked -- you're livestreaming)", ok: null);
+                    return;
+                }
                 _toastOverlay.ShowUpdateInProgress(displayName);
                 await _updates.InstallPluginUpdateAsync(release.DownloadUrl);
                 RecordUpdateApplied(release, setLastApplied, setLastDigest);
@@ -830,11 +936,33 @@ public partial class MainWindow : Window
                 ClearPendingUpdateIfMatches(displayName);
             }
 
+            // Plugin updates specifically (not Backtrack's own self-update --
+            // see CheckAndApplySelfUpdateAsync, deliberately untouched by this)
+            // never apply at all while actually livestreaming, full stop --
+            // not deferred-with-a-forceable-Install-button the way the
+            // recording/replay case below is, an explicit block instead. An
+            // explicit trigger (isManualTrigger -- the Settings Apply button,
+            // or a paired PC's remote request) gets told why directly; the
+            // silent automatic check just shows the same status text without
+            // interrupting with a dialog.
+            if (await _obs.GetStreamActiveAsync())
+            {
+                if (isManualTrigger)
+                {
+                    MessageBox.Show(this, $"You're currently livestreaming. End your stream before updating {displayName}.", "Backtrack");
+                }
+                SetUpdateStatus(dot, versionText, $"{installed.ToString(3)} (blocked -- you're livestreaming)", ok: null);
+                return new PluginVersionInfo(installed.ToString(3), null);
+            }
+
             // Installing a plugin update means closing OBS out from under
             // whatever it's doing (InstallPluginUpdateAsync's CloseObsIfRunningAsync)
-            // -- never worth it mid-recording/stream/replay without asking
-            // first. Deferred to the bottom-left prompt instead, so the user
-            // can force it through right now if they'd rather do that.
+            // -- never worth it mid-recording/replay without asking first
+            // either, just not as absolute a rule as streaming above. Deferred
+            // to the bottom-left prompt instead, so the user can force it
+            // through right now if they'd rather do that (ApplyAsync's own
+            // livestream re-check above still applies if streaming started by
+            // the time that Install button actually gets clicked).
             if (await _obs.IsRecordingOrStreamingAsync())
             {
                 SetUpdateStatus(dot, versionText, $"{installed.ToString(3)} (waiting for OBS)", ok: null);
@@ -1359,31 +1487,147 @@ public partial class MainWindow : Window
     /// already have switched away from Player before passing true -- Player
     /// doesn't survive a hide/show round trip (see PlayerFolder_Click).
     /// </param>
+    /// <summary>
+    /// Fades a window's Opacity from 0 to 1 then Show()s it -- a plain WPF
+    /// DoubleAnimation, not the native AnimateWindow trick tried earlier this
+    /// session, which only ever half-worked (didn't reliably blend on every
+    /// setup) and got reverted. This works because MainWindow (and Scrim,
+    /// already AllowsTransparency="True") is a genuinely layered window now
+    /// -- Window.Opacity animation is the actual textbook-supported use case
+    /// for that, unlike a non-layered window silently ignoring it.
+    /// </summary>
+    // See FadeWindowOut's own comment for why useCache exists at all -- Player
+    // never needs useCache:false here, since it doesn't survive a hide/show
+    // round trip (see PlayerFolder_Click's own comment), so it's never the
+    // active panel at the moment a fade-in starts.
+    private static void FadeWindowIn(Window window, double durationMs = 180)
+    {
+        window.Opacity = 0;
+        var cacheTarget = window.Content as FrameworkElement;
+        if (cacheTarget != null)
+            cacheTarget.CacheMode = new BitmapCache();
+
+        window.Show();
+        var fade = new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(durationMs))
+        {
+            EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut }
+        };
+        if (cacheTarget != null)
+            fade.Completed += (_, _) => cacheTarget.CacheMode = null;
+        window.BeginAnimation(OpacityProperty, fade);
+    }
+
+    /// <summary>
+    /// Fades a window's Opacity to 0, then Hide()s it and resets Opacity back
+    /// to 1 -- so the NEXT FadeWindowIn call starts from a clean, fully-
+    /// opaque state rather than wherever this fade-out happened to leave it.
+    /// onCompleted (optional) runs right after that, still only if the fade
+    /// actually reached 0 naturally -- see CloseOverlay's own call site for
+    /// why that matters (a reopen mid-fade replaces this animation instead
+    /// of letting it finish, so onCompleted correctly never runs then).
+    ///
+    /// useCache mirrors PrepareAnimatePanelIn's own useCache: animating just
+    /// Window.Opacity still means re-rendering the FULL window content on
+    /// every single frame the layered window pushes -- caching window.Content
+    /// once (a BitmapCache on RootBorder, or Scrim's own root Grid) and
+    /// alpha-blending that cached bitmap instead is what makes the fade
+    /// actually smooth rather than the window just snapping away once
+    /// whatever handful of frames DID make it through finish dropping.
+    /// Default true; CloseOverlay passes false specifically when closing
+    /// from Player, since VLC's native HWND is still attached and playing
+    /// throughout this fade (ShowScreen's own screen-swap, which would call
+    /// StopPlayerPlayback, is deferred until onCompleted) -- same "airspace"
+    /// incompatibility as PrepareAnimatePanelIn's own Player exclusion.
+    /// </summary>
+    private static void FadeWindowOut(Window window, double durationMs = 150, Action? onCompleted = null, bool useCache = true)
+    {
+        FrameworkElement? cacheTarget = useCache ? window.Content as FrameworkElement : null;
+        if (cacheTarget != null)
+            cacheTarget.CacheMode = new BitmapCache();
+
+        var fade = new DoubleAnimation(window.Opacity, 0, TimeSpan.FromMilliseconds(durationMs))
+        {
+            EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut }
+        };
+        fade.Completed += (_, _) =>
+        {
+            window.Hide();
+            window.Opacity = 1;
+            if (cacheTarget != null)
+                cacheTarget.CacheMode = null;
+            onCompleted?.Invoke();
+        };
+        window.BeginAnimation(OpacityProperty, fade);
+    }
+
     private void CloseOverlay(bool preserveScreen = false)
     {
-        if (preserveScreen)
+        if (!_settings.EnableAnimations)
         {
-            // Deliberately don't touch ShowScreen/_lastScreen at all here --
-            // Gallery's _currentGalleryFolder and Player's _currentPlayerFile
-            // are untouched by anything in this path, so leaving the current
-            // panel as-is is sufficient; ToggleVisible's reopen path doesn't
-            // call ShowScreen either, so whatever's still active just
-            // reappears exactly as it was.
-        }
-        else if (!IsCriticalOperationActive())
-        {
-            _lastScreen = Screen.Idle;
-            ShowScreen(Screen.Idle);
+            // Instant path, matching how this worked before the
+            // AllowsTransparency="True" experiment entirely -- no fade, no
+            // deferred swap, the panel reset (if any) just happens
+            // synchronously up front since there's no animation for it to
+            // race against.
+            if (preserveScreen)
+            {
+                // Deliberately don't touch ShowScreen/_lastScreen at all here --
+                // Gallery's _currentGalleryFolder and Player's _currentPlayerFile
+                // are untouched by anything in this path, so leaving the current
+                // panel as-is is sufficient; ToggleVisible's reopen path doesn't
+                // call ShowScreen either, so whatever's still active just
+                // reappears exactly as it was.
+            }
+            else if (!IsCriticalOperationActive())
+            {
+                _lastScreen = Screen.Idle;
+                ShowScreen(Screen.Idle, skipEntranceAnimation: true);
+            }
+            else
+            {
+                ShowScreen(_lastScreen, skipEntranceAnimation: true);
+            }
+
+            Hide();
+            _scrim.Hide();
         }
         else
         {
-            ShowScreen(_lastScreen);
+            // The actual panel swap (ShowScreen) is deferred into
+            // FadeWindowOut's own onCompleted below instead of happening up
+            // front -- doing it before the fade even started meant the fade
+            // was visibly fading OUT IDLE'S content, not whatever screen the
+            // user was actually just looking at (Gallery/Settings/Player):
+            // the swap itself is instant (no UpdateLayout to soften it, see
+            // ShowScreen's skipEntranceAnimation comment), so it read as
+            // "everything disappears but the idle panel stays for a few
+            // frames" instead of a clean fade of the real screen. Deferring
+            // it to onCompleted means the swap only ever happens once the
+            // window is already Hide()'d, so it's genuinely invisible.
+            // Whether/what to reset to is still decided NOW (not 150ms from
+            // now), just not actually APPLIED yet.
+            if (preserveScreen)
+            {
+                FadeWindowOut(this, durationMs: 80, useCache: PlayerPanel.Visibility != Visibility.Visible);
+            }
+            else
+            {
+                if (!IsCriticalOperationActive())
+                    _lastScreen = Screen.Idle;
+                Screen targetScreen = _lastScreen;
+                FadeWindowOut(this, durationMs: 80, onCompleted: () => ShowScreen(targetScreen, skipEntranceAnimation: true), useCache: PlayerPanel.Visibility != Visibility.Visible);
+            }
+
+            // Tiles panel deliberately faster than the scrim -- the dimmed
+            // backdrop lingering a beat longer while the tiles themselves have
+            // already snapped away reads as intentional (a graceful undim), not
+            // as the tiles being "stuck".
+            FadeWindowOut(_scrim);
         }
 
-        Hide();
-        _scrim.Hide();
         _disclaimer.Hide();
         _logo.Hide();
+        _streamingStatus.Hide();
         _toastOverlay.UpdatePosition(false);
         _updatePrompt.HidePrompt();
         RefreshOverlayLogVisibilityAndMode();
@@ -1429,9 +1673,18 @@ public partial class MainWindow : Window
         }
         else
         {
-            _scrim.Show();
-            _logo.ShowWithIntro();
-            Show();
+            if (_settings.EnableAnimations)
+            {
+                FadeWindowIn(_scrim);
+                _logo.ShowWithIntro();
+                FadeWindowIn(this);
+            }
+            else
+            {
+                _scrim.Show();
+                _logo.ShowWithIntro();
+                Show();
+            }
             Activate();
             _statusOverlay.Show();
             WindowZOrder.BringToFrontWithoutActivating(new WindowInteropHelper(_statusOverlay).Handle);
@@ -1443,6 +1696,10 @@ public partial class MainWindow : Window
 
             if (_settings.ShowDisclaimer)
                 _disclaimer.Show();
+
+            // Otherwise this waits for the next 1s poll tick to reappear if
+            // still streaming -- fine in practice, but immediate is free here.
+            UpdateStreamingBoxVisibility();
         }
     }
 
@@ -1498,53 +1755,136 @@ public partial class MainWindow : Window
     /// then-settle on the scale specifically is what reads as "alive"
     /// rather than mechanical.
     /// </summary>
-    private static void AnimatePanelIn(FrameworkElement panel)
+    /// <summary>
+    /// Split into Prepare (before newPanel becomes visible) and Start (after
+    /// everything else in ShowScreen has settled) specifically for the
+    /// AllowsTransparency="True" experiment -- see ShowScreen's own comment
+    /// for why the forced UpdateLayout() call in between needs the panel
+    /// ALREADY in its invisible/shrunk starting state, not its old combined
+    /// form which set that state only after the layout pass had already
+    /// happened.
+    /// </summary>
+    private static void PrepareAnimatePanelIn(FrameworkElement panel, bool useCache)
     {
-        var duration = TimeSpan.FromMilliseconds(220);
-        var scale = new ScaleTransform(0.96, 0.96);
-        panel.RenderTransform = scale;
+        // BitmapCache rasterizes the panel once and animates that cached
+        // bitmap instead of re-rendering the actual vector content on every
+        // frame -- cuts the per-frame render cost this panel adds on top of
+        // the layered window's own full-window blit. Cleared once the
+        // animation completes so it isn't kept around outside the transition.
+        //
+        // useCache=false for Gallery (see caller): LoadGallery() runs right
+        // after ShowScreen returns and populates/mutates the tile grid
+        // (thumbnails loading in) while this fade is still in flight -- a
+        // cached bitmap has to re-rasterize every time that content changes
+        // underneath it, and doing that mid-animation caused a solid-frame /
+        // opacity-dip / solid-frame flicker (a stale cache frame briefly
+        // visible during regeneration).
+        //
+        // useCache=false for Player too, for a different reason: BitmapCache
+        // can only rasterize WPF's own rendered content, not a native child
+        // HWND -- VLC's video surface, attached into PlayerVideoView shortly
+        // after this via OpenInPlayer's own deferred callback. The exact
+        // same "airspace" problem documented elsewhere in this app (see
+        // StopPlayerPlayback), just hitting BitmapCache instead of
+        // Visibility/layout this time: a cached bitmap taken before VLC
+        // attaches can't include content that isn't WPF's to rasterize,
+        // producing a stale/partial frame (a "half window", then the video
+        // area rendering as an empty container) until the cache clears at
+        // the animation's end and normal compositing takes back over.
+        //
+        // Every other screen is both fully static once shown AND has no
+        // native HWND content, so the cache stays valid for their whole
+        // animation.
+        if (useCache)
+            panel.CacheMode = new BitmapCache();
+        panel.RenderTransform = new ScaleTransform(0.96, 0.96);
         panel.RenderTransformOrigin = new Point(0.5, 0.5);
         panel.Opacity = 0;
-
-        var fadeEase = new CubicEase { EasingMode = EasingMode.EaseOut };
-        // Small amplitude -- enough to feel like a real settle, not a bounce.
-        var settleEase = new BackEase { EasingMode = EasingMode.EaseOut, Amplitude = 0.35 };
-
-        panel.BeginAnimation(OpacityProperty, new DoubleAnimation(0, 1, duration) { EasingFunction = fadeEase });
-        scale.BeginAnimation(ScaleTransform.ScaleXProperty, new DoubleAnimation(0.96, 1, duration) { EasingFunction = settleEase });
-        scale.BeginAnimation(ScaleTransform.ScaleYProperty, new DoubleAnimation(0.96, 1, duration) { EasingFunction = settleEase });
     }
 
-    private void ShowScreen(Screen screen)
+    private static void StartAnimatePanelIn(FrameworkElement panel)
+    {
+        // Slightly longer duration, and no overshoot (CubicEase instead of
+        // BackEase) -- under a layered window's frame-dropping, overshoot
+        // needs enough in-between frames to read as "settle"; with frames
+        // getting dropped it read as a bounce/snap instead of a subtle one,
+        // so removing it degrades gracefully even when frames are sparse.
+        var duration = TimeSpan.FromMilliseconds(320);
+        var ease = new CubicEase { EasingMode = EasingMode.EaseOut };
+        var scale = (ScaleTransform)panel.RenderTransform;
+
+        var fade = new DoubleAnimation(0, 1, duration) { EasingFunction = ease };
+        fade.Completed += (_, _) => panel.CacheMode = null;
+
+        panel.BeginAnimation(OpacityProperty, fade);
+        scale.BeginAnimation(ScaleTransform.ScaleXProperty, new DoubleAnimation(0.96, 1, duration) { EasingFunction = ease });
+        scale.BeginAnimation(ScaleTransform.ScaleYProperty, new DoubleAnimation(0.96, 1, duration) { EasingFunction = ease });
+    }
+
+    private void ShowScreen(Screen screen, bool skipEntranceAnimation = false)
     {
         FrameworkElement newPanel = PanelFor(screen);
         bool switchingPanel = newPanel.Visibility != Visibility.Visible;
+        // No entrance animation at all for Player -- VLC's video keeps
+        // independently decoding/presenting its own frames the whole time
+        // OpenInPlayer's deferred attach is pending, on top of whatever this
+        // fade+scale animation costs, and both compete for the same
+        // layered-window full-window blit on every single frame either one
+        // produces. That contention read as the animation itself running at
+        // ~5fps -- not fixable by tuning the animation cheaper, since the
+        // video's own frame rate isn't something this app controls. Every
+        // other screen has no ongoing native rendering competing with it, so
+        // they keep the animation.
+        //
+        // skipEntranceAnimation is CloseOverlay's escape hatch for its own
+        // reset-to-Idle call: that reset happens right before FadeWindowOut
+        // fades the WHOLE window away, so IdlePanel's own fade+scale (and
+        // its BitmapCache) would be competing with that window-level fade
+        // for the same layered-window compositing pipeline for literally no
+        // visual benefit -- nobody's watching Idle "animate in" while the
+        // window is simultaneously vanishing. That contention was the actual
+        // cause of a near-black square (RootBorder's own background, since
+        // IdlePanel's content starts at Opacity=0) reading as "stuck" for
+        // half a second instead of fading -- the window's own fade-out was
+        // getting starved by the competing animation, not genuinely stuck.
+        bool animateEntrance = switchingPanel && screen != Screen.Player && !skipEntranceAnimation && _settings.EnableAnimations;
 
-        IdlePanel.Visibility = screen == Screen.Idle ? Visibility.Visible : Visibility.Collapsed;
-        SaveReplayPanel.Visibility = screen == Screen.SaveReplay ? Visibility.Visible : Visibility.Collapsed;
-        StartRecordPanel.Visibility = screen == Screen.StartRecord ? Visibility.Visible : Visibility.Collapsed;
-        GalleryPanel.Visibility = screen == Screen.Gallery ? Visibility.Visible : Visibility.Collapsed;
-        PlayerPanel.Visibility = screen == Screen.Player ? Visibility.Visible : Visibility.Collapsed;
-        SettingsPanel.Visibility = screen == Screen.Settings ? Visibility.Visible : Visibility.Collapsed;
-
-        // GalleryStatus is the SAME TextBlock as the Idle tile's "X clips"
-        // subtitle -- LoadGallery() (browsing) sets it to a SHALLOW count of
-        // just the currently-viewed folder's own files, not a recursive total,
-        // so it stomps the real total the moment Gallery's opened at all (e.g.
-        // clips organized into subfolders would show far fewer, or zero, right
-        // there in the root). Recomputing the real recursive count every time
-        // Idle becomes the active screen means that stale per-folder number
-        // never lingers on the tile once you're back, regardless of which path
-        // got you there.
-        if (screen == Screen.Idle)
-            _ = RefreshGalleryCountAsync();
-
-        if (switchingPanel)
-            AnimatePanelIn(newPanel);
-
-        // The gear only makes sense on the idle screen -- it isn't a fourth tile,
-        // so it shouldn't linger once you've navigated away from the row it sits above.
-        TopRightButtons.Visibility = screen == Screen.Idle ? Visibility.Visible : Visibility.Collapsed;
+        // Three ordered steps, not two -- a switch always involves BOTH a
+        // Visibility change AND (often) a Size change, and doing either one
+        // first alone exposes the WRONG combination of the two for a frame:
+        //
+        //  1) Hide the OUTGOING panel first, before anything about size
+        //     changes. (Tried resizing first instead, leaving the outgoing
+        //     panel visible a moment longer -- for Gallery specifically,
+        //     whose tiles reflow with available width, shrinking the window
+        //     out from under its still-visible grid squashed it into a tall
+        //     vertical strip for a frame. Worse than the original bug.)
+        //  2) Resize/reposition while NOTHING switch-relevant is visible --
+        //     safe now, nothing to visibly glitch.
+        //  3) Only then show the INCOMING panel, already at the correct
+        //     final bounds -- it never has to render at a stale size either.
+        //
+        // (Also tried forcing a synchronous UpdateLayout() between the
+        // Visibility swap and the resize instead of reordering at all -- that
+        // traded the flash for a worse bug: it could commit a real rendered
+        // frame of the new panel already at its full, sometimes-wrong-at-that-
+        // point height while AnimatePanelIn's own initial Opacity=0 start
+        // state was still in effect -- a big blank box, not just a flicker.)
+        IdlePanel.Visibility = Visibility.Collapsed;
+        SaveReplayPanel.Visibility = Visibility.Collapsed;
+        StartRecordPanel.Visibility = Visibility.Collapsed;
+        GalleryPanel.Visibility = Visibility.Collapsed;
+        PlayerPanel.Visibility = Visibility.Collapsed;
+        SettingsPanel.Visibility = Visibility.Collapsed;
+        // Not one of the 6 screen panels above, but just as switch-relevant --
+        // it's a separate sibling element (declared after IdlePanel so it wins
+        // hit-testing over Gallery's tiles, per its own XAML comment), so its
+        // own Collapse used to happen much later in this method, well after
+        // the resize below. Left it visible through that brief "everything
+        // else hidden, already resized to the new screen's bounds" gap, which
+        // is exactly what "a small thin container with just the gear on it"
+        // for one frame entering any screen from Idle turned out to be.
+        TopRightButtons.Visibility = Visibility.Collapsed;
 
         bool big = screen is Screen.Gallery or Screen.Player;
         Width = screen == Screen.Settings ? WideWidth : big ? BigWidth() : CompactWidth;
@@ -1566,7 +1906,96 @@ public partial class MainWindow : Window
             Top = targetBounds.Y + CompactTop;
         }
 
-        PlayerOverlayPopup.IsOpen = screen == Screen.Player;
+        // AllowsTransparency="True" experiment: a layered window has to push
+        // a fully-composited bitmap for whatever the visual tree looks like
+        // at the moment DWM asks for one, instead of a normal window's live
+        // incremental repaint -- so with SizeToContent="Height" driving the
+        // window's own resize off newPanel's now-visible content, there was
+        // a real window where that resize (and this panel's own
+        // measure/arrange) hadn't finished yet when a frame got pushed,
+        // showing a wrong-sized/partially-arranged cut for a frame or two.
+        // The forced UpdateLayout() below closes that window -- but it also
+        // means whatever state newPanel is in AT THAT MOMENT gets committed
+        // as a real rendered frame, not just silently resolved layout math.
+        // First attempt called UpdateLayout() with the panel still at its
+        // default fully-visible state, THEN reset it to AnimatePanelIn's
+        // invisible/shrunk starting point right after -- so the one frame
+        // UpdateLayout forced was the FINAL state, immediately followed by a
+        // jump backward to the START state once the animation kicked in:
+        // full frame, snap backward, animate forward again. Preparing the
+        // panel's starting state FIRST (still while Collapsed, so it isn't
+        // visible yet) means the frame UpdateLayout forces is the correct
+        // starting one, and the animation that follows only ever moves
+        // forward from there.
+        if (animateEntrance)
+            PrepareAnimatePanelIn(newPanel, useCache: screen is Screen.Idle or Screen.SaveReplay or Screen.StartRecord or Screen.Settings);
+        else if (switchingPanel)
+        {
+            // Player specifically: guarantee a clean, fully-visible state
+            // instead of just skipping Prepare/Start -- Opacity/RenderTransform/
+            // CacheMode are only ever touched by this animation pair, but
+            // resetting explicitly here doesn't depend on that staying true.
+            newPanel.Opacity = 1;
+            newPanel.RenderTransform = null;
+            newPanel.CacheMode = null;
+        }
+
+        newPanel.Visibility = Visibility.Visible;
+        // Skipped for CloseOverlay's reset-to-Idle call specifically: this
+        // synchronous call forces a real paint so a NEWLY OPENED screen's
+        // resize/layout is fully settled before the user actually sees or
+        // interacts with it -- but a close-triggered reset exists purely to
+        // leave state correct for NEXT time the overlay opens, and the
+        // window is about to fade out and Hide() immediately after this
+        // anyway. Forcing a real paint nobody needs to see was pure added
+        // latency between the hotkey press and the fade-out even starting
+        // -- "resize to compact size (fully opaque), THEN start a 150ms
+        // fade" reads as slower than it should, not as fast as the fade
+        // duration alone suggests.
+        if (!skipEntranceAnimation)
+            UpdateLayout();
+        // Deferred, not called inline here -- UpdateStreamingBoxVisibility can
+        // Show()/reposition a SEPARATE top-level window (StreamingStatusOverlay),
+        // and doing that synchronously in the middle of ShowScreen can pump the
+        // Windows message queue enough to force MainWindow itself to repaint
+        // before its own Visibility/resize work above has actually settled --
+        // reintroducing the exact same resize/repaint race this method was
+        // reordered to fix in the first place, just triggered by this call
+        // instead of the Width/Left/Top assignments this time. Same lesson,
+        // same fix: let this transition finish completely first.
+        Dispatcher.BeginInvoke(new Action(UpdateStreamingBoxVisibility), DispatcherPriority.Loaded);
+
+        // GalleryStatus is the SAME TextBlock as the Idle tile's "X clips"
+        // subtitle -- LoadGallery() (browsing) sets it to a SHALLOW count of
+        // just the currently-viewed folder's own files, not a recursive total,
+        // so it stomps the real total the moment Gallery's opened at all (e.g.
+        // clips organized into subfolders would show far fewer, or zero, right
+        // there in the root). Recomputing the real recursive count every time
+        // Idle becomes the active screen means that stale per-folder number
+        // never lingers on the tile once you're back, regardless of which path
+        // got you there.
+        if (screen == Screen.Idle)
+            _ = RefreshGalleryCountAsync();
+
+        if (animateEntrance)
+            StartAnimatePanelIn(newPanel);
+
+        // The gear only makes sense on the idle screen -- it isn't a fourth tile,
+        // so it shouldn't linger once you've navigated away from the row it sits above.
+        TopRightButtons.Visibility = screen == Screen.Idle ? Visibility.Visible : Visibility.Collapsed;
+
+        // Only ever CLOSES it here, never opens it -- OpenInPlayer (the only
+        // caller that ever passes Screen.Player, see its own comment) is the
+        // sole place that reopens it, via a deferred force-close-then-reopen
+        // needed for WPF's Placement="Relative" Popup to reliably recompute
+        // position on every clip, not just the first. Having this line also
+        // set IsOpen = true for the Player case meant OpenInPlayer's own
+        // close+reopen ran on TOP of the true this line had just set --
+        // true->false->true instead of one clean false->true -- and that
+        // extra cycle was a real regression: a black/grey/black flash right
+        // as a clip opens.
+        if (screen != Screen.Player)
+            PlayerOverlayPopup.IsOpen = false;
 
         if (screen != Screen.Player)
             StopPlayerPlayback();
@@ -1648,6 +2077,35 @@ public partial class MainWindow : Window
         RecordSquare.Visibility = active ? Visibility.Visible : Visibility.Collapsed;
     }
 
+    /// <summary>
+    /// StreamingStatusOverlay is its own separate floating window now, not an
+    /// element inside MainWindow (see its own XAML comment for why -- this
+    /// window is AllowsTransparency="False", needed for the VLC video surface
+    /// it hosts to render at all), so it's no longer implicitly shown/hidden
+    /// by anything in here directly. Needs 3 conditions checked explicitly
+    /// instead: actually streaming, this HUD is actually open right now, and
+    /// Idle is the screen currently showing (this is a reminder for the main
+    /// screen, not something that should linger while looking at Gallery/
+    /// Settings/etc., or after the HUD's been closed). Called from every
+    /// place any of those three can change, plus MainWindow's own
+    /// SizeChanged/LocationChanged (see constructor) so the reposition below
+    /// self-corrects once this window's real post-switch bounds are known --
+    /// right here, synchronously after a screen switch, ActualHeight in
+    /// particular isn't necessarily settled yet (SizeToContent="Height").
+    /// </summary>
+    private void UpdateStreamingBoxVisibility()
+    {
+        if (_isStreaming && IsVisible && IdlePanel.Visibility == Visibility.Visible)
+        {
+            _streamingStatus.Reposition(new Rect(Left, Top, Width, ActualHeight));
+            _streamingStatus.Show();
+        }
+        else
+        {
+            _streamingStatus.Hide();
+        }
+    }
+
     private async Task RefreshStatusAsync()
     {
         _trayManager?.UpdateStatus(_obs.IsConnected, _statusOverlay.IsVisible);
@@ -1668,6 +2126,9 @@ public partial class MainWindow : Window
             _statusOverlay.SetRecording(false);
             _statusOverlay.SetReplayOnline(false);
             _statusOverlay.SetMicStatus(MicStatus.Hidden);
+            _statusOverlay.SetStreaming(false);
+            _isStreaming = false;
+            UpdateStreamingBoxVisibility();
             return;
         }
 
@@ -1677,7 +2138,19 @@ public partial class MainWindow : Window
 
         try
         {
-            RecordStatus recStatus = await _obs.GetRecordStatusAsync();
+            // Fired together, not one at a time -- these 5 are mutually
+            // independent OBS requests. Awaiting each immediately (the original
+            // shape) meant this tick's total latency was the SUM of all of
+            // them; kicking them all off first and only then awaiting means
+            // it's the MAX of the slowest one instead, which is what actually
+            // keeps this comfortably inside the 1s poll interval.
+            Task<RecordStatus> recStatusTask = _obs.GetRecordStatusAsync();
+            Task<List<RecordRow>> recordRowsTask = _obs.ListRecordRowsAsync();
+            Task<bool> replayBufferActiveTask = _obs.GetReplayBufferActiveAsync();
+            Task<List<ReplayRow>> replayRowsTask = _obs.ListReplayRowsAsync();
+            Task<bool> streamActiveTask = _obs.GetStreamActiveAsync();
+
+            RecordStatus recStatus = await recStatusTask;
             // Not just OBS's single global recording: a Source Record filter can be
             // recording independently of it (started from its own row in the Start
             // Recording menu, or from ControlPanelDock's own button in OBS), so the
@@ -1690,7 +2163,7 @@ public partial class MainWindow : Window
             int activeRecordRowCount;
             try
             {
-                List<RecordRow> recordRows = await _obs.ListRecordRowsAsync();
+                List<RecordRow> recordRows = await recordRowsTask;
                 activeRecordRowCount = recordRows.Count(r => r.Status == RecordStatusRecording);
                 _lastKnownActiveRecordRowCount = activeRecordRowCount;
             }
@@ -1747,12 +2220,12 @@ public partial class MainWindow : Window
             // replay saving as a whole is down if another one is still working; saying
             // "Error" while a buffer is visibly green and armed is just as backwards as
             // saying "Off" was. Error only wins when NOTHING is currently active.
-            bool replayBufferActive = await _obs.GetReplayBufferActiveAsync();
+            bool replayBufferActive = await replayBufferActiveTask;
             bool anyRowActive;
             bool anyRowError;
             try
             {
-                List<ReplayRow> rows = await _obs.ListReplayRowsAsync();
+                List<ReplayRow> rows = await replayRowsTask;
                 anyRowActive = rows.Any(r => r.Status == 1);
                 anyRowError = rows.Any(r => r.Status == 2);
                 _lastKnownAnyRowActive = anyRowActive;
@@ -1775,6 +2248,21 @@ public partial class MainWindow : Window
             ReplayStatus.Foreground = (Brush)FindResource(replayStateColor);
             SaveReplayIcon.Foreground = (Brush)FindResource(replayActive ? "Green" : showError ? "Rec" : "Text0");
             _statusOverlay.SetReplayOnline(replayActive);
+
+            // Keeps the container correct on every poll tick, not just on the
+            // StreamingStateChanged event transitions -- covers Backtrack
+            // opening (or OBS reconnecting) while already live, which the
+            // event alone would never fire for.
+            try
+            {
+                _isStreaming = await streamActiveTask;
+                _statusOverlay.SetStreaming(_isStreaming);
+                UpdateStreamingBoxVisibility();
+            }
+            catch
+            {
+                // Leave it showing whatever it last correctly showed.
+            }
         }
         catch
         {
@@ -2015,6 +2503,13 @@ public partial class MainWindow : Window
             return;
         }
 
+        // Always first, same as the Start Recording menu's own "Full Scene"
+        // row -- this is OBS's own global recording, not a Source Record
+        // filter, so it doesn't come from the bridge at all (native
+        // obs-websocket only) and exists independently of whether any
+        // filters are found below.
+        RecordFolderPanel.Children.Add(await BuildMainRecordFolderRowAsync());
+
         List<RecordRow> rows;
         try
         {
@@ -2038,6 +2533,68 @@ public partial class MainWindow : Window
             {
                 RecordFolderPanel.Children.Add(await BuildRecordFolderRowAsync(row));
             }
+        }
+    }
+
+    private async Task<Border> BuildMainRecordFolderRowAsync()
+    {
+        string? currentFolder = await _obs.GetMainRecordDirectoryAsync();
+
+        var name = new TextBlock { Text = "Full Scene", FontSize = 13, FontWeight = FontWeights.Bold, Foreground = (Brush)FindResource("Text0"), VerticalAlignment = VerticalAlignment.Center };
+
+        var folderLabel = new TextBlock
+        {
+            Text = DescribeRecordRowDestDir(currentFolder),
+            FontSize = 11,
+            Foreground = (Brush)FindResource("Text2"),
+            VerticalAlignment = VerticalAlignment.Center,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+        };
+        var folderButton = BuildFolderIconButton(async (_, _) => await PickMainRecordFolderAsync(folderLabel));
+
+        var bottomGrid = new Grid { Margin = new Thickness(0, 8, 0, 0) };
+        bottomGrid.ColumnDefinitions.Add(new ColumnDefinition());
+        bottomGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        Grid.SetColumn(folderLabel, 0);
+        Grid.SetColumn(folderButton, 1);
+        bottomGrid.Children.Add(folderLabel);
+        bottomGrid.Children.Add(folderButton);
+
+        var container = new StackPanel();
+        container.Children.Add(name);
+        container.Children.Add(bottomGrid);
+
+        return new Border { Style = (Style)FindResource("SettingsRow"), Child = container };
+    }
+
+    /// <summary>
+    /// Unlike a Source Record filter's folder (constrained to somewhere inside
+    /// ClipsFolder, since Gallery only ever browses within that tree -- see
+    /// PickRecordRowFolderAsync/PickBufferDestFolderAsync), OBS's own global
+    /// recording path is deliberately NOT constrained here: it's the same
+    /// setting as OBS's own Settings > Output > Recording Path, which
+    /// legitimately might point somewhere entirely outside Backtrack's clips
+    /// folder (a separate drive, an existing recordings library, etc.), and
+    /// this is just exposing OBS's own setting, not a Backtrack-specific
+    /// per-row override like the filter case is.
+    /// </summary>
+    private async Task PickMainRecordFolderAsync(TextBlock folderLabel)
+    {
+        try
+        {
+            string initialDir = await _obs.GetMainRecordDirectoryAsync() ?? _settings.ClipsFolder;
+            var dialog = new OpenFolderDialog { InitialDirectory = Directory.Exists(initialDir) ? initialDir : _settings.ClipsFolder };
+            if (dialog.ShowDialog(this) != true)
+                return;
+
+            string selectedFolder = dialog.FolderName;
+            await _obs.SetMainRecordDirectoryAsync(selectedFolder);
+            folderLabel.Text = DescribeRecordRowDestDir(selectedFolder);
+            AppLog.Write($"Set OBS's main recording path to '{selectedFolder}'");
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, $"Couldn't update recording folder: {ex.Message}", "Backtrack");
         }
     }
 
@@ -2102,8 +2659,15 @@ public partial class MainWindow : Window
     {
         if (string.IsNullOrEmpty(destDir))
             return "Not set -- recordings stay wherever this filter writes them";
+        // Unlike a Replay row's DestDir (Backtrack's own optional override,
+        // genuinely absent until someone explicitly picks a folder), a Source
+        // Record filter's "path" setting always has some real value in OBS --
+        // there's no true "unset" state to read here. Sitting at the plain
+        // clips folder root with no subfolder reads the same as "nobody's
+        // customized this" to a user, so treat that the same as Not Set too,
+        // rather than showing "Main clips folder" for every untouched filter.
         return IsWithinClipsFolder(destDir, out string relative)
-            ? (relative.Length == 0 ? "Main clips folder" : relative)
+            ? (relative.Length == 0 ? "Not set -- recordings stay wherever this filter writes them" : relative)
             : destDir;
     }
 
@@ -3095,10 +3659,10 @@ public partial class MainWindow : Window
             if (confirmed)
             {
                 _selectedClipPaths.Clear();
-                foreach (FileInfo file in targets)
-                {
-                    QueueDeleteWithUndo(file);
-                }
+                if (targets.Count == 1)
+                    QueueDeleteWithUndo(targets[0]);
+                else
+                    QueueMultiDeleteWithUndo(targets);
             }
         });
     }
@@ -3621,6 +4185,53 @@ public partial class MainWindow : Window
             });
     }
 
+    /// <summary>
+    /// One toast for the whole batch instead of QueueDeleteWithUndo called in
+    /// a loop -- that used to fire a separate ShowDeleteUndo per clip (each
+    /// with its own 60fps DispatcherTimer for the progress bar), which was
+    /// the actual cause of Backtrack visibly slowing down when deleting
+    /// several clips at once, not just visual clutter from the stacked
+    /// toasts. Undo/expire both apply to the entire batch together, same as
+    /// a single delete's own all-or-nothing behavior.
+    /// </summary>
+    private void QueueMultiDeleteWithUndo(List<FileInfo> files)
+    {
+        var fullPaths = files.Select(f => Path.GetFullPath(f.FullName)).ToList();
+        foreach (string fullPath in fullPaths)
+            _pendingDeletePaths.Add(fullPath);
+        LoadGallery();
+
+        _toastOverlay.ShowMultiDeleteUndo(files.Count,
+            onExpire: () =>
+            {
+                var failed = new List<string>();
+                foreach (string fullPath in fullPaths)
+                {
+                    _pendingDeletePaths.Remove(fullPath);
+                    if (!RecycleBin.Delete(fullPath))
+                        failed.Add(Path.GetFileName(fullPath));
+                }
+                if (failed.Count > 0)
+                {
+                    Dispatcher.BeginInvoke(() => MessageBox.Show(this,
+                        $"Couldn't delete {failed.Count} clip(s): {string.Join(", ", failed)}.", "Backtrack"));
+                }
+                Dispatcher.BeginInvoke(() =>
+                {
+                    if (GalleryPanel.Visibility == Visibility.Visible)
+                        LoadGallery();
+                    else
+                        _ = RefreshGalleryCountAsync();
+                });
+            },
+            onUndo: () =>
+            {
+                foreach (string fullPath in fullPaths)
+                    _pendingDeletePaths.Remove(fullPath);
+                Dispatcher.BeginInvoke(() => LoadGallery());
+            });
+    }
+
     private void DeleteClip(FileInfo file, Border card)
     {
         ShowConfirmDialog(
@@ -3656,6 +4267,23 @@ public partial class MainWindow : Window
         ShowScreen(Screen.Player);
         PlayerTitle.Text = Path.GetFileNameWithoutExtension(file.Name);
 
+        // ShowScreen itself only ever CLOSES PlayerOverlayPopup now (see its
+        // own comment) -- reopening it is entirely on this method, the only
+        // caller that ever shows Player, so this is always exactly one clean
+        // close+reopen cycle, not one on top of another. Still needed even
+        // when Player was already the active screen (opening a second clip
+        // without going back to Gallery first): WPF's Placement="Relative"
+        // Popup only reliably recomputes its position on a real false->true
+        // IsOpen transition, not just because the video underneath changed
+        // while it stayed open -- without forcing that transition here, a
+        // second clip in a row ends up stuck at the first clip's position.
+        // Deferred to DispatcherPriority.Loaded (after this call's own layout
+        // pass, not immediately) since PlayerVideoView's ActualWidth/position
+        // right here isn't necessarily settled yet -- reopening too early
+        // would just cache another stale position instead of fixing anything.
+        PlayerOverlayPopup.IsOpen = false;
+        Dispatcher.BeginInvoke(new Action(() => PlayerOverlayPopup.IsOpen = true), DispatcherPriority.Loaded);
+
         StatSize.Text = $"{file.Length / 1024.0 / 1024.0:0.#} MB";
         StatDate.Text = $"{file.LastWriteTime:MMM d, yyyy h:mm tt}";
         StatResolution.Text = "";
@@ -3663,49 +4291,61 @@ public partial class MainWindow : Window
 
         StopPlayerPlayback();
 
-        _vlcPlayer = new LibVlc.MediaPlayer(_libVlc);
-        PlayerVideoView.MediaPlayer = _vlcPlayer;
-
-        using var media = new LibVlc.Media(_libVlc, new Uri(ResolveLocalClipPath(file)));
-        _vlcPlayer.Play(media);
-
-        bool tracksLoaded = false;
-        _vlcPlayer.Playing += (_, _) => Dispatcher.BeginInvoke(() =>
+        // Deferred to DispatcherPriority.Loaded (same reasoning as the popup
+        // reopen above): attaching VLC's native HWND and starting playback
+        // synchronously, right as ShowScreen just made the Player panel
+        // visible, meant the layered window (AllowsTransparency="True")
+        // could push its first composited frame before the panel's own
+        // layout (grid rows, PlayerVideoView's bounds) had actually
+        // resolved -- visible as the video area rendering cut in half for a
+        // couple of frames. Letting layout fully settle first, then
+        // attaching the video into an already-stable area, avoids that.
+        Dispatcher.BeginInvoke(new Action(() =>
         {
-            PlayIcon.Visibility = Visibility.Collapsed;
-            PauseIcon.Visibility = Visibility.Visible;
-            if (_vlcPlayer.Media is not null)
+            _vlcPlayer = new LibVlc.MediaPlayer(_libVlc);
+            PlayerVideoView.MediaPlayer = _vlcPlayer;
+
+            using var media = new LibVlc.Media(_libVlc, new Uri(ResolveLocalClipPath(file)));
+            _vlcPlayer.Play(media);
+
+            bool tracksLoaded = false;
+            _vlcPlayer.Playing += (_, _) => Dispatcher.BeginInvoke(() =>
             {
-                var videoTrack = _vlcPlayer.Media.Tracks.FirstOrDefault(t => t.TrackType == LibVlc.TrackType.Video).Data.Video;
-                if (videoTrack.Width > 0 && videoTrack.Height > 0)
-                    StatResolution.Text = $"{videoTrack.Width} x {videoTrack.Height}";
-                if (videoTrack.FrameRateDen > 0)
-                    StatFps.Text = $"{(double)videoTrack.FrameRateNum / videoTrack.FrameRateDen:0.##} fps";
-            }
+                PlayIcon.Visibility = Visibility.Collapsed;
+                PauseIcon.Visibility = Visibility.Visible;
+                if (_vlcPlayer.Media is not null)
+                {
+                    var videoTrack = _vlcPlayer.Media.Tracks.FirstOrDefault(t => t.TrackType == LibVlc.TrackType.Video).Data.Video;
+                    if (videoTrack.Width > 0 && videoTrack.Height > 0)
+                        StatResolution.Text = $"{videoTrack.Width} x {videoTrack.Height}";
+                    if (videoTrack.FrameRateDen > 0)
+                        StatFps.Text = $"{(double)videoTrack.FrameRateNum / videoTrack.FrameRateDen:0.##} fps";
+                }
 
-            // Track info isn't known the instant Play() is called -- LibVLC parses the
-            // media asynchronously, so reading Media.Tracks right after Play() (the old
-            // bug here) always saw an empty list and hid the audio selector even on
-            // clips that do have a track. By the time Playing fires, parsing has
-            // actually finished, so this is the first point where Tracks is reliable.
-            if (!tracksLoaded)
+                // Track info isn't known the instant Play() is called -- LibVLC parses the
+                // media asynchronously, so reading Media.Tracks right after Play() (the old
+                // bug here) always saw an empty list and hid the audio selector even on
+                // clips that do have a track. By the time Playing fires, parsing has
+                // actually finished, so this is the first point where Tracks is reliable.
+                if (!tracksLoaded)
+                {
+                    tracksLoaded = true;
+                    LoadAudioTracks();
+                }
+            });
+            _vlcPlayer.Paused += (_, _) => Dispatcher.BeginInvoke(() =>
             {
-                tracksLoaded = true;
-                LoadAudioTracks();
-            }
-        });
-        _vlcPlayer.Paused += (_, _) => Dispatcher.BeginInvoke(() =>
-        {
-            PlayIcon.Visibility = Visibility.Visible;
-            PauseIcon.Visibility = Visibility.Collapsed;
-        });
-        _vlcPlayer.EndReached += (_, _) => Dispatcher.BeginInvoke(() =>
-        {
-            PlayIcon.Visibility = Visibility.Visible;
-            PauseIcon.Visibility = Visibility.Collapsed;
-        });
+                PlayIcon.Visibility = Visibility.Visible;
+                PauseIcon.Visibility = Visibility.Collapsed;
+            });
+            _vlcPlayer.EndReached += (_, _) => Dispatcher.BeginInvoke(() =>
+            {
+                PlayIcon.Visibility = Visibility.Visible;
+                PauseIcon.Visibility = Visibility.Collapsed;
+            });
 
-        _seekTimer.Start();
+            _seekTimer.Start();
+        }), DispatcherPriority.Loaded);
     }
 
     /// <summary>Shown whenever there's at least one audio track -- not just when there's a choice to make, since seeing "Track 1" confirms audio was actually detected at all.</summary>
@@ -3870,13 +4510,26 @@ public partial class MainWindow : Window
     private void StopPlayerPlayback()
     {
         _seekTimer.Stop();
+        // Detach the VideoView from the player FIRST, before Stop()/Dispose()
+        // below -- those two are genuinely slow (LibVLC tearing down its own
+        // decode/render pipeline, up to ~1s observed), and they used to run
+        // first, meaning the native video HWND kept right on rendering for
+        // that whole blocking call even though PlayerPanel/the overlay Popup
+        // had already gone Collapsed/closed moments earlier -- reported live
+        // as "the back button and title disappear but the video stays for a
+        // second". Native content is its own top-level surface regardless of
+        // WPF's own Visibility (see PlayerOverlayPopup's own "airspace"
+        // comment) -- only actually detaching the player from the VideoView
+        // makes it go blank, and doing that first means it happens instantly,
+        // even though the underlying Stop()/Dispose() teardown still takes
+        // its own time afterward.
+        PlayerVideoView.MediaPlayer = null;
         if (_vlcPlayer is not null)
         {
             _vlcPlayer.Stop();
             _vlcPlayer.Dispose();
             _vlcPlayer = null;
         }
-        PlayerVideoView.MediaPlayer = null;
     }
 
     /// <summary>
@@ -4178,6 +4831,9 @@ public partial class MainWindow : Window
 
     private void LoadSettingsUi()
     {
+        RefreshThemeSwatchSelection();
+        EnableAnimationsToggle.IsChecked = _settings.EnableAnimations;
+
         LaunchWithWindowsToggle.IsChecked = _settings.LaunchWithWindows;
         ClipsFolderText.Text = _settings.ClipsFolder;
         BufferDurationSlider.Value = _settings.ReplayBufferMinutes;
@@ -4629,6 +5285,35 @@ public partial class MainWindow : Window
         }
     }
 
+    private void DarkThemeSwatch_Click(object sender, MouseButtonEventArgs e) => ApplyTheme(AppTheme.Dark);
+
+    private void LightThemeSwatch_Click(object sender, MouseButtonEventArgs e) => ApplyTheme(AppTheme.Light);
+
+    private void YamiThemeSwatch_Click(object sender, MouseButtonEventArgs e) => ApplyTheme(AppTheme.Yami);
+
+    private void AmoledThemeSwatch_Click(object sender, MouseButtonEventArgs e) => ApplyTheme(AppTheme.Amoled);
+
+    private void ApplyTheme(AppTheme theme)
+    {
+        ThemeManager.Apply(theme);
+        _settings.Theme = theme;
+        _settings.Save();
+        RefreshThemeSwatchSelection();
+    }
+
+    // Highlight ring around whichever swatch matches the currently active
+    // theme; Green isn't tied to "success" here, just the app's one
+    // consistent selection accent, and it reads fine over all four swatches
+    // since it's a fixed brand color, not a themed neutral.
+    private void RefreshThemeSwatchSelection()
+    {
+        var selected = new SolidColorBrush(Color.FromRgb(0x3E, 0xCF, 0x8E));
+        DarkThemeSwatch.BorderBrush = ThemeManager.Current == AppTheme.Dark ? selected : Brushes.Transparent;
+        LightThemeSwatch.BorderBrush = ThemeManager.Current == AppTheme.Light ? selected : Brushes.Transparent;
+        YamiThemeSwatch.BorderBrush = ThemeManager.Current == AppTheme.Yami ? selected : Brushes.Transparent;
+        AmoledThemeSwatch.BorderBrush = ThemeManager.Current == AppTheme.Amoled ? selected : Brushes.Transparent;
+    }
+
     private void ShowDisclaimerToggle_Click(object sender, RoutedEventArgs e)
     {
         _settings.ShowDisclaimer = ShowDisclaimerToggle.IsChecked == true;
@@ -4637,6 +5322,12 @@ public partial class MainWindow : Window
             _disclaimer.Hide();
         else if (IsVisible)
             _disclaimer.Show();
+    }
+
+    private void EnableAnimationsToggle_Click(object sender, RoutedEventArgs e)
+    {
+        _settings.EnableAnimations = EnableAnimationsToggle.IsChecked == true;
+        _settings.Save();
     }
 
     // Uses a Scheduled Task (not the Run registry key) so the app can launch
@@ -4732,7 +5423,7 @@ public partial class MainWindow : Window
             {
                 _manualUpdateReady = false;
                 CheckUpdatesButton.Content = "Applying...";
-                await CheckForUpdatesAsync();
+                await CheckForUpdatesAsync(isManualTrigger: true);
                 CheckUpdatesButton.Content = "Check now";
                 return;
             }

@@ -12,13 +12,26 @@ namespace Backtrack;
 
 public partial class ToastOverlay : Window
 {
-    private static readonly SolidColorBrush PanelBg = new(Color.FromArgb(240, 20, 21, 24));
-    private static readonly SolidColorBrush Hairline = new(Color.FromArgb(31, 255, 255, 255));
-    private static readonly SolidColorBrush Text0 = new(Color.FromRgb(0xF5, 0xF6, 0xF8));
-    private static readonly SolidColorBrush Text2 = new(Color.FromRgb(0x76, 0x7D, 0x87));
+    // Rec/Stream/Green/Warning/Accent are brand/status accent colors, deliberately
+    // IDENTICAL in both themes (see Theme.Dark.xaml's own comment on this), so
+    // caching them once as static brushes is fine. PanelBg/Hairline/Text0/Text2
+    // are neutrals that DO differ by theme -- toasts are built entirely in code
+    // (not XAML), so they can't use DynamicResource; instead these are looked
+    // up from the CURRENT theme dictionary at the moment each toast is built
+    // (see ThemeBrush below), so a runtime theme swap is picked up by the next
+    // toast shown rather than needing a cached brush to somehow update itself.
     private static readonly SolidColorBrush Green = new(Color.FromRgb(0x3E, 0xCF, 0x8E));
     private static readonly SolidColorBrush Rec = new(Color.FromRgb(0xFF, 0x5B, 0x52));
+    private static readonly SolidColorBrush Stream = new(Color.FromRgb(0xA8, 0x55, 0xF7));
+    private static readonly SolidColorBrush Warning = new(Color.FromRgb(0xF0, 0xA0, 0x20));
     private static readonly SolidColorBrush Accent = new(Color.FromRgb(0x3E, 0xCF, 0x8E));
+
+    private static Brush PanelBg => ThemeBrush("PanelBg");
+    private static Brush Hairline => ThemeBrush("Hairline");
+    private static Brush Text0 => ThemeBrush("Text0");
+    private static Brush Text2 => ThemeBrush("Text2");
+
+    private static Brush ThemeBrush(string key) => (Brush)Application.Current.Resources[key];
 
     private int _activeUndoCount;
     private bool _overlayActive;
@@ -63,6 +76,19 @@ public partial class ToastOverlay : Window
             resolvedPath is null ? null : $"Saved at '{resolvedPath}'");
     }
 
+    /// <summary>See ObsService.EncoderOverloadDetected -- summary is a plain-English list of what's actually dropping frames right now (already built by the caller, this just displays it).</summary>
+    public void ShowEncoderOverload(string summary) =>
+        Show(GlyphIcon("⚠", Warning), Warning, "Encoder overloaded", summary);
+
+    public void ShowStreaming(bool started)
+    {
+        // Same real-Ellipse-for-the-started-dot reasoning as ShowRecording above.
+        UIElement icon = started
+            ? new Ellipse { Width = 10, Height = 10, Fill = Stream, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 10, 0) }
+            : GlyphIcon("■", Text2);
+        Show(icon, started ? Stream : Text2, started ? "Livestream Started" : "Livestream Ended", null);
+    }
+
     public void ShowReplaySaved(string label, string resolvedPath) =>
         Show(GlyphIcon("\u21bb", Green), Green, $"{label} saved", $"Saved at '{resolvedPath}'");
 
@@ -88,25 +114,42 @@ public partial class ToastOverlay : Window
     };
 
     /// <summary>Shows a 5-second toast with sliding status indicator and Undo button; calls onExpire only if not undone.</summary>
-    public void ShowDeleteUndo(string clipName, Action onExpire, Action? onUndo = null)
+    public void ShowDeleteUndo(string clipName, Action onExpire, Action? onUndo = null) =>
+        ShowDeleteUndoToast("Clip deleted", clipName, onExpire, onUndo);
+
+    /// <summary>
+    /// Same idea as ShowDeleteUndo, one toast for a whole batch instead of one
+    /// per clip -- deleting several clips at once used to fire ShowDeleteUndo
+    /// in a loop, stacking that many separate toasts (each with its own
+    /// 60fps DispatcherTimer for the progress bar), which was the actual
+    /// cause of the reported slowdown, not just visual clutter.
+    /// </summary>
+    public void ShowMultiDeleteUndo(int count, Action onExpire, Action? onUndo = null) =>
+        ShowDeleteUndoToast("Multi Deletion", $"{count} clips deleted", onExpire, onUndo);
+
+    private void ShowDeleteUndoToast(string title, string subtitle, Action onExpire, Action? onUndo)
     {
         _activeUndoCount++;
         IntPtr hwnd = new WindowInteropHelper(this).Handle;
         ClickThrough.Disable(hwnd);
         WindowZOrder.BringToFrontWithoutActivating(hwnd);
 
-        var iconBlock = new TextBlock
+        // Same Material "delete" icon as the Player screen's own Delete
+        // button, not the old Segoe MDL2 Assets trash glyph -- that one
+        // looked visually inconsistent with the rest of the icon set.
+        var iconBlock = new System.Windows.Shapes.Path
         {
-            Text = "\uE74D", // Segoe MDL2 Assets Trash icon
-            FontFamily = new FontFamily("Segoe MDL2 Assets"),
-            FontSize = 14,
-            Foreground = Rec,
+            Data = Geometry.Parse("M6,19c0,1.1,0.9,2,2,2h8c1.1,0,2,-0.9,2,-2V7H6V19zM19,4h-3.5l-1,-1h-5l-1,1H5v2h14V4z"),
+            Fill = Rec,
+            Width = 14,
+            Height = 14,
+            Stretch = Stretch.Uniform,
             Margin = new Thickness(0, 1, 10, 0),
             VerticalAlignment = VerticalAlignment.Center
         };
 
-        var msg = new TextBlock { Text = "Clip deleted", FontWeight = FontWeights.Bold, FontSize = 12.5, Foreground = Text0, HorizontalAlignment = HorizontalAlignment.Left };
-        var sub = new TextBlock { Text = clipName, FontSize = 10.5, Foreground = Text2, Margin = new Thickness(0, 2, 0, 0), TextTrimming = TextTrimming.CharacterEllipsis, MaxWidth = 140, HorizontalAlignment = HorizontalAlignment.Left };
+        var msg = new TextBlock { Text = title, FontWeight = FontWeights.Bold, FontSize = 12.5, Foreground = Text0, HorizontalAlignment = HorizontalAlignment.Left };
+        var sub = new TextBlock { Text = subtitle, FontSize = 10.5, Foreground = Text2, Margin = new Thickness(0, 2, 0, 0), TextTrimming = TextTrimming.CharacterEllipsis, MaxWidth = 140, HorizontalAlignment = HorizontalAlignment.Left };
         var body = new StackPanel { HorizontalAlignment = HorizontalAlignment.Left, VerticalAlignment = VerticalAlignment.Center };
         body.Children.Add(msg);
         body.Children.Add(sub);
@@ -137,7 +180,7 @@ public partial class ToastOverlay : Window
         mainRow.Children.Add(undoButton);
 
         // Sliding Status Indicator (Progress Bar at Bottom)
-        var progressTrack = new Grid { Height = 3, Background = new SolidColorBrush(Color.FromArgb(40, 255, 255, 255)), VerticalAlignment = VerticalAlignment.Bottom };
+        var progressTrack = new Grid { Height = 3, Background = ThemeBrush("BorderMedium"), VerticalAlignment = VerticalAlignment.Bottom };
         var progressFill = new Border { Background = Rec, HorizontalAlignment = HorizontalAlignment.Left };
         progressTrack.Children.Add(progressFill);
 
@@ -227,7 +270,7 @@ public partial class ToastOverlay : Window
         row.Children.Add(body);
 
         // Sliding Status Indicator (Progress Bar at Bottom)
-        var progressTrack = new Grid { Height = 3, Background = new SolidColorBrush(Color.FromArgb(40, 255, 255, 255)), VerticalAlignment = VerticalAlignment.Bottom };
+        var progressTrack = new Grid { Height = 3, Background = ThemeBrush("BorderMedium"), VerticalAlignment = VerticalAlignment.Bottom };
         var progressFill = new Border { Background = accentColor, HorizontalAlignment = HorizontalAlignment.Left };
         progressTrack.Children.Add(progressFill);
 

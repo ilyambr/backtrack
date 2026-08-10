@@ -15,6 +15,13 @@
       with the HUD itself; only visible while the overlay is open, not an
       always-on fixture like StatusOverlay/ToastOverlay. No background, just
       centered text; the GitHub link needs real clicks so this isn't click-through.
+
+      Deliberately NOT themed: this floats directly over arbitrary desktop/
+      game content, not an app panel, so it needs to stay light/readable
+      regardless of light/dark mode; same reasoning as the Player popup's
+      back-button/title and seek thumb in MainWindow.xaml. Themed briefly
+      during the theming pass, which turned it dark-on-dark-desktop in light
+      mode; reverted back to fixed literal colors.
     -->
     <!-- Wide enough that the middle sentence fits on one line at this font
          size instead of wrapping mid-sentence; the explicit LineBreaks

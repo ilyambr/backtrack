@@ -22,6 +22,17 @@ public sealed record RecordStatus(bool Active, long DurationMs, bool Paused);
 
 public sealed record ObsStats(long RenderTotalFrames, long RenderSkippedFrames, long OutputTotalFrames, long OutputSkippedFrames);
 
+/// <summary>
+/// One or more of these is true whenever obs-source-record's own
+/// check_encoder_overload (0.4.19+) detects a real recent dropped-frame rate
+/// on that specific output -- see ObsService.EncoderOverloadDetected.
+/// MainStream can also mean network/bandwidth congestion, not necessarily
+/// the encoder itself; the plugin can't tell those apart for a streaming
+/// output, only file outputs (recording/replay buffer/this filter) reliably
+/// mean encoder-side lag.
+/// </summary>
+public sealed record EncoderOverloadInfo(bool ThisFilter, bool MainRecording, bool MainStream, bool MainReplayBuffer, string Source, string Filter);
+
 public enum MicStatus { Hidden, Silent, MutedOrQuiet }
 
 /// <summary>
@@ -57,8 +68,14 @@ public sealed class ObsService
     /// <summary>Fires the moment OBS's own recording output actually starts/stops -- event-driven, not the 1s poll. Path is only populated on stop.</summary>
     public event Action<bool, string?>? RecordingStateChanged;
 
+    /// <summary>Fires the moment OBS's own stream output actually starts/stops -- event-driven, same idea as RecordingStateChanged.</summary>
+    public event Action<bool>? StreamingStateChanged;
+
     /// <summary>Fires when a Replay Slider row's buffer actually finishes saving: (rowKey, path). This is the real "yes, the clip exists now" confirmation.</summary>
     public event Action<string, string>? ReplaySaved;
+
+    /// <summary>Fires roughly every ~2s while obs-source-record detects a real recent dropped-frame rate somewhere (this filter, main recording, main stream, or main replay buffer) -- see EncoderOverloadInfo.</summary>
+    public event Action<EncoderOverloadInfo>? EncoderOverloadDetected;
 
     public ObsService(string url, string? password)
     {
@@ -92,6 +109,28 @@ public sealed class ObsService
                 RecordingStateChanged?.Invoke(true, null);
             else if (state == "OBS_WEBSOCKET_OUTPUT_STOPPED")
                 RecordingStateChanged?.Invoke(false, data.TryGetProperty("outputPath", out JsonElement pathEl) ? pathEl.GetString() : null);
+        }
+        else if (eventType == "StreamStateChanged" && data.TryGetProperty("outputState", out JsonElement streamStateEl))
+        {
+            // Same double-fire-per-transition reasoning as RecordStateChanged above.
+            string? state = streamStateEl.GetString();
+            if (state == "OBS_WEBSOCKET_OUTPUT_STARTED")
+                StreamingStateChanged?.Invoke(true);
+            else if (state == "OBS_WEBSOCKET_OUTPUT_STOPPED")
+                StreamingStateChanged?.Invoke(false);
+        }
+        else if (eventType == "VendorEvent" &&
+                 data.TryGetProperty("vendorName", out JsonElement overloadVn) && overloadVn.GetString() == "source-record" &&
+                 data.TryGetProperty("eventType", out JsonElement overloadEt) && overloadEt.GetString() == "encoder_overload" &&
+                 data.TryGetProperty("eventData", out JsonElement overloadEd))
+        {
+            EncoderOverloadDetected?.Invoke(new EncoderOverloadInfo(
+                ThisFilter: overloadEd.TryGetProperty("this_filter", out JsonElement tf) && tf.GetBoolean(),
+                MainRecording: overloadEd.TryGetProperty("main_recording", out JsonElement mr) && mr.GetBoolean(),
+                MainStream: overloadEd.TryGetProperty("main_stream", out JsonElement ms) && ms.GetBoolean(),
+                MainReplayBuffer: overloadEd.TryGetProperty("main_replay_buffer", out JsonElement mrb) && mrb.GetBoolean(),
+                Source: overloadEd.TryGetProperty("source", out JsonElement os) ? os.GetString() ?? "" : "",
+                Filter: overloadEd.TryGetProperty("filter", out JsonElement of) ? of.GetString() ?? "" : ""));
         }
         else if (eventType == "VendorEvent" &&
                  data.TryGetProperty("vendorName", out JsonElement vn) && vn.GetString() == "replay-buffer-slider" &&
@@ -269,6 +308,31 @@ public sealed class ObsService
     /// current state is already known so a toggle would be redundant/racy.</summary>
     public async Task StartMainRecordAsync() => await _client.RequestAsync("StartRecord");
     public async Task StopMainRecordAsync() => await _client.RequestAsync("StopRecord");
+
+    /// <summary>
+    /// OBS's own single global recording output directory (Settings > Output >
+    /// Recording Path) -- native obs-websocket requests, same idea as
+    /// GetRecordRowDestinationFolderAsync/SetRecordRowDestinationFolderAsync
+    /// for a Source Record filter's own path, just for the "Full Scene" row
+    /// instead of a per-filter one. No plugin bridge involved.
+    /// </summary>
+    public async Task<string?> GetMainRecordDirectoryAsync()
+    {
+        try
+        {
+            JsonElement d = await _client.RequestAsync("GetRecordDirectory");
+            string? value = d.ValueKind == JsonValueKind.Object && d.TryGetProperty("recordDirectory", out JsonElement dir)
+                ? dir.GetString() : null;
+            return string.IsNullOrEmpty(value) ? null : value;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    public async Task SetMainRecordDirectoryAsync(string newPath) =>
+        await _client.RequestAsync("SetRecordDirectory", new Dictionary<string, object?> { ["recordDirectory"] = newPath });
     /// <summary>
     /// Raw counters behind OBS's own status-bar-style overload warnings --
     /// there's no request/event that hands over the literal status bar text
