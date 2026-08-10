@@ -861,16 +861,16 @@
                                          values), NOT DynamicResource; these need to keep showing
                                          what dark/light actually look like regardless of which one
                                          is currently active, so they can't react to the live swap. -->
-                                    <Border x:Name="DarkThemeSwatch" Width="122" Height="78" CornerRadius="6" Background="#111111"
+                                    <Border x:Name="DarkThemeSwatch" Width="122" Height="78" CornerRadius="6" Background="#101113"
                                             BorderThickness="2" BorderBrush="Transparent" Cursor="Hand"
                                             MouseLeftButtonUp="DarkThemeSwatch_Click" Margin="0,0,12,0">
                                         <StackPanel Margin="10">
                                             <StackPanel Orientation="Horizontal">
                                                 <Ellipse Width="8" Height="8" Fill="#FF5B52" VerticalAlignment="Center" Margin="0,0,6,0"/>
-                                                <Rectangle Height="6" Width="46" Fill="#F6F6F6" RadiusX="3" RadiusY="3"/>
+                                                <Rectangle Height="6" Width="46" Fill="#F5F6F8" RadiusX="3" RadiusY="3"/>
                                             </StackPanel>
-                                            <Rectangle Height="5" Width="70" Fill="#7E7E7E" RadiusX="2" RadiusY="2" Margin="0,12,0,0"/>
-                                            <Rectangle Height="5" Width="50" Fill="#7E7E7E" RadiusX="2" RadiusY="2" Margin="0,6,0,0"/>
+                                            <Rectangle Height="5" Width="70" Fill="#767D87" RadiusX="2" RadiusY="2" Margin="0,12,0,0"/>
+                                            <Rectangle Height="5" Width="50" Fill="#767D87" RadiusX="2" RadiusY="2" Margin="0,6,0,0"/>
                                         </StackPanel>
                                     </Border>
                                     <Border x:Name="LightThemeSwatch" Width="122" Height="78" CornerRadius="6" Background="#F7F7F8"

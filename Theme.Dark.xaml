@@ -14,21 +14,14 @@
       (plus one real outlier: a distinctly blue-tinted #1E1E24 on the
       Player seek-bar tooltip, fixed to just use PanelBg like everything
       else already did).
-
-      A SECOND pass fixed a subtler version of the exact same problem:
-      #101113 (R16 G17 B19) and the Text0/Text1/Text2 values below it were
-      never actually neutral grey, just less blue than #1E1E24; every one
-      of them had B > G > R, a genuine (if small) blue skew, confirmed with
-      a literal color picker. Every neutral in this file is now R=G=B,
-      picked to keep the same relative brightness as before.
     -->
-    <SolidColorBrush x:Key="PanelBg" Color="#111111"/>
-    <SolidColorBrush x:Key="PanelBgOpaque" Color="#EC111111"/>
+    <SolidColorBrush x:Key="PanelBg" Color="#101113"/>
+    <SolidColorBrush x:Key="PanelBgOpaque" Color="#EC101113"/>
     <SolidColorBrush x:Key="Hairline" Color="#1FFFFFFF"/>
-    <SolidColorBrush x:Key="Text0" Color="#F6F6F6"/>
-    <SolidColorBrush x:Key="Text1" Color="#B5B5B5"/>
-    <SolidColorBrush x:Key="Text2" Color="#7E7E7E"/>
-    <SolidColorBrush x:Key="Accent" Color="#F6F6F6"/>
+    <SolidColorBrush x:Key="Text0" Color="#F5F6F8"/>
+    <SolidColorBrush x:Key="Text1" Color="#AEB4BD"/>
+    <SolidColorBrush x:Key="Text2" Color="#767D87"/>
+    <SolidColorBrush x:Key="Accent" Color="#F5F6F8"/>
 
     <!-- Accent colors are deliberately IDENTICAL in both themes; these are
          brand/status colors (recording red, live purple, success green),
@@ -60,6 +53,6 @@
          want their own near-opaque dark chip regardless of the main panel's
          own opacity, since they sit directly over a game/desktop, not over
          the app's own panel. -->
-    <SolidColorBrush x:Key="BadgeBg" Color="#CC0B0B0B"/>
+    <SolidColorBrush x:Key="BadgeBg" Color="#CC0A0B0D"/>
     <SolidColorBrush x:Key="BadgeBorder" Color="#14FFFFFF"/>
 </ResourceDictionary>
