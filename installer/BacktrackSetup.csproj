@@ -6,7 +6,14 @@
     <UseWindowsForms>true</UseWindowsForms>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
-    <AssemblyName>Backtrack-Setup-v0.2.5</AssemblyName>
+    <!-- Overridden per-release by Build-ReleaseInstaller.ps1 (-p:AssemblyName=
+         Backtrack-Setup-v$Version) so this can't drift out of sync with the
+         actual version being built again; it previously sat hardcoded here
+         at an old version number for multiple releases, silently producing
+         a wrongly-named .exe (or none at all, once the release script's own
+         filename check stopped matching) every time. This default only
+         matters for an ad-hoc build outside that script. -->
+    <AssemblyName>Backtrack-Setup-dev</AssemblyName>
     <RootNamespace>BacktrackSetup</RootNamespace>
     <!-- A framework-dependent apphost .exe is just a tiny native stub that
          loads its real code from a sibling .dll sitting next to it: the

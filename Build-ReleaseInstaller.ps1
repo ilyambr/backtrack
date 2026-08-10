@@ -20,7 +20,7 @@ Add-Type -AssemblyName System.IO.Compression.FileSystem
 [System.IO.File]::Copy($payloadZipPath, $releaseZipPath, $true)
 
 Write-Host "3. Compiling Backtrack-Setup-v$Version.exe installer..." -ForegroundColor Green
-dotnet publish ./installer/BacktrackSetup.csproj -c Release -r win-x64 -o "./dist"
+dotnet publish ./installer/BacktrackSetup.csproj -c Release -r win-x64 -o "./dist" -p:AssemblyName="Backtrack-Setup-v$Version"
 
 $installerExe = "./dist/Backtrack-Setup-v$Version.exe"
 if ([System.IO.File]::Exists($installerExe)) {
