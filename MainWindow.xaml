@@ -6,7 +6,7 @@
         Title="Backtrack"
         Width="460" Height="130"
         WindowStyle="None"
-        AllowsTransparency="False"
+        AllowsTransparency="True"
         Background="Transparent"
         Topmost="True"
         ShowInTaskbar="False"
@@ -772,9 +772,9 @@
                      always tears the player down first, so even if this Popup's position
                      were ever to desync, closing the whole HUD still works. -->
                 <Popup x:Name="PlayerOverlayPopup" PlacementTarget="{Binding ElementName=PlayerVideoView}" Placement="Relative"
-                       HorizontalOffset="0" VerticalOffset="0" AllowsTransparency="True" StaysOpen="True" Focusable="False" IsOpen="False">
+                       HorizontalOffset="10" VerticalOffset="10" AllowsTransparency="True" StaysOpen="True" Focusable="False" IsOpen="False">
                     <Grid Width="{Binding ElementName=PlayerVideoView, Path=ActualWidth}" Height="34">
-                        <StackPanel Orientation="Horizontal" Margin="8,0,0,0" VerticalAlignment="Center">
+                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                             <StackPanel.Effect>
                                 <DropShadowEffect BlurRadius="6" ShadowDepth="1" Color="Black" Opacity="0.85"/>
                             </StackPanel.Effect>
@@ -1307,6 +1307,22 @@
                                      <ComboBoxItem Content="Backtrack" Tag="Backtrack"/>
                                  </ComboBox>
                             </StackPanel>
+
+                            <TextBlock Text="ANIMATIONS" FontSize="11" FontWeight="Bold" Foreground="{DynamicResource Text1}" Margin="0,24,0,10"/>
+                            <Border Style="{StaticResource SettingsRow}" BorderThickness="0">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel VerticalAlignment="Center">
+                                        <TextBlock Text="Enable animations" FontSize="13" FontWeight="Bold" Foreground="{DynamicResource Text0}"/>
+                                        <TextBlock Text="Fade/scale transitions between screens and when opening/closing the overlay. Off by default -- can look smooth or noticeably janky depending on your hardware and what's running underneath (a game in particular)."
+                                                   FontSize="11" Foreground="{DynamicResource Text2}" Margin="0,3,0,0" TextWrapping="Wrap"/>
+                                    </StackPanel>
+                                    <ToggleButton x:Name="EnableAnimationsToggle" Grid.Column="1" Style="{StaticResource AppToggle}" VerticalAlignment="Center" Click="EnableAnimationsToggle_Click"/>
+                                </Grid>
+                            </Border>
                         </StackPanel>
                     </StackPanel>
                 </ScrollViewer>

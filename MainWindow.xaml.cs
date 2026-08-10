@@ -1487,29 +1487,144 @@ public partial class MainWindow : Window
     /// already have switched away from Player before passing true -- Player
     /// doesn't survive a hide/show round trip (see PlayerFolder_Click).
     /// </param>
+    /// <summary>
+    /// Fades a window's Opacity from 0 to 1 then Show()s it -- a plain WPF
+    /// DoubleAnimation, not the native AnimateWindow trick tried earlier this
+    /// session, which only ever half-worked (didn't reliably blend on every
+    /// setup) and got reverted. This works because MainWindow (and Scrim,
+    /// already AllowsTransparency="True") is a genuinely layered window now
+    /// -- Window.Opacity animation is the actual textbook-supported use case
+    /// for that, unlike a non-layered window silently ignoring it.
+    /// </summary>
+    // See FadeWindowOut's own comment for why useCache exists at all -- Player
+    // never needs useCache:false here, since it doesn't survive a hide/show
+    // round trip (see PlayerFolder_Click's own comment), so it's never the
+    // active panel at the moment a fade-in starts.
+    private static void FadeWindowIn(Window window, double durationMs = 180)
+    {
+        window.Opacity = 0;
+        var cacheTarget = window.Content as FrameworkElement;
+        if (cacheTarget != null)
+            cacheTarget.CacheMode = new BitmapCache();
+
+        window.Show();
+        var fade = new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(durationMs))
+        {
+            EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut }
+        };
+        if (cacheTarget != null)
+            fade.Completed += (_, _) => cacheTarget.CacheMode = null;
+        window.BeginAnimation(OpacityProperty, fade);
+    }
+
+    /// <summary>
+    /// Fades a window's Opacity to 0, then Hide()s it and resets Opacity back
+    /// to 1 -- so the NEXT FadeWindowIn call starts from a clean, fully-
+    /// opaque state rather than wherever this fade-out happened to leave it.
+    /// onCompleted (optional) runs right after that, still only if the fade
+    /// actually reached 0 naturally -- see CloseOverlay's own call site for
+    /// why that matters (a reopen mid-fade replaces this animation instead
+    /// of letting it finish, so onCompleted correctly never runs then).
+    ///
+    /// useCache mirrors PrepareAnimatePanelIn's own useCache: animating just
+    /// Window.Opacity still means re-rendering the FULL window content on
+    /// every single frame the layered window pushes -- caching window.Content
+    /// once (a BitmapCache on RootBorder, or Scrim's own root Grid) and
+    /// alpha-blending that cached bitmap instead is what makes the fade
+    /// actually smooth rather than the window just snapping away once
+    /// whatever handful of frames DID make it through finish dropping.
+    /// Default true; CloseOverlay passes false specifically when closing
+    /// from Player, since VLC's native HWND is still attached and playing
+    /// throughout this fade (ShowScreen's own screen-swap, which would call
+    /// StopPlayerPlayback, is deferred until onCompleted) -- same "airspace"
+    /// incompatibility as PrepareAnimatePanelIn's own Player exclusion.
+    /// </summary>
+    private static void FadeWindowOut(Window window, double durationMs = 150, Action? onCompleted = null, bool useCache = true)
+    {
+        FrameworkElement? cacheTarget = useCache ? window.Content as FrameworkElement : null;
+        if (cacheTarget != null)
+            cacheTarget.CacheMode = new BitmapCache();
+
+        var fade = new DoubleAnimation(window.Opacity, 0, TimeSpan.FromMilliseconds(durationMs))
+        {
+            EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut }
+        };
+        fade.Completed += (_, _) =>
+        {
+            window.Hide();
+            window.Opacity = 1;
+            if (cacheTarget != null)
+                cacheTarget.CacheMode = null;
+            onCompleted?.Invoke();
+        };
+        window.BeginAnimation(OpacityProperty, fade);
+    }
+
     private void CloseOverlay(bool preserveScreen = false)
     {
-        if (preserveScreen)
+        if (!_settings.EnableAnimations)
         {
-            // Deliberately don't touch ShowScreen/_lastScreen at all here --
-            // Gallery's _currentGalleryFolder and Player's _currentPlayerFile
-            // are untouched by anything in this path, so leaving the current
-            // panel as-is is sufficient; ToggleVisible's reopen path doesn't
-            // call ShowScreen either, so whatever's still active just
-            // reappears exactly as it was.
-        }
-        else if (!IsCriticalOperationActive())
-        {
-            _lastScreen = Screen.Idle;
-            ShowScreen(Screen.Idle);
+            // Instant path, matching how this worked before the
+            // AllowsTransparency="True" experiment entirely -- no fade, no
+            // deferred swap, the panel reset (if any) just happens
+            // synchronously up front since there's no animation for it to
+            // race against.
+            if (preserveScreen)
+            {
+                // Deliberately don't touch ShowScreen/_lastScreen at all here --
+                // Gallery's _currentGalleryFolder and Player's _currentPlayerFile
+                // are untouched by anything in this path, so leaving the current
+                // panel as-is is sufficient; ToggleVisible's reopen path doesn't
+                // call ShowScreen either, so whatever's still active just
+                // reappears exactly as it was.
+            }
+            else if (!IsCriticalOperationActive())
+            {
+                _lastScreen = Screen.Idle;
+                ShowScreen(Screen.Idle, skipEntranceAnimation: true);
+            }
+            else
+            {
+                ShowScreen(_lastScreen, skipEntranceAnimation: true);
+            }
+
+            Hide();
+            _scrim.Hide();
         }
         else
         {
-            ShowScreen(_lastScreen);
+            // The actual panel swap (ShowScreen) is deferred into
+            // FadeWindowOut's own onCompleted below instead of happening up
+            // front -- doing it before the fade even started meant the fade
+            // was visibly fading OUT IDLE'S content, not whatever screen the
+            // user was actually just looking at (Gallery/Settings/Player):
+            // the swap itself is instant (no UpdateLayout to soften it, see
+            // ShowScreen's skipEntranceAnimation comment), so it read as
+            // "everything disappears but the idle panel stays for a few
+            // frames" instead of a clean fade of the real screen. Deferring
+            // it to onCompleted means the swap only ever happens once the
+            // window is already Hide()'d, so it's genuinely invisible.
+            // Whether/what to reset to is still decided NOW (not 150ms from
+            // now), just not actually APPLIED yet.
+            if (preserveScreen)
+            {
+                FadeWindowOut(this, durationMs: 80, useCache: PlayerPanel.Visibility != Visibility.Visible);
+            }
+            else
+            {
+                if (!IsCriticalOperationActive())
+                    _lastScreen = Screen.Idle;
+                Screen targetScreen = _lastScreen;
+                FadeWindowOut(this, durationMs: 80, onCompleted: () => ShowScreen(targetScreen, skipEntranceAnimation: true), useCache: PlayerPanel.Visibility != Visibility.Visible);
+            }
+
+            // Tiles panel deliberately faster than the scrim -- the dimmed
+            // backdrop lingering a beat longer while the tiles themselves have
+            // already snapped away reads as intentional (a graceful undim), not
+            // as the tiles being "stuck".
+            FadeWindowOut(_scrim);
         }
 
-        Hide();
-        _scrim.Hide();
         _disclaimer.Hide();
         _logo.Hide();
         _streamingStatus.Hide();
@@ -1558,9 +1673,18 @@ public partial class MainWindow : Window
         }
         else
         {
-            _scrim.Show();
-            _logo.ShowWithIntro();
-            Show();
+            if (_settings.EnableAnimations)
+            {
+                FadeWindowIn(_scrim);
+                _logo.ShowWithIntro();
+                FadeWindowIn(this);
+            }
+            else
+            {
+                _scrim.Show();
+                _logo.ShowWithIntro();
+                Show();
+            }
             Activate();
             _statusOverlay.Show();
             WindowZOrder.BringToFrontWithoutActivating(new WindowInteropHelper(_statusOverlay).Handle);
@@ -1631,27 +1755,99 @@ public partial class MainWindow : Window
     /// then-settle on the scale specifically is what reads as "alive"
     /// rather than mechanical.
     /// </summary>
-    private static void AnimatePanelIn(FrameworkElement panel)
+    /// <summary>
+    /// Split into Prepare (before newPanel becomes visible) and Start (after
+    /// everything else in ShowScreen has settled) specifically for the
+    /// AllowsTransparency="True" experiment -- see ShowScreen's own comment
+    /// for why the forced UpdateLayout() call in between needs the panel
+    /// ALREADY in its invisible/shrunk starting state, not its old combined
+    /// form which set that state only after the layout pass had already
+    /// happened.
+    /// </summary>
+    private static void PrepareAnimatePanelIn(FrameworkElement panel, bool useCache)
     {
-        var duration = TimeSpan.FromMilliseconds(220);
-        var scale = new ScaleTransform(0.96, 0.96);
-        panel.RenderTransform = scale;
+        // BitmapCache rasterizes the panel once and animates that cached
+        // bitmap instead of re-rendering the actual vector content on every
+        // frame -- cuts the per-frame render cost this panel adds on top of
+        // the layered window's own full-window blit. Cleared once the
+        // animation completes so it isn't kept around outside the transition.
+        //
+        // useCache=false for Gallery (see caller): LoadGallery() runs right
+        // after ShowScreen returns and populates/mutates the tile grid
+        // (thumbnails loading in) while this fade is still in flight -- a
+        // cached bitmap has to re-rasterize every time that content changes
+        // underneath it, and doing that mid-animation caused a solid-frame /
+        // opacity-dip / solid-frame flicker (a stale cache frame briefly
+        // visible during regeneration).
+        //
+        // useCache=false for Player too, for a different reason: BitmapCache
+        // can only rasterize WPF's own rendered content, not a native child
+        // HWND -- VLC's video surface, attached into PlayerVideoView shortly
+        // after this via OpenInPlayer's own deferred callback. The exact
+        // same "airspace" problem documented elsewhere in this app (see
+        // StopPlayerPlayback), just hitting BitmapCache instead of
+        // Visibility/layout this time: a cached bitmap taken before VLC
+        // attaches can't include content that isn't WPF's to rasterize,
+        // producing a stale/partial frame (a "half window", then the video
+        // area rendering as an empty container) until the cache clears at
+        // the animation's end and normal compositing takes back over.
+        //
+        // Every other screen is both fully static once shown AND has no
+        // native HWND content, so the cache stays valid for their whole
+        // animation.
+        if (useCache)
+            panel.CacheMode = new BitmapCache();
+        panel.RenderTransform = new ScaleTransform(0.96, 0.96);
         panel.RenderTransformOrigin = new Point(0.5, 0.5);
         panel.Opacity = 0;
-
-        var fadeEase = new CubicEase { EasingMode = EasingMode.EaseOut };
-        // Small amplitude -- enough to feel like a real settle, not a bounce.
-        var settleEase = new BackEase { EasingMode = EasingMode.EaseOut, Amplitude = 0.35 };
-
-        panel.BeginAnimation(OpacityProperty, new DoubleAnimation(0, 1, duration) { EasingFunction = fadeEase });
-        scale.BeginAnimation(ScaleTransform.ScaleXProperty, new DoubleAnimation(0.96, 1, duration) { EasingFunction = settleEase });
-        scale.BeginAnimation(ScaleTransform.ScaleYProperty, new DoubleAnimation(0.96, 1, duration) { EasingFunction = settleEase });
     }
 
-    private void ShowScreen(Screen screen)
+    private static void StartAnimatePanelIn(FrameworkElement panel)
+    {
+        // Slightly longer duration, and no overshoot (CubicEase instead of
+        // BackEase) -- under a layered window's frame-dropping, overshoot
+        // needs enough in-between frames to read as "settle"; with frames
+        // getting dropped it read as a bounce/snap instead of a subtle one,
+        // so removing it degrades gracefully even when frames are sparse.
+        var duration = TimeSpan.FromMilliseconds(320);
+        var ease = new CubicEase { EasingMode = EasingMode.EaseOut };
+        var scale = (ScaleTransform)panel.RenderTransform;
+
+        var fade = new DoubleAnimation(0, 1, duration) { EasingFunction = ease };
+        fade.Completed += (_, _) => panel.CacheMode = null;
+
+        panel.BeginAnimation(OpacityProperty, fade);
+        scale.BeginAnimation(ScaleTransform.ScaleXProperty, new DoubleAnimation(0.96, 1, duration) { EasingFunction = ease });
+        scale.BeginAnimation(ScaleTransform.ScaleYProperty, new DoubleAnimation(0.96, 1, duration) { EasingFunction = ease });
+    }
+
+    private void ShowScreen(Screen screen, bool skipEntranceAnimation = false)
     {
         FrameworkElement newPanel = PanelFor(screen);
         bool switchingPanel = newPanel.Visibility != Visibility.Visible;
+        // No entrance animation at all for Player -- VLC's video keeps
+        // independently decoding/presenting its own frames the whole time
+        // OpenInPlayer's deferred attach is pending, on top of whatever this
+        // fade+scale animation costs, and both compete for the same
+        // layered-window full-window blit on every single frame either one
+        // produces. That contention read as the animation itself running at
+        // ~5fps -- not fixable by tuning the animation cheaper, since the
+        // video's own frame rate isn't something this app controls. Every
+        // other screen has no ongoing native rendering competing with it, so
+        // they keep the animation.
+        //
+        // skipEntranceAnimation is CloseOverlay's escape hatch for its own
+        // reset-to-Idle call: that reset happens right before FadeWindowOut
+        // fades the WHOLE window away, so IdlePanel's own fade+scale (and
+        // its BitmapCache) would be competing with that window-level fade
+        // for the same layered-window compositing pipeline for literally no
+        // visual benefit -- nobody's watching Idle "animate in" while the
+        // window is simultaneously vanishing. That contention was the actual
+        // cause of a near-black square (RootBorder's own background, since
+        // IdlePanel's content starts at Opacity=0) reading as "stuck" for
+        // half a second instead of fading -- the window's own fade-out was
+        // getting starved by the competing animation, not genuinely stuck.
+        bool animateEntrance = switchingPanel && screen != Screen.Player && !skipEntranceAnimation && _settings.EnableAnimations;
 
         // Three ordered steps, not two -- a switch always involves BOTH a
         // Visibility change AND (often) a Size change, and doing either one
@@ -1710,7 +1906,54 @@ public partial class MainWindow : Window
             Top = targetBounds.Y + CompactTop;
         }
 
+        // AllowsTransparency="True" experiment: a layered window has to push
+        // a fully-composited bitmap for whatever the visual tree looks like
+        // at the moment DWM asks for one, instead of a normal window's live
+        // incremental repaint -- so with SizeToContent="Height" driving the
+        // window's own resize off newPanel's now-visible content, there was
+        // a real window where that resize (and this panel's own
+        // measure/arrange) hadn't finished yet when a frame got pushed,
+        // showing a wrong-sized/partially-arranged cut for a frame or two.
+        // The forced UpdateLayout() below closes that window -- but it also
+        // means whatever state newPanel is in AT THAT MOMENT gets committed
+        // as a real rendered frame, not just silently resolved layout math.
+        // First attempt called UpdateLayout() with the panel still at its
+        // default fully-visible state, THEN reset it to AnimatePanelIn's
+        // invisible/shrunk starting point right after -- so the one frame
+        // UpdateLayout forced was the FINAL state, immediately followed by a
+        // jump backward to the START state once the animation kicked in:
+        // full frame, snap backward, animate forward again. Preparing the
+        // panel's starting state FIRST (still while Collapsed, so it isn't
+        // visible yet) means the frame UpdateLayout forces is the correct
+        // starting one, and the animation that follows only ever moves
+        // forward from there.
+        if (animateEntrance)
+            PrepareAnimatePanelIn(newPanel, useCache: screen is Screen.Idle or Screen.SaveReplay or Screen.StartRecord or Screen.Settings);
+        else if (switchingPanel)
+        {
+            // Player specifically: guarantee a clean, fully-visible state
+            // instead of just skipping Prepare/Start -- Opacity/RenderTransform/
+            // CacheMode are only ever touched by this animation pair, but
+            // resetting explicitly here doesn't depend on that staying true.
+            newPanel.Opacity = 1;
+            newPanel.RenderTransform = null;
+            newPanel.CacheMode = null;
+        }
+
         newPanel.Visibility = Visibility.Visible;
+        // Skipped for CloseOverlay's reset-to-Idle call specifically: this
+        // synchronous call forces a real paint so a NEWLY OPENED screen's
+        // resize/layout is fully settled before the user actually sees or
+        // interacts with it -- but a close-triggered reset exists purely to
+        // leave state correct for NEXT time the overlay opens, and the
+        // window is about to fade out and Hide() immediately after this
+        // anyway. Forcing a real paint nobody needs to see was pure added
+        // latency between the hotkey press and the fade-out even starting
+        // -- "resize to compact size (fully opaque), THEN start a 150ms
+        // fade" reads as slower than it should, not as fast as the fade
+        // duration alone suggests.
+        if (!skipEntranceAnimation)
+            UpdateLayout();
         // Deferred, not called inline here -- UpdateStreamingBoxVisibility can
         // Show()/reposition a SEPARATE top-level window (StreamingStatusOverlay),
         // and doing that synchronously in the middle of ShowScreen can pump the
@@ -1734,8 +1977,8 @@ public partial class MainWindow : Window
         if (screen == Screen.Idle)
             _ = RefreshGalleryCountAsync();
 
-        if (switchingPanel)
-            AnimatePanelIn(newPanel);
+        if (animateEntrance)
+            StartAnimatePanelIn(newPanel);
 
         // The gear only makes sense on the idle screen -- it isn't a fourth tile,
         // so it shouldn't linger once you've navigated away from the row it sits above.
@@ -4048,49 +4291,61 @@ public partial class MainWindow : Window
 
         StopPlayerPlayback();
 
-        _vlcPlayer = new LibVlc.MediaPlayer(_libVlc);
-        PlayerVideoView.MediaPlayer = _vlcPlayer;
-
-        using var media = new LibVlc.Media(_libVlc, new Uri(ResolveLocalClipPath(file)));
-        _vlcPlayer.Play(media);
-
-        bool tracksLoaded = false;
-        _vlcPlayer.Playing += (_, _) => Dispatcher.BeginInvoke(() =>
+        // Deferred to DispatcherPriority.Loaded (same reasoning as the popup
+        // reopen above): attaching VLC's native HWND and starting playback
+        // synchronously, right as ShowScreen just made the Player panel
+        // visible, meant the layered window (AllowsTransparency="True")
+        // could push its first composited frame before the panel's own
+        // layout (grid rows, PlayerVideoView's bounds) had actually
+        // resolved -- visible as the video area rendering cut in half for a
+        // couple of frames. Letting layout fully settle first, then
+        // attaching the video into an already-stable area, avoids that.
+        Dispatcher.BeginInvoke(new Action(() =>
         {
-            PlayIcon.Visibility = Visibility.Collapsed;
-            PauseIcon.Visibility = Visibility.Visible;
-            if (_vlcPlayer.Media is not null)
+            _vlcPlayer = new LibVlc.MediaPlayer(_libVlc);
+            PlayerVideoView.MediaPlayer = _vlcPlayer;
+
+            using var media = new LibVlc.Media(_libVlc, new Uri(ResolveLocalClipPath(file)));
+            _vlcPlayer.Play(media);
+
+            bool tracksLoaded = false;
+            _vlcPlayer.Playing += (_, _) => Dispatcher.BeginInvoke(() =>
             {
-                var videoTrack = _vlcPlayer.Media.Tracks.FirstOrDefault(t => t.TrackType == LibVlc.TrackType.Video).Data.Video;
-                if (videoTrack.Width > 0 && videoTrack.Height > 0)
-                    StatResolution.Text = $"{videoTrack.Width} x {videoTrack.Height}";
-                if (videoTrack.FrameRateDen > 0)
-                    StatFps.Text = $"{(double)videoTrack.FrameRateNum / videoTrack.FrameRateDen:0.##} fps";
-            }
+                PlayIcon.Visibility = Visibility.Collapsed;
+                PauseIcon.Visibility = Visibility.Visible;
+                if (_vlcPlayer.Media is not null)
+                {
+                    var videoTrack = _vlcPlayer.Media.Tracks.FirstOrDefault(t => t.TrackType == LibVlc.TrackType.Video).Data.Video;
+                    if (videoTrack.Width > 0 && videoTrack.Height > 0)
+                        StatResolution.Text = $"{videoTrack.Width} x {videoTrack.Height}";
+                    if (videoTrack.FrameRateDen > 0)
+                        StatFps.Text = $"{(double)videoTrack.FrameRateNum / videoTrack.FrameRateDen:0.##} fps";
+                }
 
-            // Track info isn't known the instant Play() is called -- LibVLC parses the
-            // media asynchronously, so reading Media.Tracks right after Play() (the old
-            // bug here) always saw an empty list and hid the audio selector even on
-            // clips that do have a track. By the time Playing fires, parsing has
-            // actually finished, so this is the first point where Tracks is reliable.
-            if (!tracksLoaded)
+                // Track info isn't known the instant Play() is called -- LibVLC parses the
+                // media asynchronously, so reading Media.Tracks right after Play() (the old
+                // bug here) always saw an empty list and hid the audio selector even on
+                // clips that do have a track. By the time Playing fires, parsing has
+                // actually finished, so this is the first point where Tracks is reliable.
+                if (!tracksLoaded)
+                {
+                    tracksLoaded = true;
+                    LoadAudioTracks();
+                }
+            });
+            _vlcPlayer.Paused += (_, _) => Dispatcher.BeginInvoke(() =>
             {
-                tracksLoaded = true;
-                LoadAudioTracks();
-            }
-        });
-        _vlcPlayer.Paused += (_, _) => Dispatcher.BeginInvoke(() =>
-        {
-            PlayIcon.Visibility = Visibility.Visible;
-            PauseIcon.Visibility = Visibility.Collapsed;
-        });
-        _vlcPlayer.EndReached += (_, _) => Dispatcher.BeginInvoke(() =>
-        {
-            PlayIcon.Visibility = Visibility.Visible;
-            PauseIcon.Visibility = Visibility.Collapsed;
-        });
+                PlayIcon.Visibility = Visibility.Visible;
+                PauseIcon.Visibility = Visibility.Collapsed;
+            });
+            _vlcPlayer.EndReached += (_, _) => Dispatcher.BeginInvoke(() =>
+            {
+                PlayIcon.Visibility = Visibility.Visible;
+                PauseIcon.Visibility = Visibility.Collapsed;
+            });
 
-        _seekTimer.Start();
+            _seekTimer.Start();
+        }), DispatcherPriority.Loaded);
     }
 
     /// <summary>Shown whenever there's at least one audio track -- not just when there's a choice to make, since seeing "Track 1" confirms audio was actually detected at all.</summary>
@@ -4577,6 +4832,7 @@ public partial class MainWindow : Window
     private void LoadSettingsUi()
     {
         RefreshThemeSwatchSelection();
+        EnableAnimationsToggle.IsChecked = _settings.EnableAnimations;
 
         LaunchWithWindowsToggle.IsChecked = _settings.LaunchWithWindows;
         ClipsFolderText.Text = _settings.ClipsFolder;
@@ -5066,6 +5322,12 @@ public partial class MainWindow : Window
             _disclaimer.Hide();
         else if (IsVisible)
             _disclaimer.Show();
+    }
+
+    private void EnableAnimationsToggle_Click(object sender, RoutedEventArgs e)
+    {
+        _settings.EnableAnimations = EnableAnimationsToggle.IsChecked == true;
+        _settings.Save();
     }
 
     // Uses a Scheduled Task (not the Run registry key) so the app can launch
