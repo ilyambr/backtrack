@@ -10,6 +10,7 @@ using System.Text;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using Backtrack.Interop;
 
 namespace Backtrack.Pairing;
 
@@ -246,6 +247,15 @@ public sealed class PairingService : IDisposable
                     await HandleGetThumbnailAsync(doc.RootElement, client.GetStream());
                     return;
                 }
+                // put_clip is get_clip's mirror image -- the CLIENT streams raw
+                // bytes right after its own request line instead of the host
+                // streaming them after its response, so this needs the same
+                // direct-stream-access carve-out as the two above.
+                if (type == "put_clip")
+                {
+                    await HandlePutClipAsync(doc.RootElement, client.GetStream());
+                    return;
+                }
 
                 string response = type switch
                 {
@@ -255,6 +265,8 @@ public sealed class PairingService : IDisposable
                     "set_ramdisk_settings" => await HandleSetRamDiskSettingsAsync(doc.RootElement),
                     "check_plugin_updates" => await HandleCheckPluginUpdatesAsync(doc.RootElement),
                     "list_gallery" => HandleListGallery(doc.RootElement),
+                    "delete_clip" => HandleDeleteClip(doc.RootElement),
+                    "rename_clip" => HandleRenameClip(doc.RootElement),
                     _ => JsonSerializer.Serialize(new { error = "unknown request type" }),
                 };
 
@@ -468,6 +480,175 @@ public sealed class PairingService : IDisposable
         catch (Exception ex)
         {
             return JsonSerializer.Serialize(new { error = ex.Message });
+        }
+    }
+
+    /// <summary>
+    /// Sends this instance's own real clip to the Recycle Bin on behalf of a
+    /// paired receiver PC -- the "delete a clip remotely, deleting it for
+    /// real on the stream PC" half of the round-trip; a receiver's own local
+    /// cached copy (if it downloaded this clip before) is the receiver's own
+    /// concern to clean up, not this instance's.
+    /// </summary>
+    private string HandleDeleteClip(JsonElement request)
+    {
+        if (!IsAuthorizedClient(request))
+            return JsonSerializer.Serialize(new { success = false, error = "Not authorized -- pair with this PC first." });
+
+        string relativePath = request.TryGetProperty("path", out JsonElement p) ? p.GetString() ?? "" : "";
+        if (!TryResolveGalleryPath(relativePath, out string fullPath, out string? pathError) ||
+            !GalleryFormats.VideoExtensions.Contains(Path.GetExtension(fullPath).ToLowerInvariant()))
+            return JsonSerializer.Serialize(new { success = false, error = pathError ?? "Not a clip file." });
+
+        try
+        {
+            if (!File.Exists(fullPath))
+                return JsonSerializer.Serialize(new { success = false, error = "That clip doesn't exist on this PC anymore." });
+
+            return RecycleBin.Delete(fullPath)
+                ? JsonSerializer.Serialize(new { success = true })
+                : JsonSerializer.Serialize(new { success = false, error = "The Recycle Bin operation failed." });
+        }
+        catch (Exception ex)
+        {
+            return JsonSerializer.Serialize(new { success = false, error = ex.Message });
+        }
+    }
+
+    /// <summary>
+    /// Renames this instance's own real clip file on behalf of a paired
+    /// receiver PC. Same "just fail on a name collision" behavior as
+    /// MainWindow.BeginRename's local rename (no auto-dedupe) -- unlike
+    /// HandlePutClipAsync below, which DOES need to dedupe since a
+    /// trim-save-new upload is closer in spirit to CopyToThisPcAsync than to
+    /// a deliberate rename. Returns the new relative path so the receiver's
+    /// own Gallery/Player can reflect it without a full reload round trip.
+    /// </summary>
+    private string HandleRenameClip(JsonElement request)
+    {
+        if (!IsAuthorizedClient(request))
+            return JsonSerializer.Serialize(new { success = false, error = "Not authorized -- pair with this PC first." });
+
+        string relativePath = request.TryGetProperty("path", out JsonElement p) ? p.GetString() ?? "" : "";
+        string newName = request.TryGetProperty("newName", out JsonElement n) ? n.GetString() ?? "" : "";
+
+        if (!TryResolveGalleryPath(relativePath, out string fullPath, out string? pathError) ||
+            !GalleryFormats.VideoExtensions.Contains(Path.GetExtension(fullPath).ToLowerInvariant()))
+            return JsonSerializer.Serialize(new { success = false, error = pathError ?? "Not a clip file." });
+        if (string.IsNullOrWhiteSpace(newName))
+            return JsonSerializer.Serialize(new { success = false, error = "Name can't be empty." });
+
+        try
+        {
+            if (!File.Exists(fullPath))
+                return JsonSerializer.Serialize(new { success = false, error = "That clip doesn't exist on this PC anymore." });
+
+            string newRelativePath = WithNewFileName(relativePath, newName + Path.GetExtension(fullPath));
+            if (!TryResolveGalleryPath(newRelativePath, out string newFullPath, out string? newPathError))
+                return JsonSerializer.Serialize(new { success = false, error = newPathError ?? "Invalid name." });
+            if (File.Exists(newFullPath))
+                return JsonSerializer.Serialize(new { success = false, error = "A clip with that name already exists." });
+
+            File.Move(fullPath, newFullPath);
+            return JsonSerializer.Serialize(new { success = true, path = newRelativePath });
+        }
+        catch (Exception ex)
+        {
+            return JsonSerializer.Serialize(new { success = false, error = ex.Message });
+        }
+    }
+
+    /// <summary>Swaps the file-name component of a '/'-separated relative gallery path, keeping whatever folder prefix it had.</summary>
+    private static string WithNewFileName(string relativePath, string newFileName)
+    {
+        int lastSlash = relativePath.LastIndexOf('/');
+        string folderPrefix = lastSlash < 0 ? "" : relativePath[..lastSlash];
+        return folderPrefix.Length == 0 ? newFileName : $"{folderPrefix}/{newFileName}";
+    }
+
+    /// <summary>
+    /// get_clip's mirror image: the CLIENT streams the raw file bytes right
+    /// after its own request line (already positioned exactly there, same
+    /// reasoning as get_clip's own response-side comment), and this writes
+    /// them to disk here -- the "send a trimmed/edited clip back to the
+    /// stream PC" half of the round trip. `overwrite:true` (a trim-replace)
+    /// writes straight over the named path; `overwrite:false` (trim-save-new,
+    /// or any future "upload as a new clip") dedupes onto "(2)", "(3)", etc.
+    /// instead of clobbering something already there under that exact name,
+    /// same idea as BuildRecordFolderRowAsync-style collision avoidance
+    /// elsewhere in this app, just server-side since only the host actually
+    /// knows what's already sitting in that folder.
+    /// </summary>
+    private async Task HandlePutClipAsync(JsonElement request, NetworkStream stream)
+    {
+        if (!IsAuthorizedClient(request))
+        {
+            await WriteLineAsync(stream, JsonSerializer.Serialize(new { success = false, error = "Not authorized -- pair with this PC first." }));
+            return;
+        }
+
+        string relativePath = request.TryGetProperty("path", out JsonElement p) ? p.GetString() ?? "" : "";
+        long size = request.TryGetProperty("size", out JsonElement sz) ? sz.GetInt64() : -1;
+        bool overwrite = request.TryGetProperty("overwrite", out JsonElement ow) && ow.GetBoolean();
+
+        if (!TryResolveGalleryPath(relativePath, out string fullPath, out string? pathError) ||
+            !GalleryFormats.VideoExtensions.Contains(Path.GetExtension(fullPath).ToLowerInvariant()) || size < 0)
+        {
+            await WriteLineAsync(stream, JsonSerializer.Serialize(new { success = false, error = pathError ?? "Not a valid clip upload." }));
+            return;
+        }
+
+        string finalRelativePath = relativePath;
+        if (!overwrite && File.Exists(fullPath))
+        {
+            string dir = Path.GetDirectoryName(fullPath)!;
+            string baseName = Path.GetFileNameWithoutExtension(fullPath);
+            string ext = Path.GetExtension(fullPath);
+            int i = 2;
+            string candidate;
+            do
+            {
+                candidate = Path.Combine(dir, $"{baseName} ({i}){ext}");
+                i++;
+            } while (File.Exists(candidate));
+            fullPath = candidate;
+            finalRelativePath = WithNewFileName(relativePath, Path.GetFileName(fullPath));
+        }
+
+        string tempPath = fullPath + ".partial";
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(fullPath)!);
+            long received = 0;
+            var buffer = new byte[81920];
+            await using (var file = File.Create(tempPath))
+            {
+                while (received < size)
+                {
+                    int toRead = (int)Math.Min(buffer.Length, size - received);
+                    int read = await stream.ReadAsync(buffer.AsMemory(0, toRead));
+                    if (read == 0)
+                        break; // connection dropped mid-transfer
+                    await file.WriteAsync(buffer.AsMemory(0, read));
+                    received += read;
+                }
+            }
+
+            if (received != size)
+            {
+                File.Delete(tempPath);
+                await WriteLineAsync(stream, JsonSerializer.Serialize(new { success = false, error = "Connection dropped before the whole file arrived." }));
+                return;
+            }
+
+            File.Delete(fullPath); // ok if it doesn't exist -- the overwrite:true case
+            File.Move(tempPath, fullPath);
+            await WriteLineAsync(stream, JsonSerializer.Serialize(new { success = true, path = finalRelativePath }));
+        }
+        catch (Exception ex)
+        {
+            try { File.Delete(tempPath); } catch { /* best effort cleanup */ }
+            await WriteLineAsync(stream, JsonSerializer.Serialize(new { success = false, error = ex.Message }));
         }
     }
 
@@ -691,6 +872,111 @@ public sealed class PairingService : IDisposable
     /// <summary>Same idea as DownloadRemoteClipAsync, but for one clip's thumbnail -- see HandleGetThumbnailAsync on the host side.</summary>
     public Task<(bool Success, string? Error)> DownloadRemoteThumbnailAsync(string relativePath, string destPath) =>
         DownloadStreamedFileAsync("get_thumbnail", relativePath, destPath);
+
+    /// <summary>Deletes one clip on the paired transmitter PC for real (Recycle Bin, see HandleDeleteClip) -- not just this PC's own local cached copy of it.</summary>
+    public Task<(bool Success, string? Error)> DeleteRemoteClipAsync(string relativePath) =>
+        SendClipMutationRequestAsync("delete_clip", new Dictionary<string, object?> { ["path"] = relativePath });
+
+    /// <summary>Renames one clip on the paired transmitter PC for real. NewPath is the new relative path (as ListRemoteGalleryAsync would report it) on success.</summary>
+    public async Task<(bool Success, string? Error, string? NewPath)> RenameRemoteClipAsync(string relativePath, string newName)
+    {
+        (bool success, string? error, string? path) = await SendClipMutationRequestWithPathAsync("rename_clip",
+            new Dictionary<string, object?> { ["path"] = relativePath, ["newName"] = newName });
+        return (success, error, path);
+    }
+
+    private async Task<(bool Success, string? Error)> SendClipMutationRequestAsync(string type, Dictionary<string, object?> fields)
+    {
+        (bool success, string? error, _) = await SendClipMutationRequestWithPathAsync(type, fields);
+        return (success, error);
+    }
+
+    private async Task<(bool Success, string? Error, string? Path)> SendClipMutationRequestWithPathAsync(string type, Dictionary<string, object?> fields)
+    {
+        if (string.IsNullOrEmpty(_settings.PairedPeerHost) || string.IsNullOrEmpty(_settings.PairedPeerSecret))
+            return (false, "Not paired with a transmitter PC.", null);
+
+        try
+        {
+            using var client = new TcpClient();
+            await client.ConnectAsync(_settings.PairedPeerHost, _settings.PairedPeerPort);
+            fields["type"] = type;
+            fields["secret"] = _settings.PairedPeerSecret;
+            await WriteLineAsync(client.GetStream(), JsonSerializer.Serialize(fields));
+            string? responseLine = await ReadLineAsync(client.GetStream());
+            if (responseLine is null)
+                return (false, "No response from the transmitter PC.", null);
+
+            using JsonDocument doc = JsonDocument.Parse(responseLine);
+            bool success = doc.RootElement.TryGetProperty("success", out JsonElement s) && s.GetBoolean();
+            string? error = doc.RootElement.TryGetProperty("error", out JsonElement er) ? er.GetString() : null;
+            string? path = doc.RootElement.TryGetProperty("path", out JsonElement pt) ? pt.GetString() : null;
+            return (success, success ? null : (error ?? "Request failed."), path);
+        }
+        catch (Exception ex)
+        {
+            return (false, ex.Message, null);
+        }
+    }
+
+    /// <summary>
+    /// Uploads a local file to the paired transmitter PC as one of ITS real
+    /// clips -- the "send an edited/trimmed clip back to the stream PC" half
+    /// of the round trip, mirror image of DownloadRemoteClipAsync. `overwrite`
+    /// true replaces relativePath exactly (a trim-replace); false lets
+    /// HandlePutClipAsync dedupe onto "(2)"/"(3)" etc. instead (a
+    /// trim-save-new) -- the actual path it landed at comes back as Path,
+    /// which may differ from relativePath in that case.
+    /// </summary>
+    public async Task<(bool Success, string? Error, string? Path)> UploadRemoteClipAsync(
+        string relativePath, string localSourcePath, bool overwrite, IProgress<double>? progress = null)
+    {
+        if (string.IsNullOrEmpty(_settings.PairedPeerHost) || string.IsNullOrEmpty(_settings.PairedPeerSecret))
+            return (false, "Not paired with a transmitter PC.", null);
+
+        try
+        {
+            using FileStream fileStream = File.OpenRead(localSourcePath);
+            using var client = new TcpClient();
+            await client.ConnectAsync(_settings.PairedPeerHost, _settings.PairedPeerPort);
+            NetworkStream stream = client.GetStream();
+            string request = JsonSerializer.Serialize(new
+            {
+                type = "put_clip",
+                secret = _settings.PairedPeerSecret,
+                path = relativePath,
+                size = fileStream.Length,
+                overwrite,
+            });
+            await WriteLineAsync(stream, request);
+
+            long total = fileStream.Length;
+            long sent = 0;
+            var buffer = new byte[81920];
+            int read;
+            while ((read = await fileStream.ReadAsync(buffer.AsMemory(0, buffer.Length))) > 0)
+            {
+                await stream.WriteAsync(buffer.AsMemory(0, read));
+                sent += read;
+                progress?.Report(total > 0 ? (double)sent / total : 1.0);
+            }
+            await stream.FlushAsync();
+
+            string? responseLine = await ReadLineAsync(stream);
+            if (responseLine is null)
+                return (false, "No response from the transmitter PC.", null);
+
+            using JsonDocument doc = JsonDocument.Parse(responseLine);
+            bool success = doc.RootElement.TryGetProperty("success", out JsonElement s) && s.GetBoolean();
+            string? error = doc.RootElement.TryGetProperty("error", out JsonElement er) ? er.GetString() : null;
+            string? path = doc.RootElement.TryGetProperty("path", out JsonElement pt) ? pt.GetString() : null;
+            return (success, success ? null : (error ?? "Upload failed."), path);
+        }
+        catch (Exception ex)
+        {
+            return (false, ex.Message, null);
+        }
+    }
 
     // Keyed by destPath: switching clips fast enough to re-click one that's
     // still downloading (or a genuine accidental double-click) used to fire

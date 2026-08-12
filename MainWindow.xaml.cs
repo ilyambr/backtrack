@@ -143,6 +143,15 @@ public partial class MainWindow : Window
     private bool _playerHasEnded;
     private Task? _pendingVlcDisposeTask;
     private FileInfo? _currentPlayerFile;
+    // Set (right after OpenInPlayer) whenever the clip currently open in
+    // Player is actually a downloaded copy of a REMOTE clip -- RelativePath
+    // as the host PC knows it, DeviceId identifying which paired peer.
+    // Cleared at the top of every OpenInPlayer call (a genuinely local clip
+    // clears it back out). Checked by PlayerDelete_Click/the Player title
+    // rename/RunTrimAsync so those edits get mirrored back to the actual
+    // clip on the stream PC, not just applied to this PC's local cached
+    // copy of it -- see each of those call sites for the round-trip itself.
+    private (string RelativePath, string DeviceId)? _currentPlayerRemoteOrigin;
     private readonly DispatcherTimer _seekTimer;
     private readonly DispatcherTimer _seekDebounceTimer;
     private readonly DispatcherTimer _freezeFrameTimer;
@@ -4061,6 +4070,7 @@ public partial class MainWindow : Window
             Foreground = (Brush)FindResource("Text0"),
             TextTrimming = TextTrimming.CharacterEllipsis,
             Margin = new Thickness(0, 7, 0, 1),
+            Cursor = Cursors.IBeam,
         };
         double mb = file.Size / (1024.0 * 1024.0);
         // Same today-vs-not truncation as the local card (BuildClipCard) --
@@ -4081,12 +4091,150 @@ public partial class MainWindow : Window
         content.Children.Add(title);
         content.Children.Add(sub);
 
-        var card = new Border { Width = 210, Child = content, Cursor = Cursors.Hand };
+        var card = new Border { Width = 210, Child = content };
         string relativePath = _currentRemoteGalleryFolder is null ? file.Name : $"{_currentRemoteGalleryFolder}/{file.Name}";
-        card.MouseLeftButtonUp += (_, _) => _ = OpenRemoteClipAsync(relativePath, file);
 
+        // Click-to-open lives on iconHost specifically, not the whole card --
+        // same reason BuildClipCard's local equivalent puts it on `thumb`
+        // alone, not `card`: title needs its OWN double-click (rename) below
+        // without that also bubbling up into opening the clip.
         _ = LoadRemoteThumbnailAsync(relativePath, file, thumbImage);
+        iconHost.MouseLeftButtonUp += (_, _) => _ = OpenRemoteClipAsync(relativePath, file);
+
+        title.MouseLeftButtonDown += (_, e) =>
+        {
+            if (e.ClickCount == 2)
+                BeginRenameRemote(card, title, relativePath, file);
+        };
+
+        var contextMenu = new ContextMenu { Style = (Style)FindResource("DarkContextMenu") };
+        var openFolderItem = new MenuItem { Header = "Open file location", Style = (Style)FindResource("DarkMenuItem") };
+        openFolderItem.Click += (_, _) => _ = OpenRemoteClipFileLocationAsync(relativePath, file);
+        var deleteItem = new MenuItem { Header = "Delete", Style = (Style)FindResource("DarkMenuItem") };
+        deleteItem.Click += (_, _) => DeleteRemoteClip(relativePath, file);
+        contextMenu.Items.Add(openFolderItem);
+        contextMenu.Items.Add(deleteItem);
+        iconHost.ContextMenu = contextMenu;
+
         return card;
+    }
+
+    /// <summary>
+    /// Downloads this remote clip into the local per-peer cache if it isn't
+    /// already there (same cache OpenRemoteClipAsync itself uses -- opening
+    /// it once already leaves it cached for this to just reveal instantly),
+    /// then reveals THAT local copy in Explorer. There's no way to open a
+    /// window onto the transmitter PC's own filesystem from here; the local
+    /// cached copy is the closest real equivalent "Open file location" can
+    /// mean for a clip that lives on a different machine.
+    /// </summary>
+    private async Task OpenRemoteClipFileLocationAsync(string relativePath, RemoteGalleryFile file)
+    {
+        string destPath = GetRemoteClipCachePath(relativePath, file.Name);
+        if (!File.Exists(destPath))
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(destPath)!);
+            (bool success, string? error) = await _pairing.DownloadRemoteClipAsync(relativePath, destPath);
+            if (!success)
+            {
+                MessageBox.Show(this, $"Couldn't download that clip: {error}", "Backtrack");
+                return;
+            }
+        }
+        RevealInExplorerAndClose(destPath);
+    }
+
+    /// <summary>
+    /// Unlike local DeleteClip, this is a real delete on the OTHER PC (see
+    /// HandleDeleteClip) -- no recycle-bin-undo toast here, since undoing a
+    /// delete that already crossed the network back to a different machine
+    /// isn't something this side can reliably offer; the confirm dialog is
+    /// the one safety net.
+    /// </summary>
+    private void DeleteRemoteClip(string relativePath, RemoteGalleryFile file)
+    {
+        ShowConfirmDialog(
+            $"Are you sure you want to delete \"{file.Name}\"? This deletes the real clip on {_settings.PairedPeerName}'s PC (sent to its recycle bin there), not just this view.",
+            "Delete",
+            confirmed =>
+            {
+                if (confirmed)
+                    _ = DeleteRemoteClipAsync(relativePath, file);
+            });
+    }
+
+    private async Task DeleteRemoteClipAsync(string relativePath, RemoteGalleryFile file)
+    {
+        (bool success, string? error) = await _pairing.DeleteRemoteClipAsync(relativePath);
+        if (!success)
+        {
+            MessageBox.Show(this, $"Couldn't delete that clip: {error}", "Backtrack");
+            return;
+        }
+
+        // Best-effort cleanup of whatever this PC itself cached for that
+        // clip -- the real delete already succeeded regardless of whether
+        // either of these exist or this cleanup itself fails.
+        try { File.Delete(GetRemoteClipCachePath(relativePath, file.Name)); } catch { /* best effort */ }
+        string? thumbCache = GetRemoteThumbnailCachePath(relativePath, file.Modified, file.Size);
+        if (thumbCache is not null)
+        {
+            try { File.Delete(thumbCache); } catch { /* best effort */ }
+        }
+
+        LoadGallery();
+    }
+
+    /// <summary>
+    /// Remote counterpart of BeginRename -- same in-place TextBox swap, but
+    /// commits via RenameRemoteClipAsync (a real rename on the OTHER PC, see
+    /// HandleRenameClip) instead of a local File.Move. Doesn't try to rename
+    /// this PC's own local cached copy (if any) to match -- it's keyed on
+    /// the OLD filename and just goes stale/orphaned; the clip re-downloads
+    /// fresh under its new name next time it's opened, same as any clip
+    /// this PC has never cached before.
+    /// </summary>
+    private void BeginRenameRemote(Border card, TextBlock title, string relativePath, RemoteGalleryFile file)
+    {
+        _isRenamingCard = true;
+        bool finished = false;
+
+        var box = new TextBox
+        {
+            Text = Path.GetFileNameWithoutExtension(file.Name),
+            FontWeight = FontWeights.Bold,
+            FontSize = 12.5,
+            Margin = title.Margin,
+            Background = (Brush)FindResource("RowBg"),
+            Foreground = (Brush)FindResource("Text0"),
+            BorderThickness = new Thickness(0),
+        };
+
+        var stack = (StackPanel)card.Child;
+        int index = stack.Children.IndexOf(title);
+        stack.Children.RemoveAt(index);
+        stack.Children.Insert(index, box);
+
+        box.Loaded += (_, _) => { box.Focus(); box.SelectAll(); };
+        box.KeyDown += (_, e) =>
+        {
+            if (e.Key == Key.Enter) { if (!finished) { finished = true; _ = CommitRenameAsync(); } }
+            else if (e.Key == Key.Escape) { e.Handled = true; if (!finished) { finished = true; _isRenamingCard = false; LoadGallery(); } }
+        };
+        box.LostFocus += (_, _) => { if (!finished) { finished = true; _ = CommitRenameAsync(); } };
+
+        async Task CommitRenameAsync()
+        {
+            _isRenamingCard = false;
+            string newName = box.Text.Trim();
+            if (!string.IsNullOrEmpty(newName) && newName != Path.GetFileNameWithoutExtension(file.Name))
+            {
+                (bool success, string? error, _) = await _pairing.RenameRemoteClipAsync(relativePath, newName);
+                if (!success)
+                    MessageBox.Show(this, $"Couldn't rename: {error}", "Backtrack");
+            }
+            LoadGallery();
+        }
     }
 
     /// <summary>
@@ -4180,17 +4328,12 @@ public partial class MainWindow : Window
             return;
 
         long myToken = ++_clipOpenToken;
-
-        string cacheDir = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "Backtrack", "RemoteCache", _settings.PairedPeerDeviceId,
-            Path.GetDirectoryName(relativePath.Replace('/', Path.DirectorySeparatorChar)) ?? "");
-        Directory.CreateDirectory(cacheDir);
-        string destPath = Path.Combine(cacheDir, file.Name);
+        string destPath = GetRemoteClipCachePath(relativePath, file.Name);
 
         if (File.Exists(destPath))
         {
             OpenInPlayer(new FileInfo(destPath));
+            _currentPlayerRemoteOrigin = (relativePath, _settings.PairedPeerDeviceId);
             return;
         }
 
@@ -4219,7 +4362,23 @@ public partial class MainWindow : Window
         }
 
         OpenInPlayer(new FileInfo(destPath));
+        _currentPlayerRemoteOrigin = (relativePath, _settings.PairedPeerDeviceId);
     }
+
+    /// <summary>
+    /// Deterministic per-peer local cache path for one remote clip's actual
+    /// video file -- shared by OpenRemoteClipAsync, the remote card's context
+    /// menu ("Open file location"/"Delete" need to know where a local copy
+    /// would be), and remote-origin cleanup after a remote delete/rename.
+    /// Doesn't create the directory (unlike OpenRemoteClipAsync's own use of
+    /// it, which downloads into it) -- callers that only ever read from here
+    /// don't need it to exist.
+    /// </summary>
+    private string GetRemoteClipCachePath(string relativePath, string fileName) => Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "Backtrack", "RemoteCache", _settings.PairedPeerDeviceId ?? "",
+        Path.GetDirectoryName(relativePath.Replace('/', Path.DirectorySeparatorChar)) ?? "",
+        fileName);
 
     /// <summary>
     /// Immediate Player screen switch for a remote clip that hasn't finished
@@ -4992,6 +5151,11 @@ public partial class MainWindow : Window
         // knows it's been superseded and should give up quietly instead of
         // yanking playback back to itself once it finishes.
         _clipOpenToken++;
+        // Cleared unconditionally here -- OpenRemoteClipAsync (the only
+        // other caller that ever wants this set) always calls OpenInPlayer
+        // FIRST, then sets _currentPlayerRemoteOrigin itself right after, so
+        // clearing it up front here can never race that back out.
+        _currentPlayerRemoteOrigin = null;
 
         _currentPlayerFile = file;
         _trimStart = null;
@@ -5677,13 +5841,16 @@ public partial class MainWindow : Window
             stack.Children.Insert(index, PlayerTitle);
         }
 
-        void CommitRename()
+        async void CommitRename()
         {
             _isPlayerRenaming = false;
             _cancelPlayerRename = null;
             string newName = box.Text.Trim();
             if (!string.IsNullOrEmpty(newName) && newName != Path.GetFileNameWithoutExtension(file.Name))
             {
+                // Captured before OpenInPlayer below clears it (same
+                // reasoning as RunTrimAsync's own remoteOrigin capture).
+                (string RelativePath, string DeviceId)? remoteOrigin = _currentPlayerRemoteOrigin;
                 try
                 {
                     StopPlayerPlayback();
@@ -5694,6 +5861,19 @@ public partial class MainWindow : Window
                     stack.Children.Remove(box);
                     stack.Children.Insert(index, PlayerTitle);
                     OpenInPlayer(_currentPlayerFile);
+
+                    if (remoteOrigin is (string relPath, string deviceId))
+                    {
+                        // Restore what OpenInPlayer just cleared, then mirror
+                        // the rename to the real clip on the stream PC --
+                        // see HandleRenameClip.
+                        _currentPlayerRemoteOrigin = remoteOrigin;
+                        (bool success, string? error, string? newRelPath) = await _pairing.RenameRemoteClipAsync(relPath, newName);
+                        if (success)
+                            _currentPlayerRemoteOrigin = (newRelPath ?? relPath, deviceId);
+                        else
+                            MessageBox.Show(this, $"Renamed locally, but couldn't rename on {_settings.PairedPeerName}'s PC: {error}", "Backtrack");
+                    }
                     return;
                 }
                 catch (Exception ex)
@@ -5711,20 +5891,47 @@ public partial class MainWindow : Window
             return;
 
         FileInfo file = _currentPlayerFile;
+        (string RelativePath, string DeviceId)? remoteOrigin = _currentPlayerRemoteOrigin;
+
+        string message = remoteOrigin is null
+            ? $"Are you sure you want to delete \"{file.Name}\"? This will send it to your recycle bin."
+            : $"Are you sure you want to delete \"{file.Name}\"? This deletes the real clip on {_settings.PairedPeerName}'s PC (sent to its recycle bin there), not just this cached copy.";
 
         ShowConfirmDialog(
-            $"Are you sure you want to delete \"{file.Name}\"? This will send it to your recycle bin.",
+            message,
             "Delete",
             confirmed =>
             {
-                if (confirmed)
+                if (!confirmed)
+                    return;
+
+                _currentPlayerFile = null;
+                _currentPlayerRemoteOrigin = null;
+                StopPlayerPlayback();
+                ShowScreen(Screen.Gallery);
+
+                if (remoteOrigin is (string relPath, _))
                 {
-                    _currentPlayerFile = null;
-                    StopPlayerPlayback();
-                    ShowScreen(Screen.Gallery);
+                    // This local file is just a downloaded cache copy, not
+                    // the real clip -- plain delete, no recycle-bin-undo
+                    // toast (QueueDeleteWithUndo is for local originals;
+                    // there's nothing meaningful to "undo" locally once the
+                    // real delete on the other PC has gone through).
+                    try { File.Delete(file.FullName); } catch { /* best effort */ }
+                    _ = DeleteRemotePlayerClipAsync(relPath);
+                }
+                else
+                {
                     QueueDeleteWithUndo(file);
                 }
             });
+    }
+
+    private async Task DeleteRemotePlayerClipAsync(string relativePath)
+    {
+        (bool success, string? error) = await _pairing.DeleteRemoteClipAsync(relativePath);
+        if (!success)
+            MessageBox.Show(this, $"Couldn't delete that clip: {error}", "Backtrack");
     }
 
     // ------------------------------------------------------------------ trim
@@ -5780,6 +5987,12 @@ public partial class MainWindow : Window
         FileInfo sourceFile = _currentPlayerFile;
         TimeSpan start = _trimStart.Value;
         TimeSpan end = _trimEnd.Value;
+        // Captured now -- every OpenInPlayer call below (both branches call
+        // it once the local trim's done) clears _currentPlayerRemoteOrigin
+        // unconditionally, same as any other clip open. This is what makes
+        // the trim result actually get sent back to the clip's real PC
+        // afterward, further down in each branch.
+        (string RelativePath, string DeviceId)? remoteOrigin = _currentPlayerRemoteOrigin;
 
         string tempOut = Path.Combine(Path.GetTempPath(), $"cc_trim_{Guid.NewGuid():N}{sourceFile.Extension}");
 
@@ -5818,6 +6031,17 @@ public partial class MainWindow : Window
                 File.Delete(tempOut);
                 _currentPlayerFile = new FileInfo(sourceFile.FullName);
                 OpenInPlayer(_currentPlayerFile);
+
+                if (remoteOrigin is (string relPath, _))
+                {
+                    // Restore what OpenInPlayer just cleared -- still the
+                    // SAME remote clip, just replaced with a trimmed version.
+                    _currentPlayerRemoteOrigin = remoteOrigin;
+                    TrimStatusText.Text = $"Sending to {_settings.PairedPeerName}'s PC...";
+                    (bool upSuccess, string? upError, _) = await _pairing.UploadRemoteClipAsync(relPath, _currentPlayerFile.FullName, overwrite: true);
+                    if (!upSuccess)
+                        MessageBox.Show(this, $"Trimmed locally, but couldn't send it back to {_settings.PairedPeerName}'s PC: {upError}", "Backtrack");
+                }
             }
             else
             {
@@ -5833,6 +6057,26 @@ public partial class MainWindow : Window
                 File.Delete(tempOut);
                 _ = RefreshGalleryCountAsync();
                 OpenInPlayer(sourceFile);
+
+                if (remoteOrigin is (string relPath, _))
+                {
+                    // Still viewing the same original remote clip (this
+                    // branch reopens sourceFile unchanged, not the new
+                    // trimmed copy) -- restore what OpenInPlayer just
+                    // cleared, then send the NEW trimmed copy to the stream
+                    // PC as an additional clip alongside the original
+                    // (overwrite:false lets HandlePutClipAsync dedupe the
+                    // name server-side if needed, same as this already did
+                    // locally just above).
+                    _currentPlayerRemoteOrigin = remoteOrigin;
+                    int lastSlash = relPath.LastIndexOf('/');
+                    string folderPrefix = lastSlash < 0 ? "" : relPath[..lastSlash];
+                    string remoteDestRelPath = folderPrefix.Length == 0 ? Path.GetFileName(destPath) : $"{folderPrefix}/{Path.GetFileName(destPath)}";
+                    TrimStatusText.Text = $"Sending to {_settings.PairedPeerName}'s PC...";
+                    (bool upSuccess, string? upError, _) = await _pairing.UploadRemoteClipAsync(remoteDestRelPath, destPath, overwrite: false);
+                    if (!upSuccess)
+                        MessageBox.Show(this, $"Trimmed locally, but couldn't send the new clip to {_settings.PairedPeerName}'s PC: {upError}", "Backtrack");
+                }
             }
 
             TrimStatusText.Text = "Done.";
