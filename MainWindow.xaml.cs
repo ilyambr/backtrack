@@ -2594,30 +2594,37 @@ public partial class MainWindow : Window
     {
         ShowScreen(Screen.Gallery);
         _currentGalleryFolder = null;
-        _galleryIsRemote = false;
         _currentRemoteGalleryFolder = null;
+        // Paired-for-sharing devices care about the OTHER PC's clips, not
+        // this one's -- jump straight to the remote view rather than making
+        // that a second click through a "This PC"/IP tab switcher. See
+        // RefreshGallerySourceTabsVisibility, which keeps that switcher
+        // hidden unconditionally now.
+        _galleryIsRemote = !string.IsNullOrEmpty(_settings.PairedPeerSecret);
         RefreshGallerySourceTabsVisibility();
         LoadGallery();
     }
 
-    /// <summary>The "This PC"/"Remote" tabs only make sense (and only show) once
-    /// actually paired with a transmitter PC -- call whenever pairing state
-    /// changes, in addition to whenever Gallery itself opens.</summary>
+    /// <summary>
+    /// The old "This PC"/"<IP>" tab switcher is gone -- GalleryTile_Click
+    /// already decides local vs. remote up front based on pairing state, so
+    /// there's nothing left for a switcher to do in normal use. Kept as a
+    /// method (rather than deleting the row's code entirely) purely for the
+    /// "got unpaired while sitting on the Remote view" fallback below, which
+    /// still needs to run wherever pairing state can change.
+    /// </summary>
     private void RefreshGallerySourceTabsVisibility()
     {
+        GallerySourceTabs.Visibility = Visibility.Collapsed;
         bool paired = !string.IsNullOrEmpty(_settings.PairedPeerSecret);
-        GallerySourceTabs.Visibility = paired ? Visibility.Visible : Visibility.Collapsed;
         if (!paired && _galleryIsRemote)
         {
-            // Got unpaired while sitting on the Remote tab -- there's nothing
-            // left to show there, so fall back to local rather than leaving
-            // Gallery stuck showing a now-meaningless "Remote" view.
+            // Got unpaired while showing the remote gallery -- there's
+            // nothing left to show there, so fall back to local rather than
+            // leaving Gallery stuck on a now-meaningless "Remote" view.
             _galleryIsRemote = false;
             _currentRemoteGalleryFolder = null;
         }
-        GalleryLocalTabButton.FontWeight = _galleryIsRemote ? FontWeights.Normal : FontWeights.Bold;
-        GalleryRemoteTabButton.FontWeight = _galleryIsRemote ? FontWeights.Bold : FontWeights.Normal;
-        GalleryRemoteTabButton.Content = string.IsNullOrEmpty(_settings.PairedPeerName) ? "Remote" : _settings.PairedPeerName;
     }
 
     private void GalleryLocalTab_Click(object sender, RoutedEventArgs e)
@@ -3710,6 +3717,27 @@ public partial class MainWindow : Window
 
     private async Task RefreshGalleryCountAsync()
     {
+        // Paired devices open straight into the remote gallery (see
+        // GalleryTile_Click), so the Idle tile showing THIS PC's own local
+        // count there was always going to read as "0 clips" for anyone
+        // actually using this as a receiver -- match whichever gallery a
+        // tile click would actually land on. Root-folder count only (not
+        // recursive into subfolders like CountClips is) -- there's no cheap
+        // way to ask the other PC for a real recursive total without
+        // walking its whole tree over the wire, and root is what Gallery
+        // itself shows first anyway.
+        if (!string.IsNullOrEmpty(_settings.PairedPeerSecret))
+        {
+            RemoteGalleryListing? listing = await _pairing.ListRemoteGalleryAsync("");
+            if (listing is not null)
+            {
+                GalleryStatus.Text = listing.Files.Count == 1 ? "1 clip" : $"{listing.Files.Count} clips";
+                return;
+            }
+            // Unreachable right now (peer offline, etc.) -- fall through to
+            // the local count rather than showing a stale/wrong number.
+        }
+
         int count = await Task.Run(CountClips);
         GalleryStatus.Text = count == 1 ? "1 clip" : $"{count} clips";
     }
@@ -3995,9 +4023,15 @@ public partial class MainWindow : Window
             Margin = new Thickness(0, 7, 0, 1),
         };
         double mb = file.Size / (1024.0 * 1024.0);
+        // Same today-vs-not truncation as the local card (BuildClipCard) --
+        // this was always using the "not today" format unconditionally,
+        // showing a redundant "Aug 12" on a clip made minutes ago just
+        // because it came from the remote gallery instead of the local one.
+        DateTime modified = file.Modified.ToLocalTime();
+        string dateText = modified.Date == DateTime.Today ? modified.ToString("h:mm tt") : modified.ToString("MMM d, h:mm tt");
         var sub = new TextBlock
         {
-            Text = $"{file.Modified.ToLocalTime():MMM d, h:mm tt} · {mb:0.#} MB",
+            Text = $"{dateText} · {mb:0.#} MB",
             FontSize = 11,
             Foreground = (Brush)FindResource("Text2"),
         };
