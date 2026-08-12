@@ -117,6 +117,18 @@ every window must use `DynamicResource` for themed colors, never
 own local copy of a themed key (shadows the app-level lookup, silently
 breaks theme switching for that one window).
 
+**Every new element with a color needs a `DynamicResource`, checked at the
+moment it's added, not after.** Shipped two new floating pills (Player
+fullscreen's title chip and transport bar) with a literal hardcoded hex
+background — worked fine to look at in whatever theme was active during
+that session, but stayed that same color regardless of which theme the
+user actually had set, exactly the bug `DynamicResource` throughout this
+file exists to prevent. Before hardcoding ANY color on a new element, check
+`Theme.Dark.xaml` (or the other three) for an existing key that already
+fits (`PanelBgOpaque` — a per-theme translucent surface color — was
+already sitting right there and unused for this). Only add a new key
+across all four theme files if genuinely nothing existing fits.
+
 Code-behind that builds UI dynamically (not XAML) — `ToastOverlay.xaml.cs`
 is the example — can't use `DynamicResource` at all. Look up
 `Application.Current.Resources[key]` at the moment each element is built,
@@ -137,6 +149,22 @@ not fixable in code).
 New enum members (`AppTheme`, etc.) must be APPENDED, never inserted
 before an existing member — an existing settings file's stored `0`/`1`/`2`
 would silently start meaning something else.
+
+**No rounded corners as the default** — square edges throughout, no
+`CornerRadius` on new elements unless explicitly asked for. Learned via a
+real round-trip: added a rounded pill for Player's fullscreen title/back-
+button chip, got told "no curves, we don't do rounded corners" and squared
+it off, then got told the ROUNDED version was actually what was wanted for
+that one specifically ("that looked nice") -- so the rule is "square unless
+asked," not "always square." `PlayerTitlePill` (MainWindow.xaml) carries an
+explicit rounded exception for exactly this reason;
+`PlayerFullscreenTransportBorder` right next to it stayed square, since
+that one was never asked to change. A few other pre-existing small ones
+also exist (the seek track's own pill/thumb, Settings' theme swatches) --
+grandfathered in, not evidence the rule doesn't apply. Default to
+`CornerRadius="0"` or just omit it for anything new; ask (or match
+`PlayerTitlePill`'s own precedent) before rounding something new rather
+than guessing either way.
 
 ## OBS/NVENC facts (from live troubleshooting, not guesses)
 

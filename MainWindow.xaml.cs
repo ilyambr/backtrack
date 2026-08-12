@@ -118,6 +118,15 @@ public partial class MainWindow : Window
 
     private bool _isRenamingCard;
     private bool _isPlayerRenaming;
+    // Set by PlayerRename_Click while its in-place TextBox is up, cleared the
+    // moment it closes (committed or reverted) either way. Lets a caller like
+    // BackToGallery_Click cancel an in-progress rename explicitly, instead of
+    // relying on the TextBox's own LostFocus handler to sort it out on its
+    // own -- LostFocus fires as a side effect of clicking Back too, which
+    // raced CommitRename (and its own OpenInPlayer refresh) against
+    // BackToGallery_Click's ShowScreen(Gallery) over which screen ends up
+    // showing.
+    private Action? _cancelPlayerRename;
     private bool _isTrimming;
     private readonly HashSet<string> _pendingDeletePaths = new(StringComparer.OrdinalIgnoreCase);
 
@@ -125,9 +134,20 @@ public partial class MainWindow : Window
 
     private LibVlc.LibVLC? _libVlc;
     private LibVlc.MediaPlayer? _vlcPlayer;
+    // Set on EndReached, cleared once actually resumed. A bare Play()/seek
+    // after libvlc reaches end-of-stream is a well-known LibVLC quirk that
+    // just silently does nothing -- the demuxer/pipeline needs an explicit
+    // Stop()+Play() cycle to become resumable again, not just a Time= write
+    // or another Play() call on top of the already-ended one. See
+    // PlayPauseButton_Click and CommitSeek, the two ways to resume.
+    private bool _playerHasEnded;
+    private Task? _pendingVlcDisposeTask;
     private FileInfo? _currentPlayerFile;
     private readonly DispatcherTimer _seekTimer;
     private readonly DispatcherTimer _seekDebounceTimer;
+    private readonly DispatcherTimer _freezeFrameTimer;
+    private readonly DispatcherTimer _volumePopupCloseDebounce;
+    private readonly DispatcherTimer _actionFeedbackHideTimer;
     private bool _isScrubbing = false;
     private bool _isHoveringSeekTrack = false;
     private long _targetSeekMs = 0;
@@ -396,10 +416,48 @@ public partial class MainWindow : Window
         _seekDebounceTimer.Tick += (_, _) =>
         {
             _seekDebounceTimer.Stop();
-            if (_vlcPlayer != null && _vlcPlayer.IsSeekable && _targetSeekMs >= 0)
+            if (_targetSeekMs >= 0)
             {
-                _vlcPlayer.Time = _targetSeekMs;
+                CommitSeek(_targetSeekMs);
             }
+        };
+
+        // One-shot: started right as playback begins, hides the freeze-frame
+        // cover once decode has had time to stabilize past the glitchy start.
+        _freezeFrameTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(1000) };
+        _freezeFrameTimer.Tick += (_, _) =>
+        {
+            _freezeFrameTimer.Stop();
+            PlayerFreezeFramePopup.IsOpen = false;
+        };
+
+        // Debounced close for the volume slider's hover popup: closing
+        // immediately on MouseLeave meant the small visual gap between the
+        // button and the popup above it (StaysOpen Popups don't share
+        // hit-test area with their PlacementTarget) closed it the instant
+        // the cursor crossed that gap on the way from one to the other.
+        // Both PlayerVolumeArea_MouseEnter/Leave (wired to both the button
+        // and the popup's own content) restart/cancel this.
+        _volumePopupCloseDebounce = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(200) };
+        _volumePopupCloseDebounce.Tick += (_, _) =>
+        {
+            _volumePopupCloseDebounce.Stop();
+            PlayerVolumePopup.IsOpen = false;
+        };
+
+        // One-shot: fades PlayerActionFeedbackPopup out and closes it, a
+        // beat after ShowPlayerActionFeedback opens it.
+        _actionFeedbackHideTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(650) };
+        _actionFeedbackHideTimer.Tick += (_, _) =>
+        {
+            _actionFeedbackHideTimer.Stop();
+            var fadeOut = new DoubleAnimation(1, 0, TimeSpan.FromMilliseconds(220));
+            fadeOut.Completed += (_, _) =>
+            {
+                PlayerActionFeedbackPopup.IsOpen = false;
+                PlayerActionFeedbackBorder.Opacity = 1; // reset for the next time this shows
+            };
+            PlayerActionFeedbackBorder.BeginAnimation(OpacityProperty, fadeOut);
         };
 
         // The window needs a real HWND immediately for RegisterHotKey and the
@@ -445,6 +503,8 @@ public partial class MainWindow : Window
             // the video surface can come up as a blank white swapchain with nothing
             // ever drawn into it on machines/VMs where GPU decode acceleration isn't
             // reliably available -- software decode is slower but actually paints frames.
+            // (Tried --avcodec-hw=any to see if it also fixed the ~1s glitchy startup
+            // frame -- it didn't, so no reason to carry that regression risk for nothing.)
             _libVlc = new LibVlc.LibVLC("--no-video-title-show", "--avcodec-hw=none");
 
             // A real HWND for thumbnail-generation MediaPlayers to render into, never
@@ -768,7 +828,7 @@ public partial class MainWindow : Window
         // fully updatable from a dev build; only Backtrack's own self-update is
         // off-limits here.
         if (!UpdateService.IsDevBuild)
-            await CheckAndApplySelfUpdateAsync();
+            await CheckAndApplySelfUpdateAsync(isManualTrigger);
     }
 
     private void ShowAppStartedToast()
@@ -970,6 +1030,20 @@ public partial class MainWindow : Window
                 return new PluginVersionInfo(installed.ToString(3), null);
             }
 
+            // Settings > "Disable OBS plugin auto-updates". Same shape as the
+            // OBS-busy deferral just above -- SetPendingUpdate still surfaces
+            // that an update exists (via the bottom-left prompt) and it's
+            // still forceable through right there, this just stops it from
+            // applying itself unattended. isManualTrigger (the Settings
+            // "Check now" button) always bypasses this, same as it already
+            // bypasses the version/digest staleness check above.
+            if (!isManualTrigger && _settings.DisablePluginAutoUpdate)
+            {
+                SetUpdateStatus(dot, versionText, $"{installed.ToString(3)} (update available)", ok: null);
+                SetPendingUpdate(displayName, () => _ = ApplyAsync());
+                return new PluginVersionInfo(installed.ToString(3), null);
+            }
+
             await ApplyAsync();
             return new PluginVersionInfo(release.Version, true);
         }
@@ -981,7 +1055,7 @@ public partial class MainWindow : Window
         }
     }
 
-    private async Task CheckAndApplySelfUpdateAsync()
+    private async Task CheckAndApplySelfUpdateAsync(bool isManualTrigger = false)
     {
         Version installed = UpdateService.CurrentAppVersion;
         try
@@ -1029,6 +1103,16 @@ public partial class MainWindow : Window
             if (await _obs.IsRecordingOrStreamingAsync())
             {
                 SetUpdateStatus(BacktrackStatusDot, BacktrackVersionText, $"{installed.ToString(3)} (waiting for OBS)", ok: null);
+                SetPendingUpdate("Backtrack", () => _ = ApplyAsync());
+                return;
+            }
+
+            // Settings > "Disable Backtrack auto-updates" -- same shape as the
+            // OBS-busy deferral just above; see CheckAndApplyPluginUpdateAsync's
+            // own identical gate for the fuller reasoning.
+            if (!isManualTrigger && _settings.DisableBacktrackAutoUpdate)
+            {
+                SetUpdateStatus(BacktrackStatusDot, BacktrackVersionText, $"{installed.ToString(3)} (update available)", ok: null);
                 SetPendingUpdate("Backtrack", () => _ = ApplyAsync());
                 return;
             }
@@ -1645,24 +1729,140 @@ public partial class MainWindow : Window
 
     private void MainWindow_KeyDown(object sender, KeyEventArgs e)
     {
-        if (e.Key != Key.Escape || !IsVisible)
+        if (!IsVisible)
             return;
 
+        if (e.Key == Key.Escape)
+        {
+            e.Handled = true;
+            if (_activeConfirmDialog != null && _activeConfirmDialog.IsLoaded)
+            {
+                _activeConfirmDialog.Close();
+                _activeConfirmDialog = null;
+            }
+            else if (_isPlayerFullscreen)
+            {
+                // Standard fullscreen-video expectation: Escape backs out of
+                // fullscreen first, not straight out of the whole overlay.
+                ExitPlayerFullscreen();
+            }
+            else if (_selectedClipPaths.Count > 0)
+            {
+                _selectedClipPaths.Clear();
+                RefreshGallerySelectionUi();
+            }
+            else
+            {
+                CloseOverlay();
+            }
+            return;
+        }
+
+        HandlePlayerKeyboardShortcut(e);
+    }
+
+    /// <summary>
+    /// YouTube-style playback shortcuts: Space/K play-pause, Left/Right and
+    /// J/L seek, Home/End jump to start/end, 0-9 jump to that tenth of the
+    /// clip, M mute, F fullscreen. Active only while Player is the visible
+    /// screen, and only when nothing is capturing text input -- checked via
+    /// both _isPlayerRenaming (the in-place title rename) and a general
+    /// focused-TextBox check, since letter keys like J/K/L/M/F would
+    /// otherwise get hijacked from someone just typing a new clip name.
+    /// Routes every seek through CommitSeek, not a bare _vlcPlayer.Time
+    /// write, so a shortcut pressed right after a clip finishes gets the
+    /// same Stop()+Play() revival RestartEndedPlayback handles for mouse
+    /// seeks -- see CommitSeek's own comment on why that's needed at all.
+    ///
+    /// Left/Right and J/L step by a FRACTION of the clip's own length, not a
+    /// flat 5s/10s -- Backtrack's clips are often well under a minute (this
+    /// whole session's own test clips ran 9-30s), where a flat 5s jump can
+    /// eat most or all of the clip in one press, making fine seeking
+    /// impossible. Clamped at both ends so it doesn't go to 0 on a
+    /// near-instant clip or absurd on a long recording.
+    /// </summary>
+    private void HandlePlayerKeyboardShortcut(KeyEventArgs e)
+    {
+        if (PlayerPanel.Visibility != Visibility.Visible || _isPlayerRenaming || _vlcPlayer is null)
+            return;
+        if (Keyboard.FocusedElement is TextBox)
+            return;
+
+        long currentMs = _vlcPlayer.Time;
+        long lengthMs = _vlcPlayer.Length;
+        long shortSeekMs = Math.Clamp((long)(lengthMs * 0.05), 1000, 15000);
+        long longSeekMs = Math.Clamp((long)(lengthMs * 0.10), 2000, 30000);
+
+        switch (e.Key)
+        {
+            case Key.Space:
+            case Key.K:
+                bool wasPlaying = _vlcPlayer.IsPlaying;
+                PlayPauseButton_Click(this, e);
+                ShowPlayerActionFeedback(wasPlaying ? PlayerFeedbackIcon.Pause : PlayerFeedbackIcon.Play);
+                break;
+            case Key.Left:
+                CommitSeek(Math.Max(0, currentMs - shortSeekMs));
+                ShowPlayerActionFeedback(PlayerFeedbackIcon.SeekBack, $"-{shortSeekMs / 1000.0:0.#}s");
+                break;
+            case Key.Right:
+                CommitSeek(Math.Min(lengthMs, currentMs + shortSeekMs));
+                ShowPlayerActionFeedback(PlayerFeedbackIcon.SeekForward, $"+{shortSeekMs / 1000.0:0.#}s");
+                break;
+            case Key.J:
+                CommitSeek(Math.Max(0, currentMs - longSeekMs));
+                ShowPlayerActionFeedback(PlayerFeedbackIcon.SeekBack, $"-{longSeekMs / 1000.0:0.#}s");
+                break;
+            case Key.L:
+                CommitSeek(Math.Min(lengthMs, currentMs + longSeekMs));
+                ShowPlayerActionFeedback(PlayerFeedbackIcon.SeekForward, $"+{longSeekMs / 1000.0:0.#}s");
+                break;
+            case Key.Home:
+                CommitSeek(0);
+                ShowPlayerActionFeedback(PlayerFeedbackIcon.SeekBack, "Start");
+                break;
+            case Key.End:
+                CommitSeek(Math.Max(0, lengthMs - 1));
+                ShowPlayerActionFeedback(PlayerFeedbackIcon.SeekForward, "End");
+                break;
+            case Key.M:
+                _vlcPlayer.Mute = !_vlcPlayer.Mute;
+                UpdateVolumeIcon();
+                ShowPlayerActionFeedback(_vlcPlayer.Mute ? PlayerFeedbackIcon.Mute : PlayerFeedbackIcon.Volume,
+                    _vlcPlayer.Mute ? "Muted" : $"{_vlcPlayer.Volume}%");
+                break;
+            case Key.Up:
+                // Through the slider's own Value, not _vlcPlayer.Volume
+                // directly -- PlayerVolumeSlider_ValueChanged already sets
+                // the volume, un-mutes if it was muted, and updates the
+                // icon, so driving it from here keeps the slider's own
+                // displayed position in sync too rather than duplicating
+                // that logic a second time.
+                PlayerVolumeSlider.Value = Math.Min(100, PlayerVolumeSlider.Value + 5);
+                ShowPlayerActionFeedback(PlayerFeedbackIcon.Volume, $"{(int)PlayerVolumeSlider.Value}%");
+                break;
+            case Key.Down:
+                PlayerVolumeSlider.Value = Math.Max(0, PlayerVolumeSlider.Value - 5);
+                ShowPlayerActionFeedback(PlayerFeedbackIcon.Volume, $"{(int)PlayerVolumeSlider.Value}%");
+                break;
+            case Key.F:
+                ToggleFullscreen_Click(this, e);
+                break;
+            case Key.D0 or Key.NumPad0: CommitSeek(0); break;
+            case Key.D1 or Key.NumPad1: CommitSeek(lengthMs * 1 / 10); break;
+            case Key.D2 or Key.NumPad2: CommitSeek(lengthMs * 2 / 10); break;
+            case Key.D3 or Key.NumPad3: CommitSeek(lengthMs * 3 / 10); break;
+            case Key.D4 or Key.NumPad4: CommitSeek(lengthMs * 4 / 10); break;
+            case Key.D5 or Key.NumPad5: CommitSeek(lengthMs * 5 / 10); break;
+            case Key.D6 or Key.NumPad6: CommitSeek(lengthMs * 6 / 10); break;
+            case Key.D7 or Key.NumPad7: CommitSeek(lengthMs * 7 / 10); break;
+            case Key.D8 or Key.NumPad8: CommitSeek(lengthMs * 8 / 10); break;
+            case Key.D9 or Key.NumPad9: CommitSeek(lengthMs * 9 / 10); break;
+            default:
+                return; // Not one of ours -- leave e.Handled alone, let it bubble normally.
+        }
+
         e.Handled = true;
-        if (_activeConfirmDialog != null && _activeConfirmDialog.IsLoaded)
-        {
-            _activeConfirmDialog.Close();
-            _activeConfirmDialog = null;
-        }
-        else if (_selectedClipPaths.Count > 0)
-        {
-            _selectedClipPaths.Clear();
-            RefreshGallerySelectionUi();
-        }
-        else
-        {
-            CloseOverlay();
-        }
     }
 
     public void ToggleVisible()
@@ -1876,6 +2076,24 @@ public partial class MainWindow : Window
         GalleryPanel.Visibility = Visibility.Collapsed;
         PlayerPanel.Visibility = Visibility.Collapsed;
         SettingsPanel.Visibility = Visibility.Collapsed;
+        // PlayerPanel.Collapsed just above does nothing to VLC's native video
+        // HWND on its own -- that's the airspace gotcha, but specifically for
+        // an ANCESTOR going Collapsed. VideoView itself is an HwndHost, and
+        // HwndHost DOES hide its own hosted native window (a real ShowWindow
+        // call under the hood) when ITS OWN Visibility changes -- collapsing
+        // it directly, not just the ancestor, is what actually removes the
+        // native surface from the screen instead of leaving it rendering at
+        // stale bounds. (Tried Opacity=0 first, on the theory that
+        // AllowsTransparency="True" forces WPF to composite hosted HWND
+        // content through an offscreen bitmap where Opacity would apply --
+        // confirmed live that it doesn't actually hide it, so this replaces
+        // that attempt rather than stacking with it.) Reset back to Visible
+        // in OpenInPlayer.
+        if (screen != Screen.Player)
+        {
+            PlayerVideoView.Visibility = Visibility.Collapsed;
+            DetachPlayerVideo();
+        }
         // Not one of the 6 screen panels above, but just as switch-relevant --
         // it's a separate sibling element (declared after IdlePanel so it wins
         // hit-testing over Gallery's tiles, per its own XAML comment), so its
@@ -1997,8 +2215,21 @@ public partial class MainWindow : Window
         if (screen != Screen.Player)
             PlayerOverlayPopup.IsOpen = false;
 
+        // NOT the full StopPlayerPlayback() -- DetachPlayerVideo() already ran
+        // up above, before the resize. This is only the slow half (LibVLC's
+        // own Stop()/Dispose(), observed anywhere from ~0.5s to several
+        // seconds depending on the clip), and it needs to stay OFF the UI
+        // thread specifically here: this whole method call chain
+        // (BackToGallery_Click -> ShowScreen) is synchronous, so calling the
+        // blocking version inline meant NOTHING from this method -- not the
+        // resize, not the Collapse above, nothing -- actually got painted to
+        // the screen until this blocking call returned control to the
+        // dispatcher. That's what "video stays overlayed on Gallery, cut in
+        // half, for exactly N seconds depending on which clip" actually was:
+        // every visual change this method makes was queued correctly the
+        // whole time, just never given a chance to render.
         if (screen != Screen.Player)
-            StopPlayerPlayback();
+            DisposeVlcPlayerAsync();
 
         if (screen is Screen.Idle or Screen.SaveReplay or Screen.StartRecord or Screen.Gallery or Screen.Settings)
             _lastScreen = screen;
@@ -2053,6 +2284,28 @@ public partial class MainWindow : Window
 
     private void BackToGallery_Click(object sender, MouseButtonEventArgs e)
     {
+        // Cancel first, unconditionally, before anything else below. The
+        // in-place rename TextBox's own LostFocus handler auto-commits --
+        // clicking the back arrow moves focus away from it as a side effect,
+        // which used to fire that commit (potentially calling OpenInPlayer
+        // to refresh the renamed title) in a race against this method's own
+        // ShowScreen(Gallery) just below, each fighting over which screen
+        // ends up showing. Reverting explicitly here removes the race
+        // instead of trying to out-order it.
+        _cancelPlayerRename?.Invoke();
+
+        // Same "back" affordance does double duty, matching Escape's own
+        // handling right below it: the first press just backs out of
+        // fullscreen (still on this clip, sidebar/controls restored), and
+        // only a press after that actually leaves Player for Gallery.
+        // Jumping straight to Gallery from fullscreen would skip past the
+        // in-between state entirely and feel like the button did too much.
+        if (_isPlayerFullscreen)
+        {
+            ExitPlayerFullscreen();
+            return;
+        }
+
         ShowScreen(Screen.Gallery);
         LoadGallery();
     }
@@ -2396,10 +2649,247 @@ public partial class MainWindow : Window
         RefreshPluginStatusRemoteGating();
     }
 
+    // "Fullscreen" here means the video+transport column filling the whole
+    // target screen, sidebar collapsed out of the way -- not real OS
+    // fullscreen (WindowStyle="None" already has no chrome to remove, and a
+    // borderless topmost HUD window doesn't have a meaningful "restore"
+    // affordance if it took over the whole desktop the OS's own way).
+    private const string FullscreenEnterIcon = "M7,14H5v5h5v-2H7V14zM5,10h2V7h3V5H5V10zM17,17h-3v2h5v-5h-2V17zM14,5v2h3v3h2V5H14z";
+    private const string FullscreenExitIcon = "M5,16h3v3h2v-5H5V16zM8,8H5v2h5V5H8V8zM14,19h2v-3h3v-2h-5V19zM16,5h-2v5h5V8h-3V5z";
+
+    // Material Design Icons (Apache-2.0), same sourcing as the folder glyph
+    // in BuildFolderCard -- real vector glyphs, not hand-approximated shapes.
+    private const string VolumeUpIcon = "M3,9v6h4l5,5V4L7,9H3z M16.5,12c0,-1.77 -1.02,-3.29 -2.5,-4.03v8.05c1.48,-0.73 2.5,-2.26 2.5,-4.02z M14,3.23v2.06c2.89,0.86 5,3.54 5,6.71s-2.11,5.85 -5,6.71v2.06c4.01,-0.91 7,-4.49 7,-8.77s-2.99,-7.86 -7,-8.77z";
+    private const string VolumeOffIcon = "M16.5,12c0,-1.77 -1.02,-3.29 -2.5,-4.03v2.21l2.45,2.45c0.03,-0.2 0.05,-0.41 0.05,-0.63z M19,12c0,0.94 -0.2,1.82 -0.54,2.64l1.51,1.51C20.63,14.91 21,13.5 21,12c0,-4.28 -2.99,-7.86 -7,-8.77v2.06c2.89,0.86 5,3.54 5,6.71z M4.27,3L3,4.27L7.73,9H3v6h4l5,5v-6.73l4.25,4.25c-0.67,0.52 -1.42,0.93 -2.25,1.18v2.06c1.38,-0.31 2.63,-0.95 3.69,-1.81L19.73,21L21,19.73L4.27,3z M12,4L9.91,6.09L12,8.18V4z";
+    private const string FeedbackPlayIcon = "M8,5v14l11,-7z";
+    private const string FeedbackPauseIcon = "M6,19h4V5H6V19z M14,5v14h4V5H14z";
+    private const string FeedbackSeekForwardIcon = "M4,18l8.5,-6L4,6v12z M13,6v12l8.5,-6L13,6z";
+    private const string FeedbackSeekBackIcon = "M11,18V6l-8.5,6L11,18z M20,18V6l-8.5,6L20,18z";
+
+    private enum PlayerFeedbackIcon { Play, Pause, SeekForward, SeekBack, Volume, Mute }
+
+    /// <summary>
+    /// Brief centered flash for a keyboard-triggered action, matching
+    /// YouTube's own on-screen feedback for its shortcuts. Position is
+    /// computed here, not fixed in XAML, since PlayerVideoView's real size
+    /// differs between normal Player and fullscreen. Uses the same
+    /// close+reopen dance as this file's other Placement="Relative" Popups
+    /// (see CLAUDE.md's own note on why) so the recentering above actually
+    /// takes effect every time, not just the first.
+    /// </summary>
+    private void ShowPlayerActionFeedback(PlayerFeedbackIcon icon, string? text = null)
+    {
+        PlayerActionFeedbackIcon.Data = Geometry.Parse(icon switch
+        {
+            PlayerFeedbackIcon.Play => FeedbackPlayIcon,
+            PlayerFeedbackIcon.Pause => FeedbackPauseIcon,
+            PlayerFeedbackIcon.SeekForward => FeedbackSeekForwardIcon,
+            PlayerFeedbackIcon.SeekBack => FeedbackSeekBackIcon,
+            PlayerFeedbackIcon.Mute => VolumeOffIcon,
+            _ => VolumeUpIcon,
+        });
+        PlayerActionFeedbackText.Text = text ?? string.Empty;
+        PlayerActionFeedbackText.Visibility = string.IsNullOrEmpty(text) ? Visibility.Collapsed : Visibility.Visible;
+
+        double videoWidth = PlayerVideoView.ActualWidth;
+        double videoHeight = PlayerVideoView.ActualHeight;
+        PlayerActionFeedbackPopup.HorizontalOffset = (videoWidth - PlayerActionFeedbackBorder.Width) / 2;
+        PlayerActionFeedbackPopup.VerticalOffset = (videoHeight - PlayerActionFeedbackBorder.Height) / 2;
+
+        PlayerActionFeedbackBorder.BeginAnimation(OpacityProperty, null); // cancel any fade-out already in progress
+        PlayerActionFeedbackBorder.Opacity = 1;
+        PlayerActionFeedbackPopup.IsOpen = false;
+        Dispatcher.BeginInvoke(new Action(() => PlayerActionFeedbackPopup.IsOpen = true), DispatcherPriority.Loaded);
+
+        _actionFeedbackHideTimer.Stop();
+        _actionFeedbackHideTimer.Start();
+    }
+
+    private bool _isPlayerFullscreen;
+    private double _preFullscreenWidth;
+    private double _preFullscreenLeft;
+
     private void ToggleFullscreen_Click(object sender, RoutedEventArgs e)
     {
-        // Placeholder toggle -- the window is already at its widest layout size
-        // for Gallery/Player; true OS fullscreen isn't meaningful for a HUD overlay.
+        if (_isPlayerFullscreen)
+            ExitPlayerFullscreen();
+        else
+            EnterPlayerFullscreen();
+    }
+
+    private void EnterPlayerFullscreen()
+    {
+        _isPlayerFullscreen = true;
+        _preFullscreenWidth = Width;
+        _preFullscreenLeft = Left;
+
+        PlayerSidebar.Visibility = Visibility.Collapsed;
+        PlayerSidebarColumn.Width = new GridLength(0);
+
+        // Captured BEFORE reparenting below, while it's still measured from
+        // its normal docked position -- its own natural height doesn't
+        // depend on which parent hosts it (Auto-sized content throughout),
+        // so this stays valid once it's moved into the overlay Popup.
+        double transportBarHeight = PlayerTransportBar.ActualHeight;
+
+        Rect targetBounds = TargetScreenBounds;
+
+        // The video now gets the FULL available space, not space minus the
+        // transport bar -- the bar overlays the bottom of the video instead
+        // of reserving its own row below it, so "fullscreen" actually means
+        // edge-to-edge video. Still fit-not-stretch (letterbox whichever
+        // dimension doesn't match 16:9) rather than distorting the video or
+        // pushing the window taller than the real screen.
+        double videoWidth = targetBounds.Width;
+        double videoHeight = videoWidth * 9.0 / 16.0;
+        if (videoHeight > targetBounds.Height)
+        {
+            videoHeight = targetBounds.Height;
+            videoWidth = videoHeight * 16.0 / 9.0;
+        }
+
+        Width = videoWidth;
+        PlayerVideoHost.Height = videoHeight;
+        Left = targetBounds.X + (targetBounds.Width - Width) / 2;
+        Top = targetBounds.Y + Math.Max((targetBounds.Height - videoHeight) / 2, 0);
+
+        // Reparent the live transport bar into the fullscreen overlay Popup
+        // (see the Popup's own XAML comment for why a Popup at all, and why
+        // reparenting instead of a duplicate) -- same control, same event
+        // handlers, just a different visual parent while fullscreen is active.
+        PlayerVideoColumnDock.Children.Remove(PlayerTransportBar);
+        // The bar's own opaque PanelBg background would otherwise completely
+        // hide PlayerFullscreenTransportBorder's semi-transparent backdrop
+        // underneath it (same bounds, drawn on top) -- transparent here so
+        // the video actually shows through behind the overlaid controls,
+        // which is the whole point of overlaying instead of docking.
+        PlayerTransportBar.Background = Brushes.Transparent;
+        PlayerFullscreenTransportBorder.Child = PlayerTransportBar;
+
+        // Floating pill, not a full-bleed bar: inset from both the video's
+        // sides and its bottom edge, not flush against any of them. Width is
+        // driven from here rather than a XAML binding to PlayerVideoView's
+        // ActualWidth, specifically so it can be narrower than the video;
+        // HorizontalOffset centers it in the freed-up space. The Border's
+        // own Padding="20,6" (in XAML) adds to PlayerTransportBar's natural
+        // height/width once reparented as its Child, so the gap math below
+        // accounts for that padding, not just the bar's own bare size.
+        const double transportPillSideInset = 40;
+        const double transportPillBottomGap = 16;
+        const double transportPillVerticalPadding = 12; // Border's Padding="20,6": 6 top + 6 bottom
+        const double transportPillHorizontalPadding = 40; // Border's Padding="20,6": 20 left + 20 right
+        PlayerFullscreenTransportBorder.Width = videoWidth - transportPillSideInset;
+        // Also tried forcing PlayerTransportRow.Width (the Grid the seek
+        // track's own "*" column lives in) explicitly, cascading this same
+        // approach one level deeper -- reverted, see
+        // ReopenPlayerFullscreenTransportPopup's own comment: playback got
+        // stuck at end-of-clip (stuck play button, seeking backward stopped
+        // working) right after that change, not root-caused yet. Left at
+        // just PlayerTransportBar's own explicit Width for now.
+        PlayerTransportBar.Width = PlayerFullscreenTransportBorder.Width - transportPillHorizontalPadding;
+        PlayerFullscreenTransportPopup.HorizontalOffset = transportPillSideInset / 2;
+        PlayerFullscreenTransportPopup.VerticalOffset =
+            videoHeight - (transportBarHeight + transportPillVerticalPadding) - transportPillBottomGap;
+
+        // Extra breathing room added as Margin on the popup's own INNER
+        // content, not as more Popup.HorizontalOffset/VerticalOffset -- the
+        // Popup's base 10,10 offset (unchanged, XAML default) is placed
+        // relative to VideoView, an HwndHost, and pushing that number higher
+        // wasn't visibly moving anything, reported live across three
+        // attempts (10->28->40, no visible change each time). Whatever's
+        // going on with Popup-relative-to-HwndHost placement precision,
+        // ordinary Margin on content already inside the (correctly
+        // positioned) popup is plain WPF layout with no HwndHost placement
+        // math involved at all.
+        //
+        // PlayerTitleBarHost (the outer Grid) also needs to grow to match --
+        // its own Height is a fixed 46 in XAML, sized for the pill at its
+        // default (no margin) position; a top margin alone just pushes the
+        // content into that same fixed box and clips it, reported live as
+        // "cropped from the top and the bottom" back when this was 34 (the
+        // pill's own padding wasn't part of the picture yet then).
+        //
+        // On the pill itself (PlayerTitlePill), not the StackPanel inside it
+        // -- margin on the inner content alone would leave the pill's own
+        // background/rounded-corner chip sitting still at the corner while
+        // just its content shifted inside it, visibly detached from its own
+        // backdrop.
+        PlayerTitlePill.Margin = new Thickness(8, 2, 0, 0);
+        PlayerTitleBarHost.Height = 46 + 2;
+
+        // This window is about to cover the Scrim's own top-left corner
+        // (where its exit button lives) with the video -- collapse that
+        // button so it can't show through regardless of exact bounds/
+        // z-order; see SetExitButtonVisible's own comment.
+        _scrim.SetExitButtonVisible(false);
+
+        // RootBorder's 1px hairline is right for every other screen (it
+        // reads as the HUD panel's own edge), but in fullscreen it reads as
+        // "this is still just a bordered app window", not actual fullscreen
+        // video -- gone for the duration, restored in ExitPlayerFullscreen.
+        RootBorder.BorderThickness = new Thickness(0);
+
+        PlayerFullscreenIcon.Data = Geometry.Parse(FullscreenExitIcon);
+        PlayerFullscreenButton.ToolTip = "Exit fullscreen";
+        ReopenPlayerOverlayPopup();
+        ReopenPlayerFullscreenTransportPopup();
+    }
+
+    private void ExitPlayerFullscreen()
+    {
+        _isPlayerFullscreen = false;
+
+        RootBorder.BorderThickness = new Thickness(1);
+
+        PlayerSidebar.Visibility = Visibility.Visible;
+        PlayerSidebarColumn.Width = new GridLength(90);
+
+        PlayerFullscreenTransportPopup.IsOpen = false;
+        PlayerFullscreenTransportBorder.Child = null;
+        PlayerTransportBar.ClearValue(BackgroundProperty);
+        PlayerTransportBar.ClearValue(WidthProperty);
+        DockPanel.SetDock(PlayerTransportBar, Dock.Bottom);
+        PlayerVideoColumnDock.Children.Insert(0, PlayerTransportBar);
+
+        Width = _preFullscreenWidth;
+        ApplyBigScreenSize(); // recomputes PlayerVideoHost.Height and Top for the restored width
+        Left = _preFullscreenLeft;
+
+        PlayerTitlePill.Margin = new Thickness(0);
+        PlayerTitleBarHost.Height = 46;
+        _scrim.SetExitButtonVisible(true);
+
+        PlayerFullscreenIcon.Data = Geometry.Parse(FullscreenEnterIcon);
+        PlayerFullscreenButton.ToolTip = "Fullscreen";
+        ReopenPlayerOverlayPopup();
+    }
+
+    // Reverted the extra UpdateLayout()/UpdatePlayerSeekUi() calls this used
+    // to make here (chasing the seek-bar-fill-looks-short cosmetic issue) --
+    // right after adding those, playback got stuck at end-of-clip: seeking
+    // backward and pressing Play again both stopped doing anything. Not
+    // fully root-caused yet, but reported live immediately after that
+    // change, so reverting first rather than layering another fix on top of
+    // a change that broke actual playback. Back to just the plain
+    // close+reopen every other popup in this file uses.
+    private void ReopenPlayerFullscreenTransportPopup()
+    {
+        PlayerFullscreenTransportPopup.IsOpen = false;
+        Dispatcher.BeginInvoke(new Action(() => PlayerFullscreenTransportPopup.IsOpen = true), DispatcherPriority.Loaded);
+    }
+
+    /// <summary>
+    /// Forces PlayerOverlayPopup's Placement="Relative" position to actually
+    /// recompute -- it only reliably does that on a real IsOpen false->true
+    /// transition, not just because PlayerVideoView's bounds changed while
+    /// it stayed open (see OpenInPlayer's own comment on this same quirk).
+    /// Deferred to DispatcherPriority.Loaded since the new bounds from
+    /// Enter/ExitPlayerFullscreen aren't necessarily settled yet right here.
+    /// </summary>
+    private void ReopenPlayerOverlayPopup()
+    {
+        PlayerOverlayPopup.IsOpen = false;
+        Dispatcher.BeginInvoke(new Action(() => PlayerOverlayPopup.IsOpen = true), DispatcherPriority.Loaded);
     }
 
     // ------------------------------------------------------------ save replay
@@ -3013,6 +3503,24 @@ public partial class MainWindow : Window
                 // same as clicking the equivalent button in ControlPanelDock
                 // itself would (e.g. retrying a row stuck in Error).
                 await (recording ? stop() : start());
+
+                // Optimistic: reflects what THIS click just successfully asked
+                // OBS to do, immediately, rather than waiting on the 2s
+                // cooldown below and then a full LoadRecordRowsAsync() re-query
+                // to find out. That combination used to be the only way this
+                // dot/text ever updated at all -- OBS's own native UI reflects
+                // a start/stop instantly since it's driving the change directly,
+                // while this was structured to always wait a couple of seconds
+                // even though the request Backtrack just made had already
+                // succeeded by this point. LoadRecordRowsAsync() below still
+                // runs after the cooldown as the real reconciliation pass (e.g.
+                // if OBS silently rejected the change for some reason), this
+                // just stops the FIRST correct render from being needlessly
+                // delayed behind it.
+                dot.Fill = (Brush)FindResource(recording ? "Text2" : "Rec");
+                stateText.Text = recording ? "Stopped" : "Recording";
+                button.Style = (Style)FindResource(recording ? "BufRowButtonNoHover" : "BufRowButton");
+
                 // No RecordStateChanged-style event exists for a filter's own
                 // recording (that's specific to OBS's own main output), so this
                 // is the only place a "started"/"stopped" notification for this
@@ -3272,7 +3780,7 @@ public partial class MainWindow : Window
         }
 
         foreach (DirectoryInfo dir in subfolders)
-            GalleryGrid.Children.Add(BuildFolderCard(dir));
+            GalleryGrid.Children.Add(BuildFolderCard(dir.Name, () => OpenGalleryFolder(dir.FullName)));
 
         foreach (FileInfo file in files)
             GalleryGrid.Children.Add(BuildClipCard(file));
@@ -3412,7 +3920,7 @@ public partial class MainWindow : Window
         }
 
         foreach (string name in listing.Folders)
-            GalleryGrid.Children.Add(BuildRemoteFolderCard(name));
+            GalleryGrid.Children.Add(BuildFolderCard(name, () => OpenRemoteGalleryFolder(name)));
 
         foreach (RemoteGalleryFile file in listing.Files)
             GalleryGrid.Children.Add(BuildRemoteClipCard(file));
@@ -3420,52 +3928,11 @@ public partial class MainWindow : Window
         GalleryStatus.Text = listing.Files.Count == 1 ? "1 clip" : $"{listing.Files.Count} clips";
     }
 
-    private Border BuildRemoteFolderCard(string name)
-    {
-        var iconHost = new Border
-        {
-            Background = new SolidColorBrush(Color.FromRgb(24, 26, 30)),
-            Height = 118,
-            Cursor = Cursors.Hand,
-        };
-        var folderGlyph = new System.Windows.Shapes.Path
-        {
-            Data = Geometry.Parse("M10,4H4C2.89,4 2,4.89 2,6V18A2,2 0 0,0 4,20H20A2,2 0 0,0 22,18V8C22,6.89 21.1,6 20,6H12L10,4Z"),
-            Fill = (Brush)FindResource("Text1"),
-            Width = 46,
-            Height = 38,
-            Stretch = Stretch.Uniform,
-            HorizontalAlignment = HorizontalAlignment.Center,
-            VerticalAlignment = VerticalAlignment.Center,
-        };
-        iconHost.Child = folderGlyph;
-
-        var title = new TextBlock
-        {
-            Text = name,
-            FontWeight = FontWeights.Bold,
-            FontSize = 12.5,
-            Foreground = (Brush)FindResource("Text0"),
-            TextTrimming = TextTrimming.CharacterEllipsis,
-            Margin = new Thickness(0, 7, 0, 1),
-        };
-        var sub = new TextBlock { Text = "Folder", FontSize = 11, Foreground = (Brush)FindResource("Text2") };
-
-        var content = new StackPanel();
-        content.Children.Add(iconHost);
-        content.Children.Add(title);
-        content.Children.Add(sub);
-
-        var card = new Border { Width = 210, Child = content, Cursor = Cursors.Hand };
-        card.MouseLeftButtonUp += (_, _) => OpenRemoteGalleryFolder(name);
-        return card;
-    }
-
     private Border BuildRemoteClipCard(RemoteGalleryFile file)
     {
         var iconHost = new Border
         {
-            Background = new SolidColorBrush(Color.FromRgb(24, 26, 30)),
+            Background = (Brush)FindResource("ThumbnailBg"),
             Height = 118,
             Cursor = Cursors.Hand,
             ClipToBounds = true,
@@ -3699,11 +4166,18 @@ public partial class MainWindow : Window
         LoadGallery();
     }
 
-    private Border BuildFolderCard(DirectoryInfo dir)
+    /// <summary>
+    /// Shared by both the local Gallery and a remote peer's Gallery -- the
+    /// only two things that ever actually differed between them (used to be
+    /// two near-identical ~35-line methods, BuildFolderCard(DirectoryInfo)
+    /// and BuildRemoteFolderCard(string)) were the displayed name and what
+    /// opening the folder means, both of which the caller already knows.
+    /// </summary>
+    private Border BuildFolderCard(string name, Action onOpen)
     {
         var iconHost = new Border
         {
-            Background = new SolidColorBrush(Color.FromRgb(24, 26, 30)),
+            Background = (Brush)FindResource("ThumbnailBg"),
             Height = 118,
             Cursor = Cursors.Hand,
         };
@@ -3728,7 +4202,7 @@ public partial class MainWindow : Window
 
         var title = new TextBlock
         {
-            Text = dir.Name,
+            Text = name,
             FontWeight = FontWeights.Bold,
             FontSize = 12.5,
             Foreground = (Brush)FindResource("Text0"),
@@ -3744,7 +4218,7 @@ public partial class MainWindow : Window
         content.Children.Add(sub);
 
         var card = new Border { Width = 210, Child = content, Cursor = Cursors.Hand };
-        card.MouseLeftButtonUp += (_, _) => OpenGalleryFolder(dir.FullName);
+        card.MouseLeftButtonUp += (_, _) => onOpen();
 
         return card;
     }
@@ -3756,7 +4230,7 @@ public partial class MainWindow : Window
         // old per-file color, just what's visible during the brief async load.
         var thumb = new Border
         {
-            Background = new SolidColorBrush(Color.FromRgb(24, 26, 30)),
+            Background = (Brush)FindResource("ThumbnailBg"),
             Height = 118,
             Cursor = Cursors.Hand,
             ClipToBounds = true,
@@ -4251,6 +4725,45 @@ public partial class MainWindow : Window
     /// <summary>Resolves a clip that may live on a remote stream PC's share back to a real local path when possible, since LibVLC plays a UNC path fine but some operations (trim export) want a plain string path either way -- kept for symmetry/clarity at call sites.</summary>
     private static string ResolveLocalClipPath(FileInfo file) => file.FullName;
 
+    /// <summary>
+    /// Loads this clip's already-generated Gallery thumbnail into
+    /// PlayerFreezeFrame and opens the Popup covering the video with it --
+    /// masking the first glitchy moment of decode (see the Popup's own XAML
+    /// comment). Fire-and-forget from OpenInPlayer, same as this file's
+    /// other UI-triggered async work -- almost always near-instant since the
+    /// thumbnail was already generated for the Gallery card that got clicked
+    /// to open this clip, but if it's ever slow, the cover just opens a beat
+    /// late rather than blocking playback on it.
+    ///
+    /// _freezeFrameTimer starts right here, only once IsOpen actually flips
+    /// to true -- NOT back in OpenInPlayer at Play() time. It used to start
+    /// there, which meant the countdown was already running (and eating into
+    /// its own budget) before there was anything on screen yet to cover;
+    /// however long the thumbnail load + deferred Popup reopen below took
+    /// came straight out of the cover's real on-screen time.
+    /// </summary>
+    private async void ShowPlayerFreezeFrame(FileInfo file)
+    {
+        await LoadThumbnailAsync(file, PlayerFreezeFrame);
+        PlayerFreezeFramePopup.IsOpen = false;
+        _ = Dispatcher.BeginInvoke(new Action(() =>
+        {
+            PlayerFreezeFramePopup.IsOpen = true;
+            _freezeFrameTimer.Stop();
+            _freezeFrameTimer.Start();
+
+            // Two independent Popups (this one and PlayerOverlayPopup, the
+            // back button/title) racing their own opens -- WPF stacks
+            // most-recently-opened on top, and this one's open is timing-
+            // dependent on the thumbnail load above finishing, so it could
+            // win that race and end up covering the back button/title until
+            // it closed again. Reasserting the back button/title's Popup
+            // right here, immediately after this one opens, guarantees it
+            // ends up on top regardless of how that race actually went.
+            ReopenPlayerOverlayPopup();
+        }), DispatcherPriority.Loaded);
+    }
+
     private void OpenInPlayer(FileInfo file)
     {
         if (_libVlc is null)
@@ -4263,6 +4776,12 @@ public partial class MainWindow : Window
         _trimStart = null;
         _trimEnd = null;
         TrimPanel.Visibility = Visibility.Collapsed;
+
+        // Undoes ShowScreen's own Collapse of VideoView itself (set whenever
+        // Player was left -- see its comment); needed here too, not just
+        // once, since the SAME VideoView is reused clip to clip rather than
+        // recreated.
+        PlayerVideoView.Visibility = Visibility.Visible;
 
         ShowScreen(Screen.Player);
         PlayerTitle.Text = Path.GetFileNameWithoutExtension(file.Name);
@@ -4281,8 +4800,10 @@ public partial class MainWindow : Window
         // pass, not immediately) since PlayerVideoView's ActualWidth/position
         // right here isn't necessarily settled yet -- reopening too early
         // would just cache another stale position instead of fixing anything.
-        PlayerOverlayPopup.IsOpen = false;
-        Dispatcher.BeginInvoke(new Action(() => PlayerOverlayPopup.IsOpen = true), DispatcherPriority.Loaded);
+        // (ReopenPlayerOverlayPopup -- Enter/ExitPlayerFullscreen share this
+        // exact same need, for the exact same reason.)
+        ReopenPlayerOverlayPopup();
+        ShowPlayerFreezeFrame(file);
 
         StatSize.Text = $"{file.Length / 1024.0 / 1024.0:0.#} MB";
         StatDate.Text = $"{file.LastWriteTime:MMM d, yyyy h:mm tt}";
@@ -4300,52 +4821,125 @@ public partial class MainWindow : Window
         // resolved -- visible as the video area rendering cut in half for a
         // couple of frames. Letting layout fully settle first, then
         // attaching the video into an already-stable area, avoids that.
-        Dispatcher.BeginInvoke(new Action(() =>
+        Dispatcher.BeginInvoke(new Action(() => StartPlayerPlayback(file)), DispatcherPriority.Loaded);
+    }
+
+    /// <summary>
+    /// The deferred half of OpenInPlayer, split out specifically so it can
+    /// await _pendingVlcDisposeTask first. Reopening a clip right after
+    /// leaving Player (ShowScreen's own DisposeVlcPlayerAsync -- see its
+    /// comment) used to race a brand-new MediaPlayer's Direct3D11 setup
+    /// against the PREVIOUS one's still-in-progress background teardown,
+    /// both targeting the same VideoView HWND. libvlc doesn't queue or fail
+    /// loudly when that render target isn't cleanly available -- it just
+    /// opens its own floating "VLC (Direct3D11 output)" window instead
+    /// (same fallback already documented on the headless thumbnail player
+    /// above, for the same underlying reason: no explicit render target).
+    /// Waiting for the old teardown to actually finish first closes that gap.
+    /// </summary>
+    private async void StartPlayerPlayback(FileInfo file)
+    {
+        // Re-checked here, not just trusted from OpenInPlayer's own earlier
+        // check -- this runs from a deferred callback across an await, no
+        // longer in the same synchronous flow the compiler could narrow
+        // _libVlc's nullability through.
+        if (_libVlc is null)
+            return;
+
+        if (_pendingVlcDisposeTask is Task pending)
         {
-            _vlcPlayer = new LibVlc.MediaPlayer(_libVlc);
-            PlayerVideoView.MediaPlayer = _vlcPlayer;
+            await pending;
+            _pendingVlcDisposeTask = null;
+        }
 
-            using var media = new LibVlc.Media(_libVlc, new Uri(ResolveLocalClipPath(file)));
-            _vlcPlayer.Play(media);
+        _vlcPlayer = new LibVlc.MediaPlayer(_libVlc);
+        PlayerVideoView.MediaPlayer = _vlcPlayer;
+        _playerHasEnded = false;
 
-            bool tracksLoaded = false;
-            _vlcPlayer.Playing += (_, _) => Dispatcher.BeginInvoke(() =>
+        using var media = new LibVlc.Media(_libVlc, new Uri(ResolveLocalClipPath(file)));
+        _vlcPlayer.Play(media);
+
+        // Explicit, not just "set the slider to 100 and let ValueChanged
+        // propagate it" -- that was the actual bug (reported live as clips
+        // starting muted). WPF's Slider doesn't raise ValueChanged when the
+        // new value equals the current one, so if the slider was ALREADY at
+        // 100 (true for the very first clip opened all session, matching
+        // its own XAML default), nothing ever told this brand new
+        // _vlcPlayer to actually BE unmuted at 100 -- it was left entirely
+        // to whatever LibVLC's own real default turned out to be, which
+        // isn't reliably "unmuted" in practice (Mute may reflect shared
+        // audio-output state, not a clean per-instance default). Setting
+        // both directly here guarantees it regardless of the slider's own
+        // prior value or event semantics; after Play(), not before -- libvlc's
+        // own audio output isn't necessarily set up yet before playback has
+        // actually started, so Volume/Mute writes before this point aren't
+        // reliably guaranteed to stick either. Slider/icon still synced to match.
+        _vlcPlayer.Volume = 100;
+        _vlcPlayer.Mute = false;
+        PlayerVolumeSlider.Value = 100;
+        UpdateVolumeIcon();
+
+        // _freezeFrameTimer itself starts from ShowPlayerFreezeFrame, once
+        // the cover is actually visible -- not from here. Starting it at
+        // this fixed point used to shrink the cover's real on-screen time
+        // by however long the thumbnail load + deferred Popup reopen took,
+        // since that countdown was already running before there was
+        // anything on screen to cover with.
+
+        bool tracksLoaded = false;
+        _vlcPlayer.Playing += (_, _) => Dispatcher.BeginInvoke(() =>
+        {
+            PlayIcon.Visibility = Visibility.Collapsed;
+            PauseIcon.Visibility = Visibility.Visible;
+            if (_vlcPlayer.Media is not null)
             {
-                PlayIcon.Visibility = Visibility.Collapsed;
-                PauseIcon.Visibility = Visibility.Visible;
-                if (_vlcPlayer.Media is not null)
-                {
-                    var videoTrack = _vlcPlayer.Media.Tracks.FirstOrDefault(t => t.TrackType == LibVlc.TrackType.Video).Data.Video;
-                    if (videoTrack.Width > 0 && videoTrack.Height > 0)
-                        StatResolution.Text = $"{videoTrack.Width} x {videoTrack.Height}";
-                    if (videoTrack.FrameRateDen > 0)
-                        StatFps.Text = $"{(double)videoTrack.FrameRateNum / videoTrack.FrameRateDen:0.##} fps";
-                }
+                var videoTrack = _vlcPlayer.Media.Tracks.FirstOrDefault(t => t.TrackType == LibVlc.TrackType.Video).Data.Video;
+                if (videoTrack.Width > 0 && videoTrack.Height > 0)
+                    StatResolution.Text = $"{videoTrack.Width} x {videoTrack.Height}";
+                if (videoTrack.FrameRateDen > 0)
+                    StatFps.Text = $"{(double)videoTrack.FrameRateNum / videoTrack.FrameRateDen:0.##} fps";
+            }
 
-                // Track info isn't known the instant Play() is called -- LibVLC parses the
-                // media asynchronously, so reading Media.Tracks right after Play() (the old
-                // bug here) always saw an empty list and hid the audio selector even on
-                // clips that do have a track. By the time Playing fires, parsing has
-                // actually finished, so this is the first point where Tracks is reliable.
-                if (!tracksLoaded)
-                {
-                    tracksLoaded = true;
-                    LoadAudioTracks();
-                }
-            });
-            _vlcPlayer.Paused += (_, _) => Dispatcher.BeginInvoke(() =>
+            // Track info isn't known the instant Play() is called -- LibVLC parses the
+            // media asynchronously, so reading Media.Tracks right after Play() (the old
+            // bug here) always saw an empty list and hid the audio selector even on
+            // clips that do have a track. By the time Playing fires, parsing has
+            // actually finished, so this is the first point where Tracks is reliable.
+            if (!tracksLoaded)
             {
-                PlayIcon.Visibility = Visibility.Visible;
-                PauseIcon.Visibility = Visibility.Collapsed;
-            });
-            _vlcPlayer.EndReached += (_, _) => Dispatcher.BeginInvoke(() =>
-            {
-                PlayIcon.Visibility = Visibility.Visible;
-                PauseIcon.Visibility = Visibility.Collapsed;
-            });
+                tracksLoaded = true;
+                LoadAudioTracks();
+            }
+        });
+        _vlcPlayer.Paused += (_, _) => Dispatcher.BeginInvoke(() =>
+        {
+            PlayIcon.Visibility = Visibility.Visible;
+            PauseIcon.Visibility = Visibility.Collapsed;
+        });
+        _vlcPlayer.EndReached += (_, _) => Dispatcher.BeginInvoke(() =>
+        {
+            PlayIcon.Visibility = Visibility.Visible;
+            PauseIcon.Visibility = Visibility.Collapsed;
+            _playerHasEnded = true;
 
-            _seekTimer.Start();
-        }), DispatcherPriority.Loaded);
+            // _seekTimer keeps ticking (only ever stopped by full teardown,
+            // not by pause/end) and _vlcPlayer.Time/.Length can themselves
+            // go unreliable once libvlc is actually past end-of-stream --
+            // left running, UpdatePlayerSeekUi kept re-reading whatever
+            // Time reset/settled to and overwriting the fill bar with it,
+            // reported live as the seek bar never actually landing at the
+            // end once playback finished. Stopped here, and the fill/thumb/
+            // time text snapped to their real "fully played" values
+            // directly instead of trusting another timer tick to land on
+            // them. RestartEndedPlayback restarts the timer once playback
+            // actually resumes.
+            _seekTimer.Stop();
+            PlayerSeekFill.Width = PlayerSeekTrack.ActualWidth;
+            PlayerSeekThumb.Margin = new Thickness(PlayerSeekTrack.ActualWidth - 7, 0, 0, 0);
+            PlayerCurrentTime.Text = PlayerDurationText.Text;
+        });
+
+        _seekTimer.Start();
     }
 
     /// <summary>Shown whenever there's at least one audio track -- not just when there's a choice to make, since seeing "Track 1" confirms audio was actually detected at all.</summary>
@@ -4379,9 +4973,89 @@ public partial class MainWindow : Window
         if (_vlcPlayer is null)
             return;
         if (_vlcPlayer.IsPlaying)
+        {
             _vlcPlayer.Pause();
+        }
+        else if (_playerHasEnded)
+        {
+            RestartEndedPlayback(0);
+        }
         else
+        {
             _vlcPlayer.Play();
+        }
+    }
+
+    private void PlayerVolumeButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_vlcPlayer is null)
+            return;
+        _vlcPlayer.Mute = !_vlcPlayer.Mute;
+        UpdateVolumeIcon();
+        ShowPlayerActionFeedback(_vlcPlayer.Mute ? PlayerFeedbackIcon.Mute : PlayerFeedbackIcon.Volume,
+            _vlcPlayer.Mute ? "Muted" : $"{_vlcPlayer.Volume}%");
+    }
+
+    // Wired to both PlayerVolumeButton itself and PlayerVolumePopup's own
+    // content Border -- entering either keeps it open, leaving either starts
+    // the close debounce (_volumePopupCloseDebounce, set up in the
+    // constructor). Needed because the popup and its button are two
+    // genuinely separate elements with a small visual gap between them;
+    // closing on a bare MouseLeave meant crossing that gap on the way from
+    // the button up into the slider closed it before you ever got there.
+    private void PlayerVolumeArea_MouseEnter(object sender, MouseEventArgs e)
+    {
+        _volumePopupCloseDebounce.Stop();
+        PlayerVolumePopup.IsOpen = true;
+    }
+
+    private void PlayerVolumeArea_MouseLeave(object sender, MouseEventArgs e)
+    {
+        _volumePopupCloseDebounce.Stop();
+        _volumePopupCloseDebounce.Start();
+    }
+
+    private void PlayerVolumeSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+    {
+        if (_vlcPlayer is null)
+            return;
+        _vlcPlayer.Volume = (int)e.NewValue;
+        // Dragging the level back up un-mutes, matching most other players'
+        // own volume sliders -- otherwise raising the slider while muted
+        // would look like it did nothing.
+        if (e.NewValue > 0 && _vlcPlayer.Mute)
+            _vlcPlayer.Mute = false;
+        UpdateVolumeIcon();
+    }
+
+    private void UpdateVolumeIcon()
+    {
+        if (_vlcPlayer is null)
+            return;
+        bool showMuted = _vlcPlayer.Mute || _vlcPlayer.Volume <= 0;
+        PlayerVolumeIcon.Data = Geometry.Parse(showMuted ? VolumeOffIcon : VolumeUpIcon);
+    }
+
+    /// <summary>
+    /// The only reliable way found to resume playback once libvlc has
+    /// actually reached end-of-stream -- a bare Play() (or just writing
+    /// .Time) on an ended MediaPlayer is a known LibVLC quirk that silently
+    /// does nothing; the pipeline needs an explicit Stop() first to actually
+    /// become resumable, then Play(), then a seek to wherever playback
+    /// should actually resume from (0 for "restart from the beginning" via
+    /// PlayPauseButton, or wherever the user clicked for CommitSeek).
+    /// </summary>
+    private void RestartEndedPlayback(long resumeAtMs)
+    {
+        if (_vlcPlayer is null)
+            return;
+
+        _playerHasEnded = false;
+        _vlcPlayer.Stop();
+        _vlcPlayer.Play();
+        if (resumeAtMs > 0)
+            _vlcPlayer.Time = resumeAtMs;
+        _seekTimer.Start(); // EndReached stops it; resuming needs it running again
     }
 
     private void UpdatePlayerSeekUi()
@@ -4497,7 +5171,7 @@ public partial class MainWindow : Window
             _seekDebounceTimer.Stop();
             if (_vlcPlayer.IsSeekable)
             {
-                _vlcPlayer.Time = _targetSeekMs;
+                CommitSeek(_targetSeekMs);
             }
         }
         else
@@ -4507,8 +5181,84 @@ public partial class MainWindow : Window
         }
     }
 
-    private void StopPlayerPlayback()
+    // Seeking near the start reproduces the same glitchy decode warmup as a
+    // fresh clip open on some clips, and used to get the same freeze-frame
+    // cover treatment as OpenInPlayer -- removed on request, so seeking back
+    // to the first couple of seconds now just shows the glitch rather than
+    // masking it with a cover. The open-time cover (ShowPlayerFreezeFrame)
+    // is untouched.
+    private void CommitSeek(long ms)
     {
+        if (_vlcPlayer is null)
+            return;
+
+        // IsSeekable can itself report false once libvlc has reached
+        // end-of-stream (same underlying quirk as PlayPauseButton_Click's
+        // own RestartEndedPlayback use) -- a plain Time= write would just be
+        // silently ignored in that state anyway, so route through the same
+        // Stop()+Play() revival instead of bailing out on IsSeekable here.
+        if (_playerHasEnded)
+        {
+            RestartEndedPlayback(ms);
+            return;
+        }
+
+        if (!_vlcPlayer.IsSeekable)
+            return;
+
+        _vlcPlayer.Time = ms;
+    }
+
+    /// <summary>
+    /// The fast, synchronous half of tearing Player down: everything that
+    /// actually needs to happen before the WINDOW resizes to whatever screen
+    /// is being switched to, chiefly detaching the VideoView (see its own
+    /// comment below). ShowScreen calls this FIRST, before it resizes --
+    /// calling only the combined StopPlayerPlayback() there instead (which
+    /// also runs the slow Stop()/Dispose() further down) doesn't block
+    /// visually, but it does mean this fast detach doesn't actually run
+    /// until ShowScreen reaches ITS OWN later StopPlayerPlayback() call,
+    /// well after the resize -- so the native video HWND was still attached,
+    /// and still rendering, at the OLD Player-sized bounds while the window
+    /// had already resized around it to Gallery's (or whatever screen's)
+    /// bounds. Reported live as "the video stays overlayed on the new
+    /// screen, cut in half, for about a second" -- distinct from (though
+    /// visually similar to) the older bug StopPlayerPlayback's own comment
+    /// below describes, which was about ordering WITHIN this method, not
+    /// about WHEN ShowScreen calls it.
+    /// </summary>
+    private void DetachPlayerVideo()
+    {
+        // Otherwise leftover state from the clip being torn down here (cover
+        // still open, timer still counting down toward closing it) would
+        // bleed into whatever gets opened next.
+        _freezeFrameTimer.Stop();
+        PlayerFreezeFramePopup.IsOpen = false;
+
+        // Reset fullscreen state whenever Player is torn down (this runs on
+        // every switch away from Player, per ShowScreen), not just via
+        // ExitPlayerFullscreen -- otherwise the sidebar/column/icon state
+        // from a fullscreen session would silently carry over into the NEXT
+        // time Player opens, even for a totally different clip.
+        if (_isPlayerFullscreen)
+        {
+            _isPlayerFullscreen = false;
+            RootBorder.BorderThickness = new Thickness(1);
+            PlayerSidebar.Visibility = Visibility.Visible;
+            PlayerSidebarColumn.Width = new GridLength(90);
+            PlayerFullscreenTransportPopup.IsOpen = false;
+            PlayerFullscreenTransportBorder.Child = null;
+            PlayerTransportBar.ClearValue(BackgroundProperty);
+            PlayerTransportBar.ClearValue(WidthProperty);
+            DockPanel.SetDock(PlayerTransportBar, Dock.Bottom);
+            PlayerVideoColumnDock.Children.Insert(0, PlayerTransportBar);
+            PlayerTitlePill.Margin = new Thickness(0);
+            PlayerTitleBarHost.Height = 46;
+            _scrim.SetExitButtonVisible(true);
+            PlayerFullscreenIcon.Data = Geometry.Parse(FullscreenEnterIcon);
+            PlayerFullscreenButton.ToolTip = "Fullscreen";
+        }
+
         _seekTimer.Stop();
         // Detach the VideoView from the player FIRST, before Stop()/Dispose()
         // below -- those two are genuinely slow (LibVLC tearing down its own
@@ -4524,12 +5274,66 @@ public partial class MainWindow : Window
         // even though the underlying Stop()/Dispose() teardown still takes
         // its own time afterward.
         PlayerVideoView.MediaPlayer = null;
+    }
+
+    /// <summary>
+    /// Full teardown: the fast detach above, then the slow part (LibVLC's
+    /// own Stop()/Dispose(), up to ~1s observed). Safe to call repeatedly --
+    /// DetachPlayerVideo's own resets are all idempotent, and _vlcPlayer
+    /// being already null here is a normal, harmless case (ShowScreen calls
+    /// DetachPlayerVideo up front, then reaches this same combined method
+    /// again later in its own sequence).
+    /// </summary>
+    private void StopPlayerPlayback()
+    {
+        DetachPlayerVideo();
+        DisposeVlcPlayerSync();
+    }
+
+    private void DisposeVlcPlayerSync()
+    {
         if (_vlcPlayer is not null)
         {
             _vlcPlayer.Stop();
             _vlcPlayer.Dispose();
             _vlcPlayer = null;
         }
+    }
+
+    /// <summary>
+    /// Same teardown as DisposeVlcPlayerSync, just off the UI thread -- for
+    /// ShowScreen's own screen-switch path specifically, where blocking on
+    /// this was the actual cause of the "video stays overlayed, cut in half"
+    /// bug (see that call site's own comment for the fuller story). Every
+    /// OTHER caller of StopPlayerPlayback (OpenInPlayer, the delete-with-undo
+    /// flows, etc.) keeps the synchronous version on purpose -- e.g. a delete
+    /// right after leaving Player genuinely needs LibVLC to have actually
+    /// released its file handle first, not just have a disposal queued.
+    /// libvlc's own calls are safe off the UI thread (a native library, not
+    /// a WPF-bound one); Stop()/Dispose() don't touch any WPF element.
+    /// </summary>
+    private void DisposeVlcPlayerAsync()
+    {
+        if (_vlcPlayer is null)
+            return;
+
+        LibVlc.MediaPlayer playerToDispose = _vlcPlayer;
+        _vlcPlayer = null;
+        // Tracked so StartPlayerPlayback can await it before a newly reopened
+        // clip creates its own MediaPlayer against the same VideoView HWND --
+        // see that method's own comment.
+        _pendingVlcDisposeTask = Task.Run(() =>
+        {
+            try
+            {
+                playerToDispose.Stop();
+                playerToDispose.Dispose();
+            }
+            catch
+            {
+                // Best-effort teardown -- nothing meaningful to recover here.
+            }
+        });
     }
 
     /// <summary>
@@ -4565,6 +5369,13 @@ public partial class MainWindow : Window
     /// stale FileInfo -- the `finished` flag is guarded at both call sites,
     /// not inside CommitRename itself, so the legitimate first call still runs.
     /// </summary>
+    /// <summary>Double-clicking the title in the video player overlay is just a shortcut into the exact same rename flow as the Rename button on the rail -- same field, same in-place TextBox swap, so nothing else needs to know which one triggered it.</summary>
+    private void PlayerTitle_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (e.ClickCount == 2)
+            PlayerRename_Click(sender, e);
+    }
+
     private void PlayerRename_Click(object sender, RoutedEventArgs e)
     {
         if (_currentPlayerFile is null)
@@ -4592,6 +5403,8 @@ public partial class MainWindow : Window
         stack.Children.RemoveAt(index);
         stack.Children.Insert(index, box);
 
+        _cancelPlayerRename = () => { if (!finished) { finished = true; RevertBox(); } };
+
         box.Loaded += (_, _) => { box.Focus(); box.SelectAll(); };
         box.KeyDown += (_, ke) =>
         {
@@ -4603,6 +5416,7 @@ public partial class MainWindow : Window
         void RevertBox()
         {
             _isPlayerRenaming = false;
+            _cancelPlayerRename = null;
             stack.Children.Remove(box);
             stack.Children.Insert(index, PlayerTitle);
         }
@@ -4610,6 +5424,7 @@ public partial class MainWindow : Window
         void CommitRename()
         {
             _isPlayerRenaming = false;
+            _cancelPlayerRename = null;
             string newName = box.Text.Trim();
             if (!string.IsNullOrEmpty(newName) && newName != Path.GetFileNameWithoutExtension(file.Name))
             {
@@ -4846,6 +5661,8 @@ public partial class MainWindow : Window
         ObsPasswordBox.Password = _settings.ObsRemotePassword;
 
         ShowDisclaimerToggle.IsChecked = _settings.ShowDisclaimer;
+        DisableBacktrackAutoUpdateToggle.IsChecked = _settings.DisableBacktrackAutoUpdate;
+        DisablePluginAutoUpdateToggle.IsChecked = _settings.DisablePluginAutoUpdate;
         HotkeyCaptureButton.Content = FormatHotkey((GlobalHotkey.Modifiers)_settings.HotkeyModifiers, (uint)_settings.HotkeyVirtualKey);
 
         LoadDisplaySelector();
@@ -5322,6 +6139,18 @@ public partial class MainWindow : Window
             _disclaimer.Hide();
         else if (IsVisible)
             _disclaimer.Show();
+    }
+
+    private void DisableBacktrackAutoUpdateToggle_Click(object sender, RoutedEventArgs e)
+    {
+        _settings.DisableBacktrackAutoUpdate = DisableBacktrackAutoUpdateToggle.IsChecked == true;
+        _settings.Save();
+    }
+
+    private void DisablePluginAutoUpdateToggle_Click(object sender, RoutedEventArgs e)
+    {
+        _settings.DisablePluginAutoUpdate = DisablePluginAutoUpdateToggle.IsChecked == true;
+        _settings.Save();
     }
 
     private void EnableAnimationsToggle_Click(object sender, RoutedEventArgs e)

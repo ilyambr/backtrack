@@ -37,4 +37,16 @@ public partial class ScrimOverlay : Window
     private void Scrim_MouseDown(object sender, MouseButtonEventArgs e) => Dismissed?.Invoke();
 
     private void ExitButton_Click(object sender, RoutedEventArgs e) => Dismissed?.Invoke();
+
+    /// <summary>
+    /// Player fullscreen deliberately covers this window's own top-left
+    /// corner with the video, but this button sits in a separate Topmost
+    /// window from MainWindow -- whether it actually ends up hidden behind
+    /// the video depends on exact window bounds/z-order lining up, which
+    /// fullscreen's letterboxing can't always guarantee. Collapsing it
+    /// outright removes that dependency entirely; Escape and the in-video
+    /// fullscreen-exit button both still reach the same close path.
+    /// </summary>
+    public void SetExitButtonVisible(bool visible) =>
+        ExitButton.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
 }

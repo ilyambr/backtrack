@@ -98,6 +98,14 @@ public partial class ToastOverlay : Window
     public void ShowAppStarted(string hotkeyText) =>
         Show(GlyphIcon("\u21bb", Accent), Accent, "Backtrack is running", $"Press {hotkeyText} to open the overlay");
 
+    // Fired right before App.xaml.cs kicks off FirewallRules.AddRulesElevated
+    // on a brand new install -- a UAC prompt appearing with zero warning,
+    // moments after someone's very first launch, reads as suspicious with no
+    // context for what's asking or why. This is that context, shown first.
+    public void ShowFirewallSetup() =>
+        Show(GlyphIcon("\u21bb", Accent), Accent, "Setting up clip sharing",
+            "Windows may ask for admin permission once, just to open two Backtrack-only network ports");
+
     // Fired right before the download+install actually starts (which can take
     // a while and, for a plugin, closes and relaunches OBS along the way) so
     // it doesn't look like the app just silently glitched or hung.

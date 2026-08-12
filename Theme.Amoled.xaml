@@ -14,6 +14,11 @@
     -->
     <SolidColorBrush x:Key="PanelBg" Color="#000000"/>
     <SolidColorBrush x:Key="PanelBgOpaque" Color="#EC000000"/>
+    <!-- Recessed card surface; see Theme.Dark.xaml's own comment on this key.
+         Can't go darker than PanelBg's true black, so this is lighter
+         instead: a dark grey a card can actually be told apart from the
+         page behind it. -->
+    <SolidColorBrush x:Key="ThumbnailBg" Color="#161616"/>
     <SolidColorBrush x:Key="Hairline" Color="#1FFFFFFF"/>
     <SolidColorBrush x:Key="Text0" Color="#FFFFFF"/>
     <SolidColorBrush x:Key="Text1" Color="#B0B0B0"/>
