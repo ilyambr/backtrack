@@ -16,7 +16,7 @@ you're running those too).
 
 | Idle | Gallery | Player | Settings |
 |---|---|---|---|
-| ![Idle screen](docs/idle.png) | ![Gallery screen](docs/gallery.png) | ![Player screen](docs/player.png) | ![Settings screen](docs/settings.png) |
+| <img src="docs/idle.png" width="220" alt="Idle screen"> | <img src="docs/gallery.png" width="220" alt="Gallery screen"> | <img src="docs/player.png" width="220" alt="Player screen"> | <img src="docs/settings.png" width="220" alt="Settings screen"> |
 
 ---
 
