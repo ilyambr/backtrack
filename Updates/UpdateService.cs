@@ -6,6 +6,7 @@ using System.Linq;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Reflection;
+using System.Security.Cryptography;
 using System.Text.Json;
 using System.Threading.Tasks;
 using Microsoft.Win32;
@@ -241,10 +242,10 @@ public sealed class UpdateService
     /// first if it's running (installing over a loaded plugin DLL fails while
     /// OBS holds it open) and relaunching OBS afterward if it was running.
     /// </summary>
-    public async Task InstallPluginUpdateAsync(string downloadUrl)
+    public async Task InstallPluginUpdateAsync(string downloadUrl, string? expectedDigest = null)
     {
         string tempPath = Path.Combine(Path.GetTempPath(), $"cc_update_{Guid.NewGuid():N}.exe");
-        await DownloadFileAsync(downloadUrl, tempPath);
+        await DownloadFileAsync(downloadUrl, tempPath, expectedDigest);
 
         bool wasObsRunning = await CloseObsIfRunningAsync();
 
@@ -306,14 +307,14 @@ public sealed class UpdateService
     /// before anyone could see it. The freshly-launched process reads that arg on
     /// startup and shows the toast itself instead (see App.xaml.cs).
     /// </summary>
-    public async Task ApplySelfUpdateAsync(string downloadUrl, string version)
+    public async Task ApplySelfUpdateAsync(string downloadUrl, string version, string? expectedDigest = null)
     {
         string installDir = AppContext.BaseDirectory.TrimEnd('\\');
         string exePath = Environment.ProcessPath ?? Path.Combine(installDir, "Backtrack.exe");
 
         string zipPath = Path.Combine(Path.GetTempPath(), $"backtrack_update_{Guid.NewGuid():N}.zip");
         string extractDir = Path.Combine(Path.GetTempPath(), $"backtrack_update_{Guid.NewGuid():N}");
-        await DownloadFileAsync(downloadUrl, zipPath);
+        await DownloadFileAsync(downloadUrl, zipPath, expectedDigest);
         // ZipFile.ExtractToDirectory is fully synchronous -- since none of the
         // awaits above use ConfigureAwait(false), the continuation after them
         // resumes on the UI thread by default, so calling it directly here froze
@@ -367,11 +368,51 @@ public sealed class UpdateService
         });
     }
 
-    private static async Task DownloadFileAsync(string url, string destPath)
+    /// <summary>
+    /// expectedDigest is GitHub's own "digest" field for this release asset
+    /// (ReleaseInfo.Digest, "sha256:&lt;hex&gt;") -- GetLatestReleaseAsync was
+    /// already fetching this for every asset, but only ever used it to detect
+    /// "did the asset change" (ShouldApplyUpdate), never to confirm the bytes
+    /// that actually landed on disk are the bytes GitHub said they'd be. HTTPS
+    /// (already in use here) protects the transfer itself; this catches
+    /// anything else that could put different bytes at that URL by the time
+    /// they're downloaded -- a compromised/rotated release asset, a corrupted
+    /// download, a proxy/cache doing something it shouldn't. Doesn't (can't)
+    /// protect against a compromised GitHub account publishing a legitimately
+    /// matching malicious build in the first place; still real value for the
+    /// same reason checking a downloaded installer's own published checksum
+    /// always is elsewhere. Null (an old asset with no digest published, or
+    /// a caller that doesn't have one) just skips the check entirely rather
+    /// than blocking on something that was never verifiable to begin with.
+    /// </summary>
+    private static async Task DownloadFileAsync(string url, string destPath, string? expectedDigest = null)
     {
         using HttpResponseMessage response = await Http.GetAsync(url);
         response.EnsureSuccessStatusCode();
-        await using FileStream file = File.Create(destPath);
-        await response.Content.CopyToAsync(file);
+        await using (FileStream file = File.Create(destPath))
+        {
+            await response.Content.CopyToAsync(file);
+        }
+
+        if (string.IsNullOrEmpty(expectedDigest))
+            return;
+
+        string expectedHex = expectedDigest.StartsWith("sha256:", StringComparison.OrdinalIgnoreCase)
+            ? expectedDigest["sha256:".Length..]
+            : expectedDigest;
+
+        string actualHex;
+        await using (FileStream file = File.OpenRead(destPath))
+        {
+            byte[] hash = await SHA256.HashDataAsync(file);
+            actualHex = Convert.ToHexString(hash);
+        }
+
+        if (!string.Equals(actualHex, expectedHex, StringComparison.OrdinalIgnoreCase))
+        {
+            try { File.Delete(destPath); } catch { /* best effort -- don't leave a mismatched file lying around either way */ }
+            throw new InvalidOperationException(
+                "Downloaded file's checksum didn't match what GitHub reported for this release asset -- refusing to install it.");
+        }
     }
 }

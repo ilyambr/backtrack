@@ -1000,7 +1000,7 @@ public partial class MainWindow : Window
                     return;
                 }
                 _toastOverlay.ShowUpdateInProgress(displayName);
-                await _updates.InstallPluginUpdateAsync(release.DownloadUrl);
+                await _updates.InstallPluginUpdateAsync(release.DownloadUrl, release.Digest);
                 RecordUpdateApplied(release, setLastApplied, setLastDigest);
                 AppLog.Write($"{displayName} updated to {release.Version}");
                 _toastOverlay.ShowUpdateApplied(displayName, release.Version);
@@ -1100,7 +1100,7 @@ public partial class MainWindow : Window
                 _toastOverlay.ShowUpdateInProgress("Backtrack");
                 RecordUpdateApplied(release, v => _settings.LastAppliedBacktrackReleaseAt = v, v => _settings.LastAppliedBacktrackDigest = v);
                 AppLog.Write($"Backtrack updating to {release.Version} (relaunching)");
-                await _updates.ApplySelfUpdateAsync(release.DownloadUrl, release.Version);
+                await _updates.ApplySelfUpdateAsync(release.DownloadUrl, release.Version, release.Digest);
                 SetUpdateStatus(BacktrackStatusDot, BacktrackVersionText, release.Version, ok: true);
                 // The helper script above is now waiting for this process to exit --
                 // shut down cleanly so it can finish the swap and relaunch.
