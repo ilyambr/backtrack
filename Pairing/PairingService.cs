@@ -692,7 +692,31 @@ public sealed class PairingService : IDisposable
     public Task<(bool Success, string? Error)> DownloadRemoteThumbnailAsync(string relativePath, string destPath) =>
         DownloadStreamedFileAsync("get_thumbnail", relativePath, destPath);
 
-    private async Task<(bool Success, string? Error)> DownloadStreamedFileAsync(string requestType, string relativePath, string destPath, IProgress<double>? progress = null)
+    // Keyed by destPath: switching clips fast enough to re-click one that's
+    // still downloading (or a genuine accidental double-click) used to fire
+    // a second DownloadStreamedFileAsync for the exact same destPath while
+    // the first was still running -- both raced to File.Create() the same
+    // ".partial" temp file, and the loser surfaced a raw "being used by
+    // another process" IOException to the user. Lazy<Task<...>> (not just a
+    // plain Task in the dictionary) matters here: ConcurrentDictionary.GetOrAdd
+    // can invoke its factory more than once under a real race even though it
+    // only ever stores one result, so a bare Task factory could still start
+    // the download twice; Lazy's own synchronization guarantees the download
+    // itself only ever actually runs once, and every caller for that destPath
+    // -- first or piggybacking -- gets the same result.
+    private readonly ConcurrentDictionary<string, Lazy<Task<(bool Success, string? Error)>>> _activeDownloads = new();
+
+    private Task<(bool Success, string? Error)> DownloadStreamedFileAsync(string requestType, string relativePath, string destPath, IProgress<double>? progress = null)
+    {
+        Lazy<Task<(bool Success, string? Error)>> lazy = _activeDownloads.GetOrAdd(destPath,
+            _ => new Lazy<Task<(bool Success, string? Error)>>(
+                () => DownloadStreamedFileCoreAsync(requestType, relativePath, destPath, progress)));
+        Task<(bool Success, string? Error)> task = lazy.Value;
+        _ = task.ContinueWith(completed => _activeDownloads.TryRemove(destPath, out _), TaskScheduler.Default);
+        return task;
+    }
+
+    private async Task<(bool Success, string? Error)> DownloadStreamedFileCoreAsync(string requestType, string relativePath, string destPath, IProgress<double>? progress = null)
     {
         if (string.IsNullOrEmpty(_settings.PairedPeerHost) || string.IsNullOrEmpty(_settings.PairedPeerSecret))
             return (false, "Not paired with a transmitter PC.");
