@@ -129,6 +129,9 @@ public partial class MainWindow : Window
     private Action? _cancelPlayerRename;
     private bool _isTrimming;
     private readonly HashSet<string> _pendingDeletePaths = new(StringComparer.OrdinalIgnoreCase);
+    // Remote counterpart, keyed by relative path (there's no local FileInfo
+    // to key a remote card off of) -- see QueueRemoteDeleteWithUndo.
+    private readonly HashSet<string> _pendingRemoteDeletePaths = new(StringComparer.Ordinal);
 
     // --------------------------------------------------------------- LibVLC / Player
 
@@ -997,7 +1000,7 @@ public partial class MainWindow : Window
                     return;
                 }
                 _toastOverlay.ShowUpdateInProgress(displayName);
-                await _updates.InstallPluginUpdateAsync(release.DownloadUrl);
+                await _updates.InstallPluginUpdateAsync(release.DownloadUrl, release.Digest);
                 RecordUpdateApplied(release, setLastApplied, setLastDigest);
                 AppLog.Write($"{displayName} updated to {release.Version}");
                 _toastOverlay.ShowUpdateApplied(displayName, release.Version);
@@ -1097,7 +1100,7 @@ public partial class MainWindow : Window
                 _toastOverlay.ShowUpdateInProgress("Backtrack");
                 RecordUpdateApplied(release, v => _settings.LastAppliedBacktrackReleaseAt = v, v => _settings.LastAppliedBacktrackDigest = v);
                 AppLog.Write($"Backtrack updating to {release.Version} (relaunching)");
-                await _updates.ApplySelfUpdateAsync(release.DownloadUrl, release.Version);
+                await _updates.ApplySelfUpdateAsync(release.DownloadUrl, release.Version, release.Digest);
                 SetUpdateStatus(BacktrackStatusDot, BacktrackVersionText, release.Version, ok: true);
                 // The helper script above is now waiting for this process to exit --
                 // shut down cleanly so it can finish the swap and relaunch.
@@ -4010,7 +4013,15 @@ public partial class MainWindow : Window
             return;
         }
 
-        if (listing.Folders.Count == 0 && listing.Files.Count == 0)
+        // Same "hide it while its undo toast is still counting down" trick
+        // as the local Gallery's own _pendingDeletePaths (see QueueDeleteWithUndo) --
+        // relativePath-keyed instead of local-full-path-keyed, since a remote
+        // card has no local FileInfo to key off of.
+        List<RemoteGalleryFile> files = listing.Files
+            .Where(f => !_pendingRemoteDeletePaths.Contains(RemoteClipRelativePath(f.Name)))
+            .ToList();
+
+        if (listing.Folders.Count == 0 && files.Count == 0)
         {
             GalleryGrid.Children.Add(new TextBlock
             {
@@ -4025,11 +4036,14 @@ public partial class MainWindow : Window
         foreach (string name in listing.Folders)
             GalleryGrid.Children.Add(BuildFolderCard(name, () => OpenRemoteGalleryFolder(name)));
 
-        foreach (RemoteGalleryFile file in listing.Files)
+        foreach (RemoteGalleryFile file in files)
             GalleryGrid.Children.Add(BuildRemoteClipCard(file));
 
-        GalleryStatus.Text = listing.Files.Count == 1 ? "1 clip" : $"{listing.Files.Count} clips";
+        GalleryStatus.Text = files.Count == 1 ? "1 clip" : $"{files.Count} clips";
     }
+
+    private string RemoteClipRelativePath(string fileName) =>
+        _currentRemoteGalleryFolder is null ? fileName : $"{_currentRemoteGalleryFolder}/{fileName}";
 
     private Border BuildRemoteClipCard(RemoteGalleryFile file)
     {
@@ -4092,7 +4106,7 @@ public partial class MainWindow : Window
         content.Children.Add(sub);
 
         var card = new Border { Width = 210, Child = content };
-        string relativePath = _currentRemoteGalleryFolder is null ? file.Name : $"{_currentRemoteGalleryFolder}/{file.Name}";
+        string relativePath = RemoteClipRelativePath(file.Name);
 
         // Click-to-open lives on iconHost specifically, not the whole card --
         // same reason BuildClipCard's local equivalent puts it on `thumb`
@@ -4145,11 +4159,13 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// Unlike local DeleteClip, this is a real delete on the OTHER PC (see
-    /// HandleDeleteClip) -- no recycle-bin-undo toast here, since undoing a
-    /// delete that already crossed the network back to a different machine
-    /// isn't something this side can reliably offer; the confirm dialog is
-    /// the one safety net.
+    /// Same confirm-then-undo-toast shape as local DeleteClip/QueueDeleteWithUndo,
+    /// just with the actual delete itself (still real, on the OTHER PC -- see
+    /// HandleDeleteClip) deferred to onExpire instead of running immediately.
+    /// The network round trip only ever happens once the undo window has
+    /// actually run out, so hitting Undo genuinely cancels it before the
+    /// stream PC ever finds out -- not just a local-only "put it back" the
+    /// way it would have to be for something already sent across the wire.
     /// </summary>
     private void DeleteRemoteClip(string relativePath, RemoteGalleryFile file)
     {
@@ -4159,30 +4175,68 @@ public partial class MainWindow : Window
             confirmed =>
             {
                 if (confirmed)
-                    _ = DeleteRemoteClipAsync(relativePath, file);
+                    QueueRemoteDeleteWithUndo(relativePath, file.Name, file);
             });
     }
 
-    private async Task DeleteRemoteClipAsync(string relativePath, RemoteGalleryFile file)
+    /// <summary>
+    /// Remote counterpart of QueueDeleteWithUndo. `file` is optional --
+    /// PlayerDelete_Click doesn't have a RemoteGalleryFile handy (Player only
+    /// ever knows the local cached FileInfo it's playing), so it's null
+    /// there and this just skips the local-cache-cleanup step, which needs
+    /// file.Modified/file.Size to recompute the thumbnail cache key anyway.
+    /// </summary>
+    private void QueueRemoteDeleteWithUndo(string relativePath, string displayName, RemoteGalleryFile? file)
+    {
+        _pendingRemoteDeletePaths.Add(relativePath);
+        if (GalleryPanel.Visibility == Visibility.Visible)
+            LoadGallery();
+
+        _toastOverlay.ShowDeleteUndo(displayName,
+            onExpire: () =>
+            {
+                _pendingRemoteDeletePaths.Remove(relativePath);
+                _ = FinishRemoteDeleteAsync(relativePath, displayName, file);
+            },
+            onUndo: () =>
+            {
+                _pendingRemoteDeletePaths.Remove(relativePath);
+                Dispatcher.BeginInvoke(() => LoadGallery());
+            });
+    }
+
+    private async Task FinishRemoteDeleteAsync(string relativePath, string displayName, RemoteGalleryFile? file)
     {
         (bool success, string? error) = await _pairing.DeleteRemoteClipAsync(relativePath);
         if (!success)
         {
-            MessageBox.Show(this, $"Couldn't delete that clip: {error}", "Backtrack");
-            return;
+            // Discarded, not awaited -- this method is itself async (unlike
+            // QueueDeleteWithUndo's plain onExpire lambda, which never
+            // triggers this same CS4014), so an unawaited DispatcherOperation
+            // needs the explicit discard to say "yes, fire-and-forget is the
+            // point" rather than a real oversight.
+            _ = Dispatcher.BeginInvoke(() => MessageBox.Show(this, $"Couldn't delete \"{displayName}\": {error}", "Backtrack"));
         }
-
-        // Best-effort cleanup of whatever this PC itself cached for that
-        // clip -- the real delete already succeeded regardless of whether
-        // either of these exist or this cleanup itself fails.
-        try { File.Delete(GetRemoteClipCachePath(relativePath, file.Name)); } catch { /* best effort */ }
-        string? thumbCache = GetRemoteThumbnailCachePath(relativePath, file.Modified, file.Size);
-        if (thumbCache is not null)
+        else if (file is not null)
         {
-            try { File.Delete(thumbCache); } catch { /* best effort */ }
+            // Best-effort cleanup of whatever this PC itself cached for that
+            // clip -- the real delete already succeeded regardless of
+            // whether either of these exist or this cleanup itself fails.
+            try { File.Delete(GetRemoteClipCachePath(relativePath, file.Name)); } catch { /* best effort */ }
+            string? thumbCache = GetRemoteThumbnailCachePath(relativePath, file.Modified, file.Size);
+            if (thumbCache is not null)
+            {
+                try { File.Delete(thumbCache); } catch { /* best effort */ }
+            }
         }
 
-        LoadGallery();
+        _ = Dispatcher.BeginInvoke(() =>
+        {
+            if (GalleryPanel.Visibility == Visibility.Visible)
+                LoadGallery();
+            else
+                _ = RefreshGalleryCountAsync();
+        });
     }
 
     /// <summary>
@@ -5913,25 +5967,21 @@ public partial class MainWindow : Window
                 if (remoteOrigin is (string relPath, _))
                 {
                     // This local file is just a downloaded cache copy, not
-                    // the real clip -- plain delete, no recycle-bin-undo
-                    // toast (QueueDeleteWithUndo is for local originals;
-                    // there's nothing meaningful to "undo" locally once the
-                    // real delete on the other PC has gone through).
+                    // the real clip -- delete it outright right away (no
+                    // undo toast for IT specifically, nothing meaningful to
+                    // undo about a cache copy), then run the actual remote
+                    // delete through the same undo-toast flow the Gallery
+                    // card's own remote delete uses. `file: null` since
+                    // there's no RemoteGalleryFile handy here to also key a
+                    // remote thumbnail-cache cleanup off of.
                     try { File.Delete(file.FullName); } catch { /* best effort */ }
-                    _ = DeleteRemotePlayerClipAsync(relPath);
+                    QueueRemoteDeleteWithUndo(relPath, file.Name, file: null);
                 }
                 else
                 {
                     QueueDeleteWithUndo(file);
                 }
             });
-    }
-
-    private async Task DeleteRemotePlayerClipAsync(string relativePath)
-    {
-        (bool success, string? error) = await _pairing.DeleteRemoteClipAsync(relativePath);
-        if (!success)
-            MessageBox.Show(this, $"Couldn't delete that clip: {error}", "Backtrack");
     }
 
     // ------------------------------------------------------------------ trim
