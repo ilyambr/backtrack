@@ -1865,6 +1865,26 @@ public partial class MainWindow : Window
         e.Handled = true;
     }
 
+    /// <summary>
+    /// Called once, from App.xaml.cs's startup firewall-setup background task,
+    /// after Interop.FirewallRules.AddRulesElevated finishes. Mutates and saves
+    /// THIS window's own _settings instance -- not a separate AppSettings.Load()
+    /// -- since every other setting this window ever saves goes through this
+    /// same instance; saving a different copy would just get clobbered back to
+    /// false by the next unrelated _settings.Save() elsewhere in this file (see
+    /// App.xaml.cs's own comment at the call site for the full story). Hops
+    /// onto the UI thread since it's called from a background thread and
+    /// _settings is otherwise only ever touched from here.
+    /// </summary>
+    public void MarkFirewallRulesAttempted()
+    {
+        Dispatcher.BeginInvoke(() =>
+        {
+            _settings.FirewallRulesAttempted = true;
+            _settings.Save();
+        });
+    }
+
     public void ToggleVisible()
     {
         if (IsVisible)
