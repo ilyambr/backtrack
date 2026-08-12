@@ -3444,12 +3444,12 @@ public partial class MainWindow : Window
             string key = row.Key;
             RecRowsPanel.Children.Add(BuildRecordRowButton(row.Label, row.Status,
                 start: () => _obs.StartRecordRowAsync(key), stop: () => _obs.StopRecordRowAsync(key),
-                sourceName: row.SourceName, filterName: row.FilterName, rowPath: row.Path));
+                sourceName: row.SourceName, filterName: row.FilterName, rowPath: row.Path, hotkey: row.Hotkey));
         }
     }
 
     private Button BuildRecordRowButton(string label, int status, Func<Task> start, Func<Task> stop, bool showToast = true,
-        string? sourceName = null, string? filterName = null, string? rowPath = null)
+        string? sourceName = null, string? filterName = null, string? rowPath = null, string? hotkey = null)
     {
         bool recording = status == RecordStatusRecording;
 
@@ -3483,13 +3483,36 @@ public partial class MainWindow : Window
         statePanel.Children.Add(dot);
         statePanel.Children.Add(stateText);
 
+        // hotkey == null means "no hotkey info available for this row" (the
+        // Full Scene row -- OBS's native Start/Stop Recording hotkey isn't
+        // queryable over obs-websocket) -- skip the line entirely rather
+        // than showing a misleading "(unbound)". A Source Record filter row
+        // always passes a real (possibly empty) string from RecordRow.Hotkey,
+        // same "(unbound)" convention as the Save Replay screen's own rows.
+        UIElement rightContent = statePanel;
+        if (hotkey != null)
+        {
+            var hotkeyText = new TextBlock
+            {
+                Text = string.IsNullOrEmpty(hotkey) ? "(unbound)" : hotkey,
+                FontSize = 10,
+                Foreground = (Brush)FindResource("Text2"),
+                HorizontalAlignment = HorizontalAlignment.Right,
+                Margin = new Thickness(0, 2, 0, 0),
+            };
+            var rightPanel = new StackPanel { HorizontalAlignment = HorizontalAlignment.Right };
+            rightPanel.Children.Add(statePanel);
+            rightPanel.Children.Add(hotkeyText);
+            rightContent = rightPanel;
+        }
+
         var content = new Grid();
         content.ColumnDefinitions.Add(new ColumnDefinition());
         content.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         Grid.SetColumn(name, 0);
-        Grid.SetColumn(statePanel, 1);
+        Grid.SetColumn(rightContent, 1);
         content.Children.Add(name);
-        content.Children.Add(statePanel);
+        content.Children.Add(rightContent);
 
         string styleKey = recording ? "BufRowButton" : "BufRowButtonNoHover";
         var button = new Button { Style = (Style)FindResource(styleKey), Content = content };
