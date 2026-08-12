@@ -9,7 +9,8 @@
         Topmost="True"
         ShowInTaskbar="False"
         ResizeMode="NoResize"
-        Visibility="Hidden">
+        Visibility="Hidden"
+        ShowActivated="False">
     <!--
       Bottom-center of the screen, but shown/hidden by MainWindow in lockstep
       with the HUD itself; only visible while the overlay is open, not an

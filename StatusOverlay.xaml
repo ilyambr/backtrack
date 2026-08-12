@@ -8,7 +8,8 @@
         Background="Transparent"
         Topmost="True"
         ShowInTaskbar="False"
-        ResizeMode="NoResize">
+        ResizeMode="NoResize"
+        ShowActivated="False">
     <!--
       Always visible, independent of MainWindow's hidden/shown state; this is
       the "always-on-screen indicator" from the design, separate from the
