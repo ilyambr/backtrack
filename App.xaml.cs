@@ -1,6 +1,7 @@
 using System;
 using System.Linq;
 using System.Threading;
+using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Threading;
 
@@ -148,6 +149,27 @@ public partial class App : Application
         if (!string.IsNullOrEmpty(updatedVersion))
         {
             Dispatcher.BeginInvoke(() => _toasts.ShowUpdateApplied("Backtrack", updatedVersion), DispatcherPriority.Loaded);
+        }
+
+        // Once, ever, per install (gated by FirewallRulesAttempted, set
+        // after the first try regardless of outcome) -- adds the inbound/
+        // outbound firewall rules Pairing/PairingService.cs's discovery
+        // listener and pairing server need. Off the UI thread: the elevated
+        // netsh call blocks on Process.WaitForExit() until the user
+        // responds to the UAC prompt and it actually finishes, which would
+        // freeze the whole app (including the hotkey/tray) if awaited
+        // inline here on startup.
+        if (!AppSettings.Load().FirewallRulesAttempted)
+        {
+            _toasts.ShowFirewallSetup();
+            Task.Run(() =>
+            {
+                (bool success, string? error) = Interop.FirewallRules.AddRulesElevated();
+                AppSettings current = AppSettings.Load();
+                current.FirewallRulesAttempted = true;
+                current.Save();
+                AppLog.Write(success ? "Firewall rules added for clip sharing." : $"Firewall rule setup skipped: {error}");
+            });
         }
     }
 }

@@ -49,13 +49,6 @@
             </Style.Triggers>
         </Style>
 
-        <Style x:Key="IconGlyph" TargetType="TextBlock">
-            <Setter Property="FontSize" Value="20"/>
-            <Setter Property="Foreground" Value="{DynamicResource Text0}"/>
-            <Setter Property="HorizontalAlignment" Value="Center"/>
-            <Setter Property="Margin" Value="0,0,0,6"/>
-        </Style>
-
         <Style x:Key="TileLabel" TargetType="TextBlock">
             <Setter Property="FontWeight" Value="Bold"/>
             <Setter Property="FontSize" Value="13"/>
@@ -678,11 +671,11 @@
             <Grid x:Name="PlayerPanel" Visibility="Collapsed">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition/>
-                    <ColumnDefinition Width="90"/>
+                    <ColumnDefinition x:Name="PlayerSidebarColumn" Width="90"/>
                 </Grid.ColumnDefinitions>
 
-                <DockPanel Grid.Column="0">
-                    <StackPanel DockPanel.Dock="Bottom" Background="{DynamicResource PanelBg}">
+                <DockPanel x:Name="PlayerVideoColumnDock" Grid.Column="0">
+                    <StackPanel x:Name="PlayerTransportBar" DockPanel.Dock="Bottom" Background="{DynamicResource PanelBg}">
                         <!-- Trim panel: hidden until "Trim" is pressed on the rail -->
                         <StackPanel x:Name="TrimPanel" Visibility="Collapsed" Margin="16,10,16,0">
                             <Grid>
@@ -706,11 +699,12 @@
                             </StackPanel>
                         </StackPanel>
 
-                        <Grid Margin="16,10,16,10">
+                        <Grid x:Name="PlayerTransportRow" Margin="16,10,16,10">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="Auto"/>
                                 <ColumnDefinition Width="Auto"/>
                                 <ColumnDefinition/>
+                                <ColumnDefinition Width="Auto"/>
                                 <ColumnDefinition Width="Auto"/>
                                 <ColumnDefinition Width="Auto"/>
                                 <ColumnDefinition Width="Auto"/>
@@ -749,8 +743,34 @@
                                        Foreground="{DynamicResource Text1}" VerticalAlignment="Center" Margin="10,0,14,0"/>
                             <ComboBox x:Name="AudioTrackCombo" Grid.Column="4" Width="120" Style="{StaticResource ModernComboBox}" Margin="0,0,10,0" Visibility="Collapsed"
                                       DisplayMemberPath="Name" SelectedValuePath="Id" SelectionChanged="AudioTrackCombo_SelectionChanged" ToolTip="Audio track"/>
-                            <Button x:Name="PlayerFullscreenButton" Grid.Column="5" Style="{StaticResource TileButton}" Padding="6" Click="ToggleFullscreen_Click" ToolTip="Fullscreen">
-                                <Path Data="M7,14H5v5h5v-2H7V14zM5,10h2V7h3V5H5V10zM17,17h-3v2h5v-5h-2V17zM14,5v2h3v3h2V5H14z"
+                            <!-- Slider starts Collapsed inside a Popup anchored to this button (same
+                                 Placement="Top" pattern as SeekTooltipPopup above, already proven to
+                                 render correctly above the video from inside this same transport bar);
+                                 opens on hovering either the button or the slider itself, closes on a
+                                 short debounce once the mouse leaves both: PlayerVolumeArea_MouseEnter/
+                                 Leave, wired to both, handles that. -->
+                            <Button x:Name="PlayerVolumeButton" Grid.Column="5" Style="{StaticResource TileButton}" Padding="10"
+                                    VerticalAlignment="Center" Click="PlayerVolumeButton_Click"
+                                    MouseEnter="PlayerVolumeArea_MouseEnter" MouseLeave="PlayerVolumeArea_MouseLeave" ToolTip="Volume">
+                                <Grid>
+                                    <Path x:Name="PlayerVolumeIcon"
+                                          Data="M3,9v6h4l5,5V4L7,9H3z M16.5,12c0,-1.77 -1.02,-3.29 -2.5,-4.03v8.05c1.48,-0.73 2.5,-2.26 2.5,-4.02z M14,3.23v2.06c2.89,0.86 5,3.54 5,6.71s-2.11,5.85 -5,6.71v2.06c4.01,-0.91 7,-4.49 7,-8.77s-2.99,-7.86 -7,-8.77z"
+                                          Fill="{DynamicResource Text1}" Width="15" Height="15" Stretch="Uniform"/>
+                                    <Popup x:Name="PlayerVolumePopup" IsOpen="False" AllowsTransparency="True" StaysOpen="True" Focusable="False"
+                                           PlacementTarget="{Binding ElementName=PlayerVolumeButton}" Placement="Top">
+                                        <Border Background="{DynamicResource PanelBg}" BorderBrush="{DynamicResource Hairline}" BorderThickness="1"
+                                                Padding="10,14" Margin="0,0,0,8"
+                                                MouseEnter="PlayerVolumeArea_MouseEnter" MouseLeave="PlayerVolumeArea_MouseLeave">
+                                            <Slider x:Name="PlayerVolumeSlider" Orientation="Vertical" Height="90" Width="20"
+                                                    Minimum="0" Maximum="100" Value="100" SmallChange="5" LargeChange="20"
+                                                    ValueChanged="PlayerVolumeSlider_ValueChanged"/>
+                                        </Border>
+                                    </Popup>
+                                </Grid>
+                            </Button>
+                            <Button x:Name="PlayerFullscreenButton" Grid.Column="6" Style="{StaticResource TileButton}" Padding="14"
+                                    VerticalAlignment="Center" Click="ToggleFullscreen_Click" ToolTip="Fullscreen">
+                                <Path x:Name="PlayerFullscreenIcon" Data="M7,14H5v5h5v-2H7V14zM5,10h2V7h3V5H5V10zM17,17h-3v2h5v-5h-2V17zM14,5v2h3v3h2V5H14z"
                                       Fill="{DynamicResource Text1}" Width="13" Height="13" Stretch="Uniform"/>
                             </Button>
                         </Grid>
@@ -773,22 +793,113 @@
                      were ever to desync, closing the whole HUD still works. -->
                 <Popup x:Name="PlayerOverlayPopup" PlacementTarget="{Binding ElementName=PlayerVideoView}" Placement="Relative"
                        HorizontalOffset="10" VerticalOffset="10" AllowsTransparency="True" StaysOpen="True" Focusable="False" IsOpen="False">
-                    <Grid Width="{Binding ElementName=PlayerVideoView, Path=ActualWidth}" Height="34">
-                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                            <StackPanel.Effect>
-                                <DropShadowEffect BlurRadius="6" ShadowDepth="1" Color="Black" Opacity="0.85"/>
-                            </StackPanel.Effect>
-                            <Grid Style="{StaticResource BackButtonHost}" MouseLeftButtonUp="BackToGallery_Click">
-                                <Ellipse Fill="{DynamicResource BorderStrong}"/>
-                                <TextBlock Text="&#8249;" FontSize="14" FontWeight="Bold" Foreground="White"
-                                           HorizontalAlignment="Center" VerticalAlignment="Center" Margin="0,0,1,0"/>
-                            </Grid>
-                            <TextBlock x:Name="PlayerTitle" Text="Clip" FontWeight="Bold" FontSize="13" Foreground="White" VerticalAlignment="Center"/>
-                        </StackPanel>
+                    <Grid x:Name="PlayerTitleBarHost" Width="{Binding ElementName=PlayerVideoView, Path=ActualWidth}" Height="46">
+                        <!-- A real backdrop blur of the video behind this isn't possible; VLC's
+                             video surface is a native HWND (see this file's own "airspace" notes
+                             elsewhere), which WPF's Effect/BlurEffect pipeline can't see through or
+                             capture, same reason CacheMode can't either. This fakes the "frosted
+                             glass" look instead: a solid, semi-transparent rounded pill, the
+                             standard practical stand-in when true blur-behind isn't available.
+                             PanelBgOpaque (DynamicResource, per-theme; see Theme.*.xaml), not a
+                             hardcoded hex; the first version of this used a literal color and
+                             stayed the same regardless of which theme was active, exactly what
+                             DynamicResource throughout this file exists to avoid (see CLAUDE.md's
+                             Theming section).
+                             Rounded is a deliberate, explicit exception to Backtrack's usual
+                             no-CornerRadius rule (see CLAUDE.md's Theming section); asked for by
+                             name after the first version of this pill went out square, unlike
+                             PlayerFullscreenTransportBorder below, which stayed square (never asked
+                             to change). No explicit Width on this Border; it auto-sizes to
+                             PlayerTitleBar's content, so it grows/shrinks with the title's own
+                             length automatically, same as any WPF panel sizing to its content. -->
+                        <Border x:Name="PlayerTitlePill" Background="{DynamicResource PanelBgOpaque}" CornerRadius="18" Padding="10,7"
+                                HorizontalAlignment="Left" VerticalAlignment="Center">
+                            <Border.Effect>
+                                <DropShadowEffect BlurRadius="10" ShadowDepth="1" Color="Black" Opacity="0.5"/>
+                            </Border.Effect>
+                            <StackPanel x:Name="PlayerTitleBar" Orientation="Horizontal" VerticalAlignment="Center">
+                                <Grid Style="{StaticResource BackButtonHost}" MouseLeftButtonUp="BackToGallery_Click">
+                                    <Ellipse Fill="{DynamicResource BorderStrong}"/>
+                                    <!-- Fixed white until now, back from when this floated directly over raw
+                                         video (any theme, so a fixed color made sense there). Now that it sits
+                                         on a themed PanelBgOpaque pill instead, fixed white read as invisible
+                                         white-on-near-white in Light theme; Text0 tracks the pill's own theme. -->
+                                    <TextBlock Text="&#8249;" FontSize="14" FontWeight="Bold" Foreground="{DynamicResource Text0}"
+                                               HorizontalAlignment="Center" VerticalAlignment="Center" Margin="0,0,1,0"/>
+                                </Grid>
+                                <TextBlock x:Name="PlayerTitle" Text="Clip" FontWeight="Bold" FontSize="13" Foreground="{DynamicResource Text0}" VerticalAlignment="Center"
+                                           Cursor="Hand" MouseLeftButtonDown="PlayerTitle_MouseLeftButtonDown" ToolTip="Double-click to rename"/>
+                            </StackPanel>
+                        </Border>
                     </Grid>
                 </Popup>
 
-                <DockPanel Grid.Column="1" Background="{DynamicResource PanelBg}" LastChildFill="False">
+                <!-- Empty shell, no fixed Child; EnterPlayerFullscreen reparents the
+                     live PlayerTransportBar StackPanel into this Popup (and
+                     ExitPlayerFullscreen moves it back into the DockPanel below the
+                     video), rather than duplicating the whole transport bar's markup
+                     and event handlers a second time. Same "airspace" reasoning as
+                     PlayerOverlayPopup above; the video's native HWND would paint
+                     over a plain WPF sibling regardless of z-order. Only used in
+                     fullscreen; the normal (non-fullscreen) Player keeps the bar
+                     docked below the video, which reads fine there since there's no
+                     "video should be edge-to-edge" expectation outside fullscreen.
+                     Width is set in code (EnterPlayerFullscreen), inset from the full
+                     video width rather than spanning it edge to edge, and
+                     HorizontalOffset there centers it; a floating chip, not a
+                     full-bleed docked bar. Square corners (Backtrack's usual
+                     no-CornerRadius rule, see CLAUDE.md); unlike PlayerTitlePill,
+                     which got an explicit rounded exception, this one never did. Same
+                     "no real blur-behind is possible" caveat as PlayerTitlePill: same
+                     solid-translucent stand-in. -->
+                <Popup x:Name="PlayerFullscreenTransportPopup" PlacementTarget="{Binding ElementName=PlayerVideoView}" Placement="Relative"
+                       HorizontalOffset="0" AllowsTransparency="True" StaysOpen="True" Focusable="False" IsOpen="False">
+                    <Border x:Name="PlayerFullscreenTransportBorder" Background="{DynamicResource PanelBgOpaque}" Padding="20,6">
+                        <Border.Effect>
+                            <DropShadowEffect BlurRadius="14" ShadowDepth="2" Color="Black" Opacity="0.5"/>
+                        </Border.Effect>
+                    </Border>
+                </Popup>
+
+                <!-- Covers the video with its own already-generated Gallery thumbnail for
+                     the first moment of playback, then OpenInPlayer hides it once decode
+                     has stabilized; masks a real but hard-to-root-cause glitch (the
+                     first ~1s of every clip renders as blocky/discolored macroblock
+                     corruption, independent of hardware vs software decode, so it's
+                     something in the native video surface's own warmup, not the decode
+                     backend). Same airspace reasoning as the two Popups above: a plain
+                     Image sibling in PlayerVideoHost's Grid would just render BEHIND
+                     VideoView's native HWND regardless of declaration order. -->
+                <Popup x:Name="PlayerFreezeFramePopup" PlacementTarget="{Binding ElementName=PlayerVideoView}" Placement="Relative"
+                       HorizontalOffset="0" VerticalOffset="0" AllowsTransparency="True" StaysOpen="True" Focusable="False" IsOpen="False">
+                    <Image x:Name="PlayerFreezeFrame" Stretch="Uniform"
+                           Width="{Binding ElementName=PlayerVideoView, Path=ActualWidth}"
+                           Height="{Binding ElementName=PlayerVideoView, Path=ActualHeight}"/>
+                </Popup>
+
+                <!-- Brief centered flash for a keyboard-triggered action (play/pause/seek/
+                     mute), matching YouTube's own on-screen feedback; shown and
+                     auto-hidden by ShowPlayerActionFeedback. HorizontalOffset/VerticalOffset
+                     centered over the video are computed in code each time it's shown
+                     (video size differs between normal Player and fullscreen), not fixed
+                     here. Square corners (no explicit ask to round this one; see
+                     CLAUDE.md's Theming section on the no-CornerRadius default). -->
+                <Popup x:Name="PlayerActionFeedbackPopup" PlacementTarget="{Binding ElementName=PlayerVideoView}" Placement="Relative"
+                       AllowsTransparency="True" StaysOpen="True" Focusable="False" IsOpen="False">
+                    <Border x:Name="PlayerActionFeedbackBorder" Background="{DynamicResource PanelBgOpaque}" Width="110" Height="110">
+                        <Border.Effect>
+                            <DropShadowEffect BlurRadius="14" ShadowDepth="2" Color="Black" Opacity="0.5"/>
+                        </Border.Effect>
+                        <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
+                            <Path x:Name="PlayerActionFeedbackIcon" Fill="{DynamicResource Text0}" Width="34" Height="34"
+                                  Stretch="Uniform" HorizontalAlignment="Center"/>
+                            <TextBlock x:Name="PlayerActionFeedbackText" FontWeight="Bold" FontSize="14" Foreground="{DynamicResource Text0}"
+                                       HorizontalAlignment="Center" Margin="0,8,0,0"/>
+                        </StackPanel>
+                    </Border>
+                </Popup>
+
+                <DockPanel x:Name="PlayerSidebar" Grid.Column="1" Background="{DynamicResource PanelBg}" LastChildFill="False">
                     <StackPanel DockPanel.Dock="Top">
                         <Border BorderBrush="{DynamicResource Hairline}" BorderThickness="0,0,0,1">
                             <Button Style="{StaticResource TileButton}" Padding="4,14" Click="PlayerRename_Click">
@@ -850,6 +961,20 @@
                 </StackPanel>
                 <ScrollViewer x:Name="SettingsScrollHost" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Focusable="False">
                     <StackPanel Margin="0,0,10,0">
+                        <Border Style="{StaticResource SettingsRow}" BorderThickness="0">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <StackPanel VerticalAlignment="Center">
+                                    <TextBlock Text="Display" FontSize="13" FontWeight="Bold" Foreground="{DynamicResource Text0}"/>
+                                    <TextBlock Text="Which monitor the overlay (and its toasts/status HUD) shows up on." FontSize="11" Foreground="{DynamicResource Text2}" Margin="0,3,0,0" TextWrapping="Wrap"/>
+                                </StackPanel>
+                                <ComboBox x:Name="DisplaySelector" Grid.Column="1" Width="200" Style="{StaticResource ModernComboBox}"
+                                          DisplayMemberPath="Name" SelectedValuePath="DeviceName" SelectionChanged="DisplaySelector_SelectionChanged"/>
+                            </Grid>
+                        </Border>
                         <TextBlock Text="APPEARANCE" Style="{StaticResource SettingsSectionHeader}" Margin="0,4,0,10"/>
                         <Border Style="{StaticResource SettingsRow}" BorderThickness="0">
                             <StackPanel>
@@ -947,20 +1072,6 @@
                             </Grid>
                         </Border>
                         <Border Style="{StaticResource SettingsRow}">
-                            <Grid>
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition/>
-                                    <ColumnDefinition Width="Auto"/>
-                                </Grid.ColumnDefinitions>
-                                <StackPanel VerticalAlignment="Center">
-                                    <TextBlock Text="Display" FontSize="13" FontWeight="Bold" Foreground="{DynamicResource Text0}"/>
-                                    <TextBlock Text="Which monitor the overlay (and its toasts/status HUD) shows up on." FontSize="11" Foreground="{DynamicResource Text2}" Margin="0,3,0,0" TextWrapping="Wrap"/>
-                                </StackPanel>
-                                <ComboBox x:Name="DisplaySelector" Grid.Column="1" Width="200" Style="{StaticResource ModernComboBox}"
-                                          DisplayMemberPath="Name" SelectedValuePath="DeviceName" SelectionChanged="DisplaySelector_SelectionChanged"/>
-                            </Grid>
-                        </Border>
-                        <Border Style="{StaticResource SettingsRow}">
                             <StackPanel>
                                 <Grid>
                                     <Grid.ColumnDefinitions>
@@ -969,7 +1080,10 @@
                                     </Grid.ColumnDefinitions>
                                     <StackPanel VerticalAlignment="Center">
                                         <TextBlock Text="Check for updates" FontSize="13" FontWeight="Bold" Foreground="{DynamicResource Text0}"/>
-                                        <TextBlock Text="Checks automatically every hour" FontSize="11" Foreground="{DynamicResource Text2}" Margin="0,3,0,0"/>
+                                        <!-- Was "Checks automatically every hour", stale even before these two
+                                             toggles existed: there's no recurring re-check anymore, only once
+                                             at startup (see CheckForUpdatesAsync's own comment). -->
+                                        <TextBlock Text="Checks automatically once, at startup" FontSize="11" Foreground="{DynamicResource Text2}" Margin="0,3,0,0"/>
                                     </StackPanel>
                                     <Button x:Name="CheckUpdatesButton" Grid.Column="1" Content="Check now" Style="{StaticResource FlatButton}" VerticalAlignment="Center" Click="CheckUpdatesButton_Click"/>
                                 </Grid>
@@ -1014,6 +1128,22 @@
                                                Text="OBS is on a different PC -- these two check/update the PC this Backtrack is running on, not the transmitter. See &quot;Transmitter's plugins&quot; below instead."
                                                FontSize="10.5" Foreground="{DynamicResource Rec}" TextWrapping="Wrap" Margin="0,0,0,4"/>
                                 </StackPanel>
+                                <Grid Margin="0,10,0,0">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Text="Disable Backtrack auto-updates" FontSize="13" FontWeight="Bold" Foreground="{DynamicResource Text0}" VerticalAlignment="Center"/>
+                                    <ToggleButton x:Name="DisableBacktrackAutoUpdateToggle" Grid.Column="1" Style="{StaticResource AppToggle}" VerticalAlignment="Center" Click="DisableBacktrackAutoUpdateToggle_Click"/>
+                                </Grid>
+                                <Grid Margin="0,10,0,0">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Text="Disable OBS plugin auto-updates" FontSize="13" FontWeight="Bold" Foreground="{DynamicResource Text0}" VerticalAlignment="Center"/>
+                                    <ToggleButton x:Name="DisablePluginAutoUpdateToggle" Grid.Column="1" Style="{StaticResource AppToggle}" VerticalAlignment="Center" Click="DisablePluginAutoUpdateToggle_Click"/>
+                                </Grid>
                             </StackPanel>
                         </Border>
 

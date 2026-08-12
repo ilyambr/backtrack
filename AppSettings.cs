@@ -37,6 +37,15 @@ public sealed class AppSettings
 
     public bool ShowDisclaimer { get; set; } = true;
 
+    // Both off by default (auto-update stays on unless explicitly turned off).
+    // Only gate the automatic startup check in CheckForUpdatesAsync -- the
+    // "Check now" button always still works regardless of either, same as
+    // Windows Update's own "notify but don't auto-install" pattern still
+    // lets you manually check/install; these two are about NOT wanting it
+    // to happen unattended, not about losing the ability to trigger it.
+    public bool DisableBacktrackAutoUpdate { get; set; }
+    public bool DisablePluginAutoUpdate { get; set; }
+
     public AppTheme Theme { get; set; } = AppTheme.Dark;
 
     // Off by default -- see MainWindow's ShowScreen/ToggleVisible/CloseOverlay
@@ -82,6 +91,12 @@ public sealed class AppSettings
     public string? AuthorizedClientDeviceId { get; set; }
     public string? AuthorizedClientName { get; set; }
     public string? AuthorizedClientSecret { get; set; }
+
+    // Attempted exactly once, ever -- see Interop/FirewallRules.cs. Set after the
+    // first try regardless of outcome (elevation approved, denied, or the netsh
+    // calls themselves failed), not just on success, so a user who dismisses the
+    // one UAC prompt doesn't get re-prompted on every subsequent launch.
+    public bool FirewallRulesAttempted { get; set; }
 
     // RAM disk for OBS's replay buffer output (via ImDisk): mounted on Backtrack
     // startup and unmounted on exit, not left mounted independent of this app --

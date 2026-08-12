@@ -44,7 +44,10 @@ public sealed record RemoteGalleryListing(IReadOnlyList<string> Folders, IReadOn
 /// </summary>
 public sealed class PairingService : IDisposable
 {
-    private const int BroadcastPort = 47811;
+    // Public so Interop/FirewallRules.cs can reference the exact same values
+    // when setting up its inbound/outbound rules, instead of duplicating
+    // these two numbers as a second, driftable copy over there.
+    public const int BroadcastPort = 47811;
     public const int DefaultPairingPort = 47812;
     private const string AnnounceType = "backtrack-announce";
 

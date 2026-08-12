@@ -16,6 +16,10 @@
     -->
     <SolidColorBrush x:Key="PanelBg" Color="#1D1F26"/>
     <SolidColorBrush x:Key="PanelBgOpaque" Color="#EC1D1F26"/>
+    <!-- Recessed card surface; see Theme.Dark.xaml's own comment on this key.
+         Stays within this theme's own grey ramp (close to RowBg's step),
+         not an unrelated invented tone. -->
+    <SolidColorBrush x:Key="ThumbnailBg" Color="#252831"/>
     <SolidColorBrush x:Key="Hairline" Color="#3C404D"/>
     <SolidColorBrush x:Key="Text0" Color="#FFFFFF"/>
     <SolidColorBrush x:Key="Text1" Color="#B4B4B4"/>

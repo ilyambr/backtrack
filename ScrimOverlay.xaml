@@ -25,7 +25,7 @@
     <Grid>
         <!-- A real, discoverable exit control at the screen's actual top-left
              corner (not just inside MainWindow's own small panel). -->
-        <Button Width="34" Height="34" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="16,16,0,0"
+        <Button x:Name="ExitButton" Width="34" Height="34" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="16,16,0,0"
                 Background="#CC1B1D21" BorderThickness="0" Cursor="Hand" Focusable="False"
                 Click="ExitButton_Click" ToolTip="Close overlay (Ctrl+Alt+G)">
             <Button.Template>

@@ -17,6 +17,12 @@
     -->
     <SolidColorBrush x:Key="PanelBg" Color="#101113"/>
     <SolidColorBrush x:Key="PanelBgOpaque" Color="#EC101113"/>
+    <!-- Recessed card surface: folder icons (Gallery) and the neutral
+         placeholder shown while a clip's real thumbnail is still loading.
+         Was hardcoded RGB(24,26,30) directly in code-behind (MainWindow.xaml.cs,
+         BuildFolderCard/BuildClipCard); stayed this exact color regardless of
+         theme. This IS that same value, just promoted to a real per-theme key. -->
+    <SolidColorBrush x:Key="ThumbnailBg" Color="#181A1E"/>
     <SolidColorBrush x:Key="Hairline" Color="#1FFFFFFF"/>
     <SolidColorBrush x:Key="Text0" Color="#F5F6F8"/>
     <SolidColorBrush x:Key="Text1" Color="#AEB4BD"/>
