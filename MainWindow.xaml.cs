@@ -3485,10 +3485,13 @@ public partial class MainWindow : Window
 
         // hotkey == null means "no hotkey info available for this row" (the
         // Full Scene row -- OBS's native Start/Stop Recording hotkey isn't
-        // queryable over obs-websocket) -- skip the line entirely rather
-        // than showing a misleading "(unbound)". A Source Record filter row
+        // queryable over obs-websocket) -- skip it entirely rather than
+        // showing a misleading "(unbound)". A Source Record filter row
         // always passes a real (possibly empty) string from RecordRow.Hotkey,
         // same "(unbound)" convention as the Save Replay screen's own rows.
+        // Sits to the LEFT of the status dot/label, in the same row -- not
+        // stacked underneath -- so it reads as one line, same shape as
+        // ReplayRow's own dot+hotkey row on the Save Replay screen.
         UIElement rightContent = statePanel;
         if (hotkey != null)
         {
@@ -3497,12 +3500,12 @@ public partial class MainWindow : Window
                 Text = string.IsNullOrEmpty(hotkey) ? "(unbound)" : hotkey,
                 FontSize = 10,
                 Foreground = (Brush)FindResource("Text2"),
-                HorizontalAlignment = HorizontalAlignment.Right,
-                Margin = new Thickness(0, 2, 0, 0),
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(0, 0, 8, 0),
             };
-            var rightPanel = new StackPanel { HorizontalAlignment = HorizontalAlignment.Right };
-            rightPanel.Children.Add(statePanel);
+            var rightPanel = new StackPanel { Orientation = Orientation.Horizontal };
             rightPanel.Children.Add(hotkeyText);
+            rightPanel.Children.Add(statePanel);
             rightContent = rightPanel;
         }
 
