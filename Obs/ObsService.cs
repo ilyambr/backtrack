@@ -15,9 +15,12 @@ public sealed record ReplayRow(string Key, string Label, string Hotkey, int Stat
 /// just not recording), 2 Recording, 3 Error (was recording, the output
 /// stopped with a failure). SourceName/FilterName (not Label, which is the
 /// "{source} - {filter}" display string) are for looking this filter's own
-/// settings up via GetRecordRowDestinationFolderAsync.
+/// settings up via GetRecordRowDestinationFolderAsync. Hotkey is this
+/// filter's own "Source Record Start Recording" OBS hotkey (set via OBS's
+/// Settings > Hotkeys, same as any other), empty if unbound -- same idea as
+/// ReplayRow.Hotkey above.
 /// </summary>
-public sealed record RecordRow(string Key, string Label, int Status, string SourceName, string FilterName, string Path = "");
+public sealed record RecordRow(string Key, string Label, int Status, string SourceName, string FilterName, string Path = "", string Hotkey = "");
 public sealed record RecordStatus(bool Active, long DurationMs, bool Paused);
 
 public sealed record ObsStats(long RenderTotalFrames, long RenderSkippedFrames, long OutputTotalFrames, long OutputSkippedFrames);
@@ -455,7 +458,8 @@ public sealed class ObsService
                     item.TryGetProperty("status", out JsonElement st) ? st.GetInt32() : 0,
                     item.TryGetProperty("source", out JsonElement sn) ? sn.GetString() ?? "" : "",
                     item.TryGetProperty("filter", out JsonElement fn) ? fn.GetString() ?? "" : "",
-                    item.TryGetProperty("path", out JsonElement pt) ? pt.GetString() ?? "" : ""));
+                    item.TryGetProperty("path", out JsonElement pt) ? pt.GetString() ?? "" : "",
+                    item.TryGetProperty("hotkey", out JsonElement hk) ? hk.GetString() ?? "" : ""));
             }
         }
         return rows;
