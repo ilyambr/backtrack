@@ -165,9 +165,18 @@ public partial class App : Application
             Task.Run(() =>
             {
                 (bool success, string? error) = Interop.FirewallRules.AddRulesElevated();
-                AppSettings current = AppSettings.Load();
-                current.FirewallRulesAttempted = true;
-                current.Save();
+                // NOT a fresh AppSettings.Load()/Save() here (that's what this
+                // used to do) -- MainWindow already loaded its OWN AppSettings
+                // instance above and saves from it constantly (dozens of call
+                // sites), and AppSettings.Save() is a whole-object overwrite,
+                // not a merge. A separate copy saved here would win the race
+                // for a moment, but the next unrelated _settings.Save() over on
+                // MainWindow's older in-memory copy (loaded before this flag
+                // existed) would clobber it straight back to false -- which is
+                // exactly why this was firing the UAC prompt on every single
+                // launch instead of once ever. Mutating MainWindow's own
+                // instance means every later save already carries this true.
+                _main.MarkFirewallRulesAttempted();
                 AppLog.Write(success ? "Firewall rules added for clip sharing." : $"Firewall rule setup skipped: {error}");
             });
         }

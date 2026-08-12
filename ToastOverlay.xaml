@@ -9,7 +9,8 @@
         Topmost="True"
         ShowInTaskbar="False"
         ResizeMode="NoResize"
-        SizeToContent="Height">
+        SizeToContent="Height"
+        ShowActivated="False">
     <!--
       Always-on, left side of the screen, independent of MainWindow; same
       reasoning as StatusOverlay, notifications about what just happened
