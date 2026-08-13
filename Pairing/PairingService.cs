@@ -52,6 +52,17 @@ public sealed class PairingService : IDisposable
     public const int DefaultPairingPort = 47812;
     private const string AnnounceType = "backtrack-announce";
 
+    // Bounds delete_clip/rename_clip specifically -- those two are the ones a
+    // caller (QueueRemoteDeleteWithUndo's onExpire, in particular) treats as
+    // "fire once and reconcile the UI from whatever comes back." Without a
+    // timeout, a peer that accepted the TCP connection but then went
+    // unreachable mid-request (sleep, frozen, dropped Tailscale route -- no
+    // RST, so ConnectAsync/ReadAsync never fault or return 0) leaves that
+    // await hanging forever: the undo toast has already expired and cleared
+    // _pendingRemoteDeletePaths by then, so the clip sits there indefinitely
+    // with the UI unable to say whether it's deleted, still there, or stuck.
+    private static readonly TimeSpan MutationRequestTimeout = TimeSpan.FromSeconds(15);
+
     private readonly AppSettings _settings;
     private readonly ConcurrentDictionary<string, DiscoveredPeer> _discovered = new();
     private readonly ConcurrentDictionary<string, PendingRequest> _pendingRequests = new();
@@ -899,11 +910,11 @@ public sealed class PairingService : IDisposable
         try
         {
             using var client = new TcpClient();
-            await client.ConnectAsync(_settings.PairedPeerHost, _settings.PairedPeerPort);
+            await client.ConnectAsync(_settings.PairedPeerHost, _settings.PairedPeerPort).WaitAsync(MutationRequestTimeout);
             fields["type"] = type;
             fields["secret"] = _settings.PairedPeerSecret;
-            await WriteLineAsync(client.GetStream(), JsonSerializer.Serialize(fields));
-            string? responseLine = await ReadLineAsync(client.GetStream());
+            await WriteLineAsync(client.GetStream(), JsonSerializer.Serialize(fields)).WaitAsync(MutationRequestTimeout);
+            string? responseLine = await ReadLineAsync(client.GetStream()).WaitAsync(MutationRequestTimeout);
             if (responseLine is null)
                 return (false, "No response from the transmitter PC.", null);
 
@@ -912,6 +923,10 @@ public sealed class PairingService : IDisposable
             string? error = doc.RootElement.TryGetProperty("error", out JsonElement er) ? er.GetString() : null;
             string? path = doc.RootElement.TryGetProperty("path", out JsonElement pt) ? pt.GetString() : null;
             return (success, success ? null : (error ?? "Request failed."), path);
+        }
+        catch (TimeoutException)
+        {
+            return (false, $"{_settings.PairedPeerName ?? "The paired PC"} didn't respond in time -- it may be asleep, unreachable, or frozen.", null);
         }
         catch (Exception ex)
         {

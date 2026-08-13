@@ -76,7 +76,21 @@ entirely.
 
 ---
 
-## 5. Related projects
+## 5. Known limitations
+
+- **Per-source status needs obs-replay-slider installed too.** obs-source-record
+  has no way to report "am I currently recording/buffering" on its own -- Backtrack
+  gets that status exclusively from obs-replay-slider's dock. If you're running
+  obs-source-record by itself, its filters work fine inside OBS, but Backtrack
+  won't show them as active in the HUD.
+- **Clip sharing needs both PCs reachable and awake.** A remote Gallery action
+  (delete, rename, download) times out after 15 seconds if the paired PC doesn't
+  respond -- expect that error if it's asleep, offline, or unreachable over
+  whatever network path you paired it on.
+
+---
+
+## 6. Related projects
 
 - [obs-source-record](https://github.com/ilyambr/obs-source-record) - OBS
   plugin, records/replays individual sources via a filter.

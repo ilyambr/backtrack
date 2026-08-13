@@ -3633,18 +3633,17 @@ public partial class MainWindow : Window
     /// Applies the same length to every row the plugin currently reports.
     /// </summary>
     private const int MinClipSeconds = 15;
-    private const int MaxClipSeconds = 3600;
 
     /// <summary>Squares the 0-1 fraction so low values (what almost everyone actually wants) get most of the track, not a couple of pixels at the start.</summary>
-    private static int SliderPosToSeconds(double pos)
+    private static int SliderPosToSeconds(double pos, int maxSeconds)
     {
         double t = pos / 1000.0;
-        return (int)Math.Round(MinClipSeconds + (MaxClipSeconds - MinClipSeconds) * t * t);
+        return (int)Math.Round(MinClipSeconds + (maxSeconds - MinClipSeconds) * t * t);
     }
 
-    private static double SecondsToSliderPos(int seconds)
+    private static double SecondsToSliderPos(int seconds, int maxSeconds)
     {
-        double t = Math.Sqrt(Math.Clamp((seconds - MinClipSeconds) / (double)(MaxClipSeconds - MinClipSeconds), 0, 1));
+        double t = Math.Sqrt(Math.Clamp((seconds - MinClipSeconds) / (double)(maxSeconds - MinClipSeconds), 0, 1));
         return t * 1000.0;
     }
 
@@ -3660,7 +3659,14 @@ public partial class MainWindow : Window
 
     private Border BuildSharedClipLengthControl(List<ReplayRow> rows)
     {
-        int initial = rows.Count > 0 ? rows[0].LengthSeconds : 60;
+        // Can't save more clip than the buffer actually holds -- ReplayBufferMinutes
+        // is the same "Replay buffer length" value Settings pushes to every Source
+        // Record filter via SetReplayBufferDurationAsync (see BufferDurationSlider),
+        // so it's already known locally without a bridge round trip. Floor is still
+        // MinClipSeconds even if someone set the buffer shorter than that -- the
+        // slider needs a non-zero range to render sensibly either way.
+        int maxSeconds = Math.Max(MinClipSeconds, _settings.ReplayBufferMinutes * 60);
+        int initial = Math.Min(rows.Count > 0 ? rows[0].LengthSeconds : 60, maxSeconds);
 
         var label = new TextBlock { Text = "Clip length", FontSize = 12, FontWeight = FontWeights.Bold, Foreground = (Brush)FindResource("Text1"), VerticalAlignment = VerticalAlignment.Center };
         // IsMoveToPointEnabled jumps the value on click but doesn't hand off
@@ -3673,7 +3679,7 @@ public partial class MainWindow : Window
         // click-to-point handling: explicit mouse capture below replicates
         // that "click anywhere, then drag, it just works" feel, while the
         // slider's actual visual style (RowLengthSlider) is untouched.
-        var slider = new Slider { Style = (Style)FindResource("RowLengthSlider"), Value = SecondsToSliderPos(initial), Margin = new Thickness(10, 0, 10, 0), IsMoveToPointEnabled = false };
+        var slider = new Slider { Style = (Style)FindResource("RowLengthSlider"), Value = SecondsToSliderPos(initial, maxSeconds), Margin = new Thickness(10, 0, 10, 0), IsMoveToPointEnabled = false };
         var lengthText = new TextBlock
         {
             Text = FormatDuration(initial * 1000L),
@@ -3684,7 +3690,7 @@ public partial class MainWindow : Window
             MinWidth = 34,
             TextAlignment = TextAlignment.Right,
         };
-        slider.ValueChanged += (_, e) => lengthText.Text = FormatDuration(SliderPosToSeconds(e.NewValue) * 1000L);
+        slider.ValueChanged += (_, e) => lengthText.Text = FormatDuration(SliderPosToSeconds(e.NewValue, maxSeconds) * 1000L);
 
         slider.PreviewMouseLeftButtonDown += (_, e) =>
         {
@@ -3702,7 +3708,7 @@ public partial class MainWindow : Window
             e.Handled = true;
             slider.ReleaseMouseCapture();
 
-            int seconds = SliderPosToSeconds(slider.Value);
+            int seconds = SliderPosToSeconds(slider.Value, maxSeconds);
             foreach (ReplayRow row in _lastReplayRows)
             {
                 try
