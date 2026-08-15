@@ -60,6 +60,46 @@ public sealed class AppSettings
     // this is the escape hatch for turning the animated version back on.
     public bool EnableAnimations { get; set; } = false;
 
+    // Off by default -- see AppLog's own comment on why this exists (a real
+    // debugging session repeatedly needed hand-added temporary file logging
+    // because AppLog's ring buffer is in-memory only, gone on restart).
+    public bool DiagnosticLogEnabled { get; set; } = false;
+
+    // Makes logged/shown errors include the full exception (stack trace and
+    // all) instead of just its Message -- only meaningfully useful alongside
+    // DiagnosticLogEnabled above, since that's where the extra detail
+    // actually ends up persisted anywhere. Also the sole authority for
+    // UpdateService.IsDevBuild (see its own comment) -- this is now the MAIN
+    // way to declare a dev build, not an add-on to a path guess.
+    public bool DeveloperModeEnabled { get; set; } = false;
+
+    // Set true the one time MainWindow.LoadSettingsUi auto-suggests
+    // DeveloperModeEnabled based on UpdateService.IsRunningFromDevLocation,
+    // so that suggestion only ever happens once -- after that, the toggle is
+    // fully user-controlled, including turning it back off in a location
+    // that would still trip the auto-suggestion.
+    public bool DeveloperModeAutoSuggested { get; set; } = false;
+
+    // RenderOptions.ProcessRenderMode -- applied once at startup (App.xaml.cs),
+    // before any window is created, since WPF's rendering pipeline isn't
+    // something that can be flipped cleanly mid-session. A troubleshooting
+    // escape hatch for actual visual corruption/glitches in Backtrack's own
+    // overlay on unusual GPU/driver combos, same category of issue this
+    // repo's CLAUDE.md already documents extensively for the layered-window
+    // rendering path -- not a capture/recording setting (OBS owns that
+    // entirely; Backtrack has no capture pipeline of its own).
+    public bool DisableHardwareAcceleration { get; set; } = false;
+
+    // Off by default -- a floating draggable window is a bigger ask on
+    // someone's screen than anything else this app adds unprompted. Null
+    // X/Y means "never been positioned yet"; RecentClipsOverlay.Show picks a
+    // sensible default (bottom-right of the active display) the first time,
+    // then MainWindow persists wherever it actually gets dragged to via
+    // RecentClipsOverlay.PositionChanged.
+    public bool ShowRecentClipsOverlay { get; set; } = false;
+    public double? RecentClipsOverlayX { get; set; }
+    public double? RecentClipsOverlayY { get; set; }
+
     // Which monitor the overlay and all its auxiliary windows appear on --
     // Win32's own per-monitor device name (e.g. "\\.\DISPLAY1"), not an index,
     // since indices can silently renumber when a monitor is plugged/unplugged
@@ -153,6 +193,18 @@ public sealed class AppSettings
     // so it changes every OBS restart; the Label is what's actually stable
     // across restarts as long as the source/filter itself isn't renamed.
     public HashSet<string> HiddenBufferLabels { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+
+    // Local-only display name override for a buffer/recording-source row,
+    // double-tapped in Settings -- keyed by the row's real OBS-reported Label
+    // (same stability reasoning as HiddenBufferLabels just above: Key isn't
+    // stable across an OBS restart, Label is). Purely cosmetic on Backtrack's
+    // end; every OBS-facing call still uses the real Label/SourceName/
+    // FilterName throughout, never this override. A buffer and a recording
+    // source backed by the SAME Source Record filter share the exact same
+    // Label string (both obs-replay-slider docks derive it from one shared
+    // FilterRowLabel helper), so keying by Label naturally links renaming
+    // across both lists instead of needing separate tracking for each.
+    public Dictionary<string, string> LocalRowNameOverrides { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 
     private static string FilePath => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Backtrack", "settings.json");

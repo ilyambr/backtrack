@@ -91,6 +91,7 @@ public partial class MainWindow : Window
     private readonly LogoOverlay _logo;
     private readonly StreamingStatusOverlay _streamingStatus;
     private readonly PairingRequestOverlay _pairingRequestOverlay;
+    private readonly RecentClipsOverlay _recentClipsOverlay;
     private readonly AppSettings _settings;
     private readonly UpdateService _updates = new();
 
@@ -114,6 +115,13 @@ public partial class MainWindow : Window
     private List<ReplayRow> _lastReplayRows = new();
     private GlobalHotkey? _hotkey;
     private Screen _lastScreen = Screen.Idle;
+    // Which screen BackToGallery_Click returns to. Defaults to Gallery at the
+    // top of every OpenInPlayer call (the overwhelming common case: clicking
+    // a card FROM Gallery); ShowMainWindowAndOpenInPlayer overrides it to
+    // Idle right after, since a clip opened from the Recent Clips overlay
+    // was never reached by navigating through Gallery, so backing out of it
+    // shouldn't land there either.
+    private Screen _playerBackTarget = Screen.Gallery;
     private readonly SystemTrayManager _trayManager;
 
     private bool _isRenamingCard;
@@ -157,6 +165,7 @@ public partial class MainWindow : Window
     private (string RelativePath, string DeviceId)? _currentPlayerRemoteOrigin;
     private readonly DispatcherTimer _seekTimer;
     private readonly DispatcherTimer _seekDebounceTimer;
+    private readonly DispatcherTimer _galleryFilterDebounceTimer;
     private readonly DispatcherTimer _freezeFrameTimer;
     private readonly DispatcherTimer _volumePopupCloseDebounce;
     private readonly DispatcherTimer _actionFeedbackHideTimer;
@@ -171,6 +180,13 @@ public partial class MainWindow : Window
     // Trim
     private TimeSpan? _trimStart;
     private TimeSpan? _trimEnd;
+    private bool _previewLooping;
+
+    // Playback speed -- cycled by PlayerSpeedButton, not a slider; a small
+    // fixed set covers the actual use cases here (slow-mo review, skimming a
+    // long buffer) without needing arbitrary precision.
+    private static readonly float[] PlaybackSpeeds = { 0.5f, 1f, 1.5f, 2f };
+    private int _playbackSpeedIndex = 1; // 1f
 
     // --------------------------------------------------------------- Gallery folders / selection
 
@@ -194,17 +210,24 @@ public partial class MainWindow : Window
     // BuildClipCard's return value (still just a Border, used everywhere else as one).
     private readonly List<(FileInfo File, Border Circle, Border Thumb)> _galleryCardSelection = new();
 
-    public MainWindow(StatusOverlay statusOverlay, ToastOverlay toastOverlay, ScrimOverlay scrim, DisclaimerOverlay disclaimer, LogoOverlay logo, StreamingStatusOverlay streamingStatus, PairingRequestOverlay pairingRequestOverlay)
+    public MainWindow(StatusOverlay statusOverlay, ToastOverlay toastOverlay, ScrimOverlay scrim, DisclaimerOverlay disclaimer, LogoOverlay logo, StreamingStatusOverlay streamingStatus, PairingRequestOverlay pairingRequestOverlay, RecentClipsOverlay recentClipsOverlay)
     {
         InitializeComponent();
         _statusOverlay = statusOverlay;
         _pairingRequestOverlay = pairingRequestOverlay;
+        _recentClipsOverlay = recentClipsOverlay;
         _toastOverlay = toastOverlay;
         _scrim = scrim;
         _disclaimer = disclaimer;
         _logo = logo;
         _streamingStatus = streamingStatus;
         _settings = AppSettings.Load();
+        // As early as possible -- before anything else in this constructor
+        // has a chance to call AppLog.Write, so nothing from startup itself
+        // is silently missed from the file log if it's enabled.
+        AppLog.FileLoggingEnabled = _settings.DiagnosticLogEnabled;
+        AppLog.DeveloperModeEnabled = _settings.DeveloperModeEnabled;
+        UpdateService.DeveloperModeEnabled = _settings.DeveloperModeEnabled;
 
         // Self-corrects StreamingStatusOverlay's position once this window's
         // real post-switch bounds actually settle (see UpdateStreamingBoxVisibility's
@@ -217,7 +240,15 @@ public partial class MainWindow : Window
         _pairing.PairingRequested += (deviceName, code, requestId) => Dispatcher.BeginInvoke(() =>
         {
             _pairingRequestOverlay.ShowRequest(deviceName, code,
-                onAllow: () => _pairing.ApproveRequest(requestId),
+                onAllow: () =>
+                {
+                    _pairing.ApproveRequest(requestId);
+                    // Live-updates AuthorizedDeviceRow if Settings happens to
+                    // already be open when this approval lands, instead of
+                    // only reflecting the new device on next visit to the
+                    // Sharing section.
+                    RefreshShareClipsUi();
+                },
                 onDeny: () => _pairing.DenyRequest(requestId));
         });
         // Always listening for other Backtrack instances announcing themselves, so
@@ -264,6 +295,7 @@ public partial class MainWindow : Window
             {
                 AppLog.Write($"Recording saved to '{path}'");
                 ShowObsModeMessage($"Recording saved to '{path}'");
+                RefreshRecentClipsOverlay();
             }
         });
         _obs.StreamingStateChanged += active => Dispatcher.BeginInvoke(() =>
@@ -334,11 +366,18 @@ public partial class MainWindow : Window
                 _rowLabels.TryGetValue(key, out label);
             }
             label ??= key;
+            label = DisplayLabel(label); // local rename override, if any -- see its own comment
 
-            _toastOverlay.ShowReplaySaved(label, path);
+            // Quick-finishes the processing toast's bar then swaps to the
+            // saved toast -- or, if this key never had a processing toast
+            // showing (e.g. an OBS-hotkey-triggered save, no lead-time signal
+            // for that -- see ShowProcessingClip's own comment), just shows
+            // the saved toast directly.
+            _toastOverlay.CompleteProcessingClip(key, label, path);
             AppLog.Write($"{label} saved to '{path}'");
             ShowObsModeMessage($"Replay saved to '{path}'");
             _ = RefreshGalleryCountAsync();
+            RefreshRecentClipsOverlay();
         });
         _obs.StateChanged += () => Dispatcher.BeginInvoke(() =>
         {
@@ -379,16 +418,18 @@ public partial class MainWindow : Window
             // isManualTrigger: true -- a remote request to check-and-apply right
             // now is just as much an explicit "yes, install it" as the local
             // Settings button, not a silent background check.
+            // deferObsReopen: true on both -- same reasoning as CheckForUpdatesAsync's own call.
             PluginVersionInfo replaySlider = await await Dispatcher.InvokeAsync(() =>
                 CheckAndApplyPluginUpdateAsync("obs-replay-slider", "Replay Slider", "replay-slider.dll", ReplaySliderStatusDot, ReplaySliderVersionText,
                     name => name.Contains("windows", StringComparison.OrdinalIgnoreCase) && name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase),
                     () => _settings.LastAppliedReplaySliderReleaseAt, v => _settings.LastAppliedReplaySliderReleaseAt = v,
-                    () => _settings.LastAppliedReplaySliderDigest, v => _settings.LastAppliedReplaySliderDigest = v, isManualTrigger: true));
+                    () => _settings.LastAppliedReplaySliderDigest, v => _settings.LastAppliedReplaySliderDigest = v, isManualTrigger: true, deferObsReopen: true));
             PluginVersionInfo sourceRecord = await await Dispatcher.InvokeAsync(() =>
                 CheckAndApplyPluginUpdateAsync("obs-source-record", "Source Record", "source-record.dll", SourceRecordStatusDot, SourceRecordVersionText,
                     name => name.Contains("windows-installer", StringComparison.OrdinalIgnoreCase) && name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase),
                     () => _settings.LastAppliedSourceRecordReleaseAt, v => _settings.LastAppliedSourceRecordReleaseAt = v,
-                    () => _settings.LastAppliedSourceRecordDigest, v => _settings.LastAppliedSourceRecordDigest = v, isManualTrigger: true));
+                    () => _settings.LastAppliedSourceRecordDigest, v => _settings.LastAppliedSourceRecordDigest = v, isManualTrigger: true, deferObsReopen: true));
+            await Dispatcher.InvokeAsync(ReopenObsIfPendingFromPluginUpdates);
             return new PluginVersionsSnapshot(replaySlider, sourceRecord);
         };
 
@@ -432,6 +473,18 @@ public partial class MainWindow : Window
             {
                 CommitSeek(_targetSeekMs);
             }
+        };
+
+        // A local reload (Directory.EnumerateFiles) is cheap enough to not
+        // strictly need this, but the remote gallery's own reload is a real
+        // network round trip (see LoadRemoteGalleryAsync) -- without a
+        // debounce, typing a whole search term would fire one request per
+        // keystroke instead of one after you stop typing.
+        _galleryFilterDebounceTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(250) };
+        _galleryFilterDebounceTimer.Tick += (_, _) =>
+        {
+            _galleryFilterDebounceTimer.Stop();
+            LoadGallery();
         };
 
         // One-shot: started right as playback begins, hides the freeze-frame
@@ -574,6 +627,227 @@ public partial class MainWindow : Window
             _ = CheckForUpdatesAsync();
 
         InitializeOverlayLog();
+        InitializeRecentClipsOverlay();
+    }
+
+    /// <summary>
+    /// Just wires position-persistence at startup -- does NOT show the window.
+    /// Shown/hidden in lockstep with the HUD itself (ToggleVisible/CloseOverlay),
+    /// same as Disclaimer/Logo/StreamingStatus, not an always-on desktop
+    /// fixture; MainWindow itself starts hidden until the hotkey is pressed,
+    /// same reasoning applies here.
+    /// </summary>
+    private void InitializeRecentClipsOverlay()
+    {
+        _recentClipsOverlay.PositionChanged += (x, y) =>
+        {
+            _settings.RecentClipsOverlayX = x;
+            _settings.RecentClipsOverlayY = y;
+            _settings.Save();
+        };
+    }
+
+    private void PositionRecentClipsOverlay()
+    {
+        if (_settings.RecentClipsOverlayX is double x && _settings.RecentClipsOverlayY is double y)
+        {
+            _recentClipsOverlay.Left = x;
+            _recentClipsOverlay.Top = y;
+            return;
+        }
+
+        // First time ever shown -- SizeToContent means ActualWidth/Height
+        // aren't real until an actual layout pass happens, so a guessed
+        // constant here (this used to be a flat 260x140) is wrong the moment
+        // real tiles populate it: four 96px thumbnails plus the drag grip is
+        // a lot wider than that, which is exactly why this was landing flush
+        // against the corner with zero margin, partly off-screen. Positioned
+        // once now with a reasonable fallback so it doesn't flash somewhere
+        // silly, then corrected for real off the window's own first
+        // SizeChanged once its true content size is actually measured.
+        PositionInBottomRightCorner();
+        void Handler(object? s, SizeChangedEventArgs e)
+        {
+            _recentClipsOverlay.SizeChanged -= Handler;
+            PositionInBottomRightCorner();
+        }
+        _recentClipsOverlay.SizeChanged += Handler;
+    }
+
+    private void PositionInBottomRightCorner()
+    {
+        const double margin = 20;
+        Rect bounds = TargetScreenBounds;
+        double width = _recentClipsOverlay.ActualWidth > 0 ? _recentClipsOverlay.ActualWidth : 260;
+        double height = _recentClipsOverlay.ActualHeight > 0 ? _recentClipsOverlay.ActualHeight : 100;
+        _recentClipsOverlay.Left = bounds.X + bounds.Width - width - margin;
+        _recentClipsOverlay.Top = bounds.Y + bounds.Height - height - margin;
+    }
+
+    /// <summary>
+    /// Single choke point for "should the Recent Clips overlay be on screen
+    /// right now" -- called from ShowScreen (every in-HUD navigation),
+    /// ToggleVisible's show branch (reopening the HUD), and
+    /// ShowRecentClipsToggle_Click (the setting flips while already on some
+    /// screen). Idle-only on purpose: showing it over Settings/Gallery/
+    /// Player/Save Replay/Start Record put a floating "recent clips" box on
+    /// top of screens that are already ABOUT clips (Gallery/Player) or
+    /// actively mid-flow (Save Replay/Start Record), which read as clutter
+    /// rather than the quick-access shortcut it's meant to be.
+    /// </summary>
+    private void UpdateRecentClipsOverlayVisibility(Screen currentScreen)
+    {
+        if (!_settings.ShowRecentClipsOverlay || !IsVisible || currentScreen != Screen.Idle)
+        {
+            _recentClipsOverlay.Hide();
+            return;
+        }
+
+        // Tiles first, then position -- their fixed 96px-per-tile structural
+        // width is already correct synchronously (thumbnails load in async
+        // after, but that doesn't change layout width), so positioning after
+        // this avoids an extra visible jump on top of the SizeChanged
+        // correction PositionRecentClipsOverlay already does for the
+        // very-first-time case.
+        RefreshRecentClipsOverlay();
+        PositionRecentClipsOverlay();
+        _recentClipsOverlay.Show();
+    }
+
+    /// <summary>
+    /// Scans the whole clips folder tree (not just its root) so recordings
+    /// saved into a Source Record filter's own custom destination subfolder
+    /// (see RECORDINGS in Settings) show up here too, not just buffer saves
+    /// landing at the root -- same filename-extension/glitch filtering
+    /// LoadGallery already uses, just recursive and capped to the newest 4.
+    /// No-ops entirely if the overlay's turned off; called opportunistically
+    /// after every save regardless of that, cheaper to check the flag here
+    /// than at every call site.
+    /// </summary>
+    private void RefreshRecentClipsOverlay()
+    {
+        if (!_settings.ShowRecentClipsOverlay)
+            return;
+        try
+        {
+            if (!Directory.Exists(_settings.ClipsFolder))
+                return;
+
+            List<FileInfo> recent = Directory.EnumerateFiles(_settings.ClipsFolder, "*.*", SearchOption.AllDirectories)
+                .Where(f => VideoExtensions.Contains(Path.GetExtension(f).ToLowerInvariant()))
+                .Select(f => new FileInfo(f))
+                .Where(f => TryGetCachedDurationMs(f) is not < 2000)
+                .OrderByDescending(f => f.LastWriteTime)
+                .Take(4)
+                .ToList();
+
+            _recentClipsOverlay.SetTiles(recent.Select(BuildRecentClipTile));
+        }
+        catch
+        {
+            // Best effort -- a floating convenience overlay isn't worth
+            // surfacing an error over; it just stays showing whatever it had.
+        }
+    }
+
+    private Border BuildRecentClipTile(FileInfo file)
+    {
+        var thumb = new Border { Background = (Brush)FindResource("ThumbnailBg"), Width = 96, Height = 64, Cursor = Cursors.Hand, ClipToBounds = true };
+        var thumbImage = new Image { Stretch = Stretch.UniformToFill };
+        thumb.Child = thumbImage;
+        thumb.MouseLeftButtonUp += (_, _) => ShowMainWindowAndOpenInPlayer(file);
+
+        var title = new TextBlock
+        {
+            Text = Path.GetFileNameWithoutExtension(file.Name),
+            FontWeight = FontWeights.Bold,
+            FontSize = 10.5,
+            Foreground = (Brush)FindResource("Text0"),
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            Width = 96,
+            Margin = new Thickness(0, 4, 0, 0),
+        };
+
+        DateTime modified = file.LastWriteTime;
+        string dateText = modified.Date == DateTime.Today ? modified.ToString("h:mm tt") : modified.ToString("MMM d, h:mm tt");
+        var sub = new TextBlock
+        {
+            Text = $"{dateText} · {FormatFileSize(file.Length)}",
+            FontSize = 9.5,
+            Foreground = (Brush)FindResource("Text2"),
+            Width = 96,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+        };
+
+        var content = new StackPanel { Margin = new Thickness(0, 0, 10, 0) };
+        content.Children.Add(thumb);
+        content.Children.Add(title);
+        content.Children.Add(sub);
+
+        var tile = new Border { Child = content };
+        _ = LoadThumbnailAndPruneIfGlitchedAsync(file, thumbImage, tile);
+
+        // Same three items, same order, same red Delete as the Gallery card's
+        // own context menu (BuildClipCard) -- kept as a separate small build
+        // here rather than sharing one helper, since this tile's compact
+        // layout has no card Border/selection-circle machinery to hook into
+        // the way BuildClipCard's version does.
+        var contextMenu = new ContextMenu { Style = (Style)FindResource("DarkContextMenu") };
+        var openFolderItem = new MenuItem { Header = "Open file location", Style = (Style)FindResource("DarkMenuItem") };
+        openFolderItem.Click += (_, _) => RevealInExplorerAndClose(file.FullName);
+        var copyPathItem = new MenuItem { Header = "Copy path", Style = (Style)FindResource("DarkMenuItem") };
+        copyPathItem.Click += (_, _) => Clipboard.SetText(file.FullName);
+        var deleteItem = new MenuItem { Header = "Delete", Style = (Style)FindResource("DarkMenuItem"), Foreground = (Brush)FindResource("Rec") };
+        deleteItem.Click += (_, _) =>
+        {
+            // DeleteClip's Border param is unused internally (confirmed by
+            // reading it -- it only drives QueueDeleteWithUndo(file), which
+            // finds/removes cards by matching FileInfo, not this reference),
+            // so a throwaway one here is fine.
+            DeleteClip(file, new Border());
+            RefreshRecentClipsOverlay();
+        };
+        contextMenu.Items.Add(openFolderItem);
+        contextMenu.Items.Add(copyPathItem);
+        contextMenu.Items.Add(deleteItem);
+        thumb.ContextMenu = contextMenu;
+
+        return tile;
+    }
+
+    /// <summary>
+    /// RefreshRecentClipsOverlay's own pre-filter can't know a clip is
+    /// glitched (sub-2s) until its real duration is actually probed, which
+    /// only happens as a side effect of thumbnail generation -- same
+    /// "unprobed clip shows optimistically" tradeoff LoadGallery's own
+    /// comment describes for Gallery cards. Gallery gets away with leaving
+    /// that stale until whatever reloads it next; this floating overlay only
+    /// refreshes on a new save or the HUD reopening, so a glitched tile needs
+    /// to prune itself right here instead of waiting for some other trigger.
+    /// </summary>
+    private async Task LoadThumbnailAndPruneIfGlitchedAsync(FileInfo file, Image thumbImage, Border tile)
+    {
+        await LoadThumbnailAsync(file, thumbImage);
+        if (TryGetCachedDurationMs(file) is < 2000 && tile.Parent is Panel parent)
+            parent.Children.Remove(tile);
+    }
+
+    private static string FormatFileSize(long bytes)
+    {
+        const double mb = 1024.0 * 1024.0;
+        double sizeMb = bytes / mb;
+        return sizeMb >= 1000 ? $"{sizeMb / 1024.0:0.#} GB" : $"{sizeMb:0.#} MB";
+    }
+
+    /// <summary>The overlay is only ever visible while the HUD itself is (see ToggleVisible/CloseOverlay), so this is mostly defensive -- reveals the HUD first if it's somehow hidden anyway, then opens the clip. Same "only show if not already" check App.xaml.cs's own _showEvent handler uses.</summary>
+    private void ShowMainWindowAndOpenInPlayer(FileInfo file)
+    {
+        if (!IsVisible)
+            ToggleVisible();
+        OpenInPlayer(file);
+        // See _playerBackTarget's own comment -- overridden AFTER OpenInPlayer
+        // runs, since OpenInPlayer itself resets this to Gallery at its top.
+        _playerBackTarget = Screen.Idle;
     }
 
     // ------------------------------------------------------------ overlay log
@@ -821,14 +1095,19 @@ public partial class MainWindow : Window
         while (!_obs.IsConnected && DateTime.UtcNow < obsConnectDeadline)
             await Task.Delay(100);
 
+        // deferObsReopen: true on both -- see CheckAndApplyPluginUpdateAsync's
+        // own comment on why relaunching OBS between these two instead of once
+        // after both is the likely cause of the second plugin's update
+        // looking like it failed right after the first one succeeded.
         await CheckAndApplyPluginUpdateAsync("obs-replay-slider", "Replay Slider", "replay-slider.dll", ReplaySliderStatusDot, ReplaySliderVersionText,
             name => name.Contains("windows", StringComparison.OrdinalIgnoreCase) && name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase),
             () => _settings.LastAppliedReplaySliderReleaseAt, v => _settings.LastAppliedReplaySliderReleaseAt = v,
-            () => _settings.LastAppliedReplaySliderDigest, v => _settings.LastAppliedReplaySliderDigest = v, isManualTrigger);
+            () => _settings.LastAppliedReplaySliderDigest, v => _settings.LastAppliedReplaySliderDigest = v, isManualTrigger, deferObsReopen: true);
         await CheckAndApplyPluginUpdateAsync("obs-source-record", "Source Record", "source-record.dll", SourceRecordStatusDot, SourceRecordVersionText,
             name => name.Contains("windows-installer", StringComparison.OrdinalIgnoreCase) && name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase),
             () => _settings.LastAppliedSourceRecordReleaseAt, v => _settings.LastAppliedSourceRecordReleaseAt = v,
-            () => _settings.LastAppliedSourceRecordDigest, v => _settings.LastAppliedSourceRecordDigest = v, isManualTrigger);
+            () => _settings.LastAppliedSourceRecordDigest, v => _settings.LastAppliedSourceRecordDigest = v, isManualTrigger, deferObsReopen: true);
+        ReopenObsIfPendingFromPluginUpdates();
 
         // Never on a dev build (see UpdateService.IsDevBuild): a locally-compiled
         // binary's digest never matches the official release's, so this would
@@ -951,8 +1230,17 @@ public partial class MainWindow : Window
             SetPendingUpdate(null, null);
     }
 
+    // Set true by CheckAndApplyPluginUpdateAsync whenever it closes OBS to
+    // install a plugin but was told (deferReopen) not to relaunch it itself --
+    // ReopenObsIfPendingFromPluginUpdates below is what actually does that,
+    // once, after every plugin in a batch has had its turn. See
+    // InstallPluginUpdateAsync's own comment for why relaunching per-plugin
+    // instead of once per batch was the likely cause of a second plugin's
+    // update looking like it failed right after the first one succeeded.
+    private bool _obsReopenPendingFromPluginUpdates;
+
     private async Task<PluginVersionInfo> CheckAndApplyPluginUpdateAsync(string repo, string displayName, string dllFileName, System.Windows.Shapes.Ellipse dot, TextBlock versionText, Func<string, bool> assetPredicate,
-        Func<DateTimeOffset?> getLastApplied, Action<DateTimeOffset?> setLastApplied, Func<string?> getLastDigest, Action<string?> setLastDigest, bool isManualTrigger = false)
+        Func<DateTimeOffset?> getLastApplied, Action<DateTimeOffset?> setLastApplied, Func<string?> getLastDigest, Action<string?> setLastDigest, bool isManualTrigger = false, bool deferObsReopen = false)
     {
         // No local OBS install (e.g. a receiver-only PC paired to a transmitter's
         // OBS over the network) -- nothing to check a plugin version against and
@@ -1000,12 +1288,28 @@ public partial class MainWindow : Window
                     return;
                 }
                 _toastOverlay.ShowUpdateInProgress(displayName);
-                await _updates.InstallPluginUpdateAsync(release.DownloadUrl, release.Digest);
+                bool obsWasRunning = await _updates.InstallPluginUpdateAsync(release.DownloadUrl, release.Digest, reopenAfterInstall: !deferObsReopen);
+                if (deferObsReopen && obsWasRunning)
+                    _obsReopenPendingFromPluginUpdates = true;
                 RecordUpdateApplied(release, setLastApplied, setLastDigest);
                 AppLog.Write($"{displayName} updated to {release.Version}");
                 _toastOverlay.ShowUpdateApplied(displayName, release.Version);
                 SetUpdateStatus(dot, versionText, release.Version, ok: true);
                 ClearPendingUpdateIfMatches(displayName);
+            }
+
+            // Used for the bottom-left prompt's deferred Install button
+            // specifically (SetPendingUpdate below) -- that's always a
+            // standalone, independently-timed click, never part of the same
+            // synchronous batch CheckForUpdatesAsync's own final
+            // ReopenObsIfPendingFromPluginUpdates call covers, so this plugin
+            // needs to reopen OBS for itself right after applying regardless
+            // of whatever deferObsReopen this whole method was originally
+            // called with.
+            async Task ApplyAndReopenAsync()
+            {
+                await ApplyAsync();
+                ReopenObsIfPendingFromPluginUpdates();
             }
 
             // Plugin updates specifically (not Backtrack's own self-update --
@@ -1038,7 +1342,7 @@ public partial class MainWindow : Window
             if (await _obs.IsRecordingOrStreamingAsync())
             {
                 SetUpdateStatus(dot, versionText, $"{installed.ToString(3)} (waiting for OBS)", ok: null);
-                SetPendingUpdate(displayName, () => _ = ApplyAsync());
+                SetPendingUpdate(displayName, () => _ = ApplyAndReopenAsync());
                 return new PluginVersionInfo(installed.ToString(3), null);
             }
 
@@ -1052,7 +1356,7 @@ public partial class MainWindow : Window
             if (!isManualTrigger && _settings.DisablePluginAutoUpdate)
             {
                 SetUpdateStatus(dot, versionText, $"{installed.ToString(3)} (update available)", ok: null);
-                SetPendingUpdate(displayName, () => _ = ApplyAsync());
+                SetPendingUpdate(displayName, () => _ = ApplyAndReopenAsync());
                 return new PluginVersionInfo(installed.ToString(3), null);
             }
 
@@ -1062,9 +1366,25 @@ public partial class MainWindow : Window
         catch (Exception ex)
         {
             Debug.WriteLine($"Update check/apply failed for {repo}: {ex.Message}");
+            AppLog.WriteError($"Update check/apply failed for {repo}", ex);
+            // In case this failed after ShowUpdateInProgress already showed
+            // (e.g. InstallPluginUpdateAsync itself threw) -- otherwise that
+            // toast would sit there claiming to still be updating forever,
+            // never replaced by ShowUpdateApplied since this one never
+            // reached it. No-op if it never got that far.
+            _toastOverlay.ClearUpdateInProgress(displayName);
             SetUpdateStatus(dot, versionText, installed.ToString(3), ok: false);
             return new PluginVersionInfo(installed.ToString(3), false);
         }
+    }
+
+    /// <summary>Call once, after every plugin in a deferObsReopen batch has had its turn (see CheckAndApplyPluginUpdateAsync's deferObsReopen param). No-op if nothing in the batch actually closed OBS.</summary>
+    private void ReopenObsIfPendingFromPluginUpdates()
+    {
+        if (!_obsReopenPendingFromPluginUpdates)
+            return;
+        _obsReopenPendingFromPluginUpdates = false;
+        _updates.RelaunchObsIfInstalled();
     }
 
     private async Task CheckAndApplySelfUpdateAsync(bool isManualTrigger = false)
@@ -1134,6 +1454,11 @@ public partial class MainWindow : Window
         catch (Exception ex)
         {
             Debug.WriteLine($"Self-update check/apply failed: {ex.Message}");
+            AppLog.WriteError("Self-update check/apply failed", ex);
+            // Same reasoning as CheckAndApplyPluginUpdateAsync's own catch --
+            // only matters if ApplySelfUpdateAsync threw before reaching
+            // Shutdown(); a genuine success never gets here at all.
+            _toastOverlay.ClearUpdateInProgress("Backtrack");
             SetUpdateStatus(BacktrackStatusDot, BacktrackVersionText, installed.ToString(3), ok: false);
         }
     }
@@ -1724,6 +2049,7 @@ public partial class MainWindow : Window
         _disclaimer.Hide();
         _logo.Hide();
         _streamingStatus.Hide();
+        _recentClipsOverlay.Hide();
         _toastOverlay.UpdatePosition(false);
         _updatePrompt.HidePrompt();
         RefreshOverlayLogVisibilityAndMode();
@@ -1928,6 +2254,16 @@ public partial class MainWindow : Window
 
             if (_settings.ShowDisclaimer)
                 _disclaimer.Show();
+
+            // Same "shown/hidden in lockstep with the HUD" shape as Disclaimer
+            // just above -- not an always-on desktop fixture like Status/Toast,
+            // despite living in its own top-level window for the same
+            // AllowsTransparency/native-HWND reasons those do (see
+            // RecentClipsOverlay.xaml's own comment). _lastScreen doubles as
+            // "whichever screen is currently showing" here (see its own
+            // comment) since the HUD reopens onto whatever screen it was left
+            // on, without going through ShowScreen again.
+            UpdateRecentClipsOverlayVisibility(_lastScreen);
 
             // Otherwise this waits for the next 1s poll tick to reappear if
             // still streaming -- fine in practice, but immediate is free here.
@@ -2266,6 +2602,12 @@ public partial class MainWindow : Window
         if (screen is Screen.Idle or Screen.SaveReplay or Screen.StartRecord or Screen.Gallery or Screen.Settings)
             _lastScreen = screen;
 
+        // Idle-only visibility -- see UpdateRecentClipsOverlayVisibility's
+        // own comment. Uses the real target `screen` here (not _lastScreen),
+        // so Player correctly hides it even though Player is excluded from
+        // the _lastScreen assignment just above.
+        UpdateRecentClipsOverlayVisibility(screen);
+
         IntPtr toastHwnd = new WindowInteropHelper(_toastOverlay).Handle;
         if (toastHwnd != IntPtr.Zero)
         {
@@ -2338,8 +2680,12 @@ public partial class MainWindow : Window
             return;
         }
 
-        ShowScreen(Screen.Gallery);
-        LoadGallery();
+        // Usually Gallery (see _playerBackTarget's own comment), but Idle
+        // when this clip was opened from the Recent Clips overlay instead of
+        // by navigating through Gallery.
+        ShowScreen(_playerBackTarget);
+        if (_playerBackTarget == Screen.Gallery)
+            LoadGallery();
     }
 
     private void ToggleStatusOverlay()
@@ -2663,6 +3009,7 @@ public partial class MainWindow : Window
     {
         if (!_galleryIsRemote)
             return;
+        GalleryFilterBox.Text = string.Empty; // see OpenGalleryFolder's own comment
         _galleryIsRemote = false;
         RefreshGallerySourceTabsVisibility();
         LoadGallery();
@@ -2672,6 +3019,7 @@ public partial class MainWindow : Window
     {
         if (_galleryIsRemote || string.IsNullOrEmpty(_settings.PairedPeerSecret))
             return;
+        GalleryFilterBox.Text = string.Empty; // see OpenGalleryFolder's own comment
         _galleryIsRemote = true;
         _currentRemoteGalleryFolder = null;
         RefreshGallerySourceTabsVisibility();
@@ -3135,7 +3483,7 @@ public partial class MainWindow : Window
         var toggle = new ToggleButton { Style = (Style)FindResource("AppToggle"), VerticalAlignment = VerticalAlignment.Center };
         toggle.IsChecked = !_settings.HiddenBufferLabels.Contains(label);
 
-        var name = new TextBlock { Text = label, FontSize = 13, FontWeight = FontWeights.Bold, Foreground = (Brush)FindResource("Text0"), VerticalAlignment = VerticalAlignment.Center };
+        var name = new TextBlock { Text = DisplayLabel(label), FontSize = 13, FontWeight = FontWeights.Bold, Foreground = (Brush)FindResource("Text0"), VerticalAlignment = VerticalAlignment.Center };
 
         var topGrid = new Grid();
         topGrid.ColumnDefinitions.Add(new ColumnDefinition());
@@ -3144,6 +3492,7 @@ public partial class MainWindow : Window
         Grid.SetColumn(toggle, 1);
         topGrid.Children.Add(name);
         topGrid.Children.Add(toggle);
+        EnableDoubleTapRename(name, label);
 
         var folderLabel = new TextBlock
         {
@@ -3220,6 +3569,92 @@ public partial class MainWindow : Window
         }
     }
 
+    /// <summary>
+    /// Local-only display override for a buffer/recording-source row -- see
+    /// LocalRowNameOverrides' own comment on why this is keyed by the row's
+    /// real Label rather than its Key, and why it links buffers/recording
+    /// sources backed by the same filter automatically. Every OBS-facing call
+    /// (SetReplayRowDestDirAsync, GetRecordRowDestinationFolderAsync, toast
+    /// text via _rowLabels, etc.) still passes the REAL originalLabel around
+    /// unchanged -- this only ever gets called at the point something is
+    /// actually rendered on screen.
+    /// </summary>
+    private string DisplayLabel(string originalLabel) =>
+        _settings.LocalRowNameOverrides.TryGetValue(originalLabel, out string? custom) ? custom : originalLabel;
+
+    private void SetLocalRowNameOverride(string originalLabel, string newName)
+    {
+        newName = newName.Trim();
+        if (string.IsNullOrEmpty(newName) || string.Equals(newName, originalLabel, StringComparison.Ordinal))
+            _settings.LocalRowNameOverrides.Remove(originalLabel);
+        else
+            _settings.LocalRowNameOverrides[originalLabel] = newName;
+        _settings.Save();
+    }
+
+    /// <summary>
+    /// Wires double-click-to-rename onto a Settings row's name TextBlock --
+    /// swaps in a TextBox pre-filled with the current display name, commits
+    /// on Enter/LostFocus, Escape cancels. Same interaction shape as the
+    /// Gallery's own BeginRename. originalLabel (not whatever's currently
+    /// displayed) is always what gets stored as the override's key, so
+    /// renaming an already-renamed row still keys off the real underlying
+    /// row rather than chaining onto its own display text. onRenamed
+    /// refreshes both the Buffers and Recording Sources lists (not just
+    /// whichever one this row came from) since the two are linked -- see
+    /// LocalRowNameOverrides' own comment.
+    /// </summary>
+    private void EnableDoubleTapRename(TextBlock nameBlock, string originalLabel)
+    {
+        nameBlock.Cursor = Cursors.IBeam;
+        nameBlock.ToolTip = "Double-click to rename (local to this PC only)";
+        nameBlock.MouseLeftButtonDown += (_, e) =>
+        {
+            if (e.ClickCount != 2 || nameBlock.Parent is not Panel parent)
+                return;
+            e.Handled = true;
+
+            int index = parent.Children.IndexOf(nameBlock);
+            if (index < 0)
+                return;
+
+            var box = new TextBox
+            {
+                Text = DisplayLabel(originalLabel),
+                FontSize = nameBlock.FontSize,
+                FontWeight = nameBlock.FontWeight,
+                Background = (Brush)FindResource("RowBg"),
+                Foreground = (Brush)FindResource("Text0"),
+                BorderThickness = new Thickness(0),
+                VerticalAlignment = VerticalAlignment.Center,
+            };
+            if (parent is Grid grid)
+                Grid.SetColumn(box, Grid.GetColumn(nameBlock));
+
+            bool finished = false;
+            void Finish(bool commit)
+            {
+                if (finished)
+                    return;
+                finished = true;
+                if (commit)
+                    SetLocalRowNameOverride(originalLabel, box.Text);
+                _ = LoadBufferVisibilityUi();
+                _ = LoadRecordFolderUi();
+            }
+
+            parent.Children.RemoveAt(index);
+            parent.Children.Insert(index, box);
+            box.Loaded += (_, _) => { box.Focus(); box.SelectAll(); };
+            box.LostFocus += (_, _) => Finish(commit: true);
+            box.KeyDown += (_, ke) =>
+            {
+                if (ke.Key == Key.Enter) { ke.Handled = true; Finish(commit: true); }
+                else if (ke.Key == Key.Escape) { ke.Handled = true; Finish(commit: false); }
+            };
+        };
+    }
+
     private Border BuildBufferVisibilityRow(ReplayRow row)
     {
         string label = row.Label;
@@ -3229,11 +3664,12 @@ public partial class MainWindow : Window
         var topGrid = new Grid();
         topGrid.ColumnDefinitions.Add(new ColumnDefinition());
         topGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        var name = new TextBlock { Text = label, FontSize = 13, FontWeight = FontWeights.Bold, Foreground = (Brush)FindResource("Text0"), VerticalAlignment = VerticalAlignment.Center };
+        var name = new TextBlock { Text = DisplayLabel(label), FontSize = 13, FontWeight = FontWeights.Bold, Foreground = (Brush)FindResource("Text0"), VerticalAlignment = VerticalAlignment.Center };
         Grid.SetColumn(name, 0);
         Grid.SetColumn(toggle, 1);
         topGrid.Children.Add(name);
         topGrid.Children.Add(toggle);
+        EnableDoubleTapRename(name, label);
 
         var folderLabel = new TextBlock
         {
@@ -3378,7 +3814,7 @@ public partial class MainWindow : Window
             Margin = new Thickness(0, 0, 6, 0),
         };
 
-        var name = new TextBlock { Text = row.Label, FontWeight = FontWeights.Bold, FontSize = 12.5, Foreground = (Brush)FindResource("Text0") };
+        var name = new TextBlock { Text = DisplayLabel(row.Label), FontWeight = FontWeights.Bold, FontSize = 12.5, Foreground = (Brush)FindResource("Text0") };
         var hotkey = new TextBlock
         {
             Text = string.IsNullOrEmpty(row.Hotkey) ? "(unbound)" : row.Hotkey,
@@ -3406,6 +3842,14 @@ public partial class MainWindow : Window
             button.IsEnabled = false;
             try
             {
+                // save_row itself returns almost instantly -- it only flushes the
+                // buffer to disk. The actual trim down to this row's clip length
+                // happens afterward, async, on the OBS side (see
+                // ShowProcessingClip's own comment), so this button
+                // re-enabling is NOT the clip being ready; _obs.ReplaySaved
+                // (elsewhere in this file) is what fires once it actually is,
+                // and dismisses this same toast via CompleteProcessingClip.
+                _toastOverlay.ShowProcessingClip(row.Key, DisplayLabel(row.Label));
                 await _obs.SaveReplayRowAsync(row.Key);
             }
             catch (Exception ex)
@@ -3481,7 +3925,7 @@ public partial class MainWindow : Window
         foreach (RecordRow row in visibleRows)
         {
             string key = row.Key;
-            RecRowsPanel.Children.Add(BuildRecordRowButton(row.Label, row.Status,
+            RecRowsPanel.Children.Add(BuildRecordRowButton(DisplayLabel(row.Label), row.Status,
                 start: () => _obs.StartRecordRowAsync(key), stop: () => _obs.StopRecordRowAsync(key),
                 sourceName: row.SourceName, filterName: row.FilterName, rowPath: row.Path, hotkey: row.Hotkey));
         }
@@ -3558,15 +4002,30 @@ public partial class MainWindow : Window
 
         string styleKey = recording ? "BufRowButton" : "BufRowButtonNoHover";
         var button = new Button { Style = (Style)FindResource(styleKey), Content = content };
+
+        // Inactive used to be dead code on the plugin side (every row only
+        // ever reported Stopped/Recording/Error -- see obs-replay-slider's
+        // control-panel-dock.cpp), so leaving this clickable regardless of
+        // status was harmless: it could never actually BE Inactive. Now that
+        // it's a real, meaningfully-detected state (hidden via its scene's
+        // eye icon), clicking Start on it would just try to record a source
+        // that genuinely has nothing to capture -- disable it instead of
+        // leaving that as a confusing no-op/failure.
+        if (status == RecordStatusInactive)
+        {
+            button.IsEnabled = false;
+            return button;
+        }
+
         button.Click += async (_, _) =>
         {
             button.IsEnabled = false;
             try
             {
                 // Nothing to choose between except "recording" vs "everything
-                // else" -- Inactive/Stopped/Error all just attempt a start,
-                // same as clicking the equivalent button in ControlPanelDock
-                // itself would (e.g. retrying a row stuck in Error).
+                // else" -- Stopped/Error both just attempt a start, same as
+                // clicking the equivalent button in ControlPanelDock itself
+                // would (e.g. retrying a row stuck in Error).
                 await (recording ? stop() : start());
 
                 // Optimistic: reflects what THIS click just successfully asked
@@ -3815,6 +4274,13 @@ public partial class MainWindow : Window
         }
     }
 
+    private void GalleryFilterBox_TextChanged(object sender, TextChangedEventArgs e)
+    {
+        GalleryFilterPlaceholder.Visibility = GalleryFilterBox.Text.Length == 0 ? Visibility.Visible : Visibility.Collapsed;
+        _galleryFilterDebounceTimer.Stop();
+        _galleryFilterDebounceTimer.Start();
+    }
+
     private void LoadGallery()
     {
         if (_galleryIsRemote)
@@ -3844,17 +4310,24 @@ public partial class MainWindow : Window
             return;
         }
 
+        // Trimmed once here rather than inside each LINQ query below -- both
+        // the subfolder and file queries need it, and GalleryFilterBox.Text
+        // itself never changes mid-query.
+        string filter = GalleryFilterBox.Text.Trim();
+
         List<DirectoryInfo> subfolders;
         List<FileInfo> files;
         try
         {
             subfolders = Directory.GetDirectories(folder)
                 .Select(d => new DirectoryInfo(d))
+                .Where(d => filter.Length == 0 || d.Name.Contains(filter, StringComparison.OrdinalIgnoreCase))
                 .OrderBy(d => d.Name, StringComparer.OrdinalIgnoreCase)
                 .ToList();
 
             files = Directory.EnumerateFiles(folder)
                 .Where(f => VideoExtensions.Contains(Path.GetExtension(f).ToLowerInvariant()) && !_pendingDeletePaths.Contains(Path.GetFullPath(f)))
+                .Where(f => filter.Length == 0 || Path.GetFileNameWithoutExtension(f).Contains(filter, StringComparison.OrdinalIgnoreCase))
                 .Select(f => new FileInfo(f))
                 // Filters out obviously-invalid/glitched recordings (e.g. a save
                 // triggered right as OBS started, or a buffer barely armed before
@@ -3883,7 +4356,7 @@ public partial class MainWindow : Window
         {
             GalleryGrid.Children.Add(new TextBlock
             {
-                Text = "No clips in this folder yet.",
+                Text = filter.Length == 0 ? "No clips in this folder yet." : $"Nothing here matches \"{filter}\".",
                 FontSize = 12,
                 Foreground = (Brush)FindResource("Text2"),
             });
@@ -3929,6 +4402,10 @@ public partial class MainWindow : Window
 
     private void OpenGalleryFolder(string path)
     {
+        // Filter is scoped to whatever folder is currently showing -- carrying
+        // a stale term into a different folder would just look like that
+        // folder is missing clips instead of the term simply not matching there.
+        GalleryFilterBox.Text = string.Empty;
         string root = Path.GetFullPath(_settings.ClipsFolder).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
         string full = Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
 
@@ -3946,12 +4423,14 @@ public partial class MainWindow : Window
     /// <summary>Descends into a subfolder of the paired PC's own ClipsFolder root -- relativePath uses '/' throughout regardless of either PC's actual OS.</summary>
     private void OpenRemoteGalleryFolder(string name)
     {
+        GalleryFilterBox.Text = string.Empty; // see OpenGalleryFolder's own comment
         _currentRemoteGalleryFolder = _currentRemoteGalleryFolder is null ? name : $"{_currentRemoteGalleryFolder}/{name}";
         LoadGallery();
     }
 
     private void GalleryUp_Click(object sender, MouseButtonEventArgs e)
     {
+        GalleryFilterBox.Text = string.Empty; // see OpenGalleryFolder's own comment
         if (_galleryIsRemote)
         {
             if (_currentRemoteGalleryFolder is not null)
@@ -4019,19 +4498,26 @@ public partial class MainWindow : Window
             return;
         }
 
+        // Same filtering as the local LoadGallery -- current folder only, by name.
+        string filter = GalleryFilterBox.Text.Trim();
+
         // Same "hide it while its undo toast is still counting down" trick
         // as the local Gallery's own _pendingDeletePaths (see QueueDeleteWithUndo) --
         // relativePath-keyed instead of local-full-path-keyed, since a remote
         // card has no local FileInfo to key off of.
         List<RemoteGalleryFile> files = listing.Files
             .Where(f => !_pendingRemoteDeletePaths.Contains(RemoteClipRelativePath(f.Name)))
+            .Where(f => filter.Length == 0 || Path.GetFileNameWithoutExtension(f.Name).Contains(filter, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+        List<string> folders = listing.Folders
+            .Where(name => filter.Length == 0 || name.Contains(filter, StringComparison.OrdinalIgnoreCase))
             .ToList();
 
-        if (listing.Folders.Count == 0 && files.Count == 0)
+        if (folders.Count == 0 && files.Count == 0)
         {
             GalleryGrid.Children.Add(new TextBlock
             {
-                Text = "No clips in this folder yet.",
+                Text = filter.Length == 0 ? "No clips in this folder yet." : $"Nothing here matches \"{filter}\".",
                 FontSize = 12,
                 Foreground = (Brush)FindResource("Text2"),
             });
@@ -4039,7 +4525,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        foreach (string name in listing.Folders)
+        foreach (string name in folders)
             GalleryGrid.Children.Add(BuildFolderCard(name, () => OpenRemoteGalleryFolder(name)));
 
         foreach (RemoteGalleryFile file in files)
@@ -4130,9 +4616,12 @@ public partial class MainWindow : Window
         var contextMenu = new ContextMenu { Style = (Style)FindResource("DarkContextMenu") };
         var openFolderItem = new MenuItem { Header = "Open file location", Style = (Style)FindResource("DarkMenuItem") };
         openFolderItem.Click += (_, _) => _ = OpenRemoteClipFileLocationAsync(relativePath, file);
-        var deleteItem = new MenuItem { Header = "Delete", Style = (Style)FindResource("DarkMenuItem") };
+        var copyPathItem = new MenuItem { Header = "Copy path", Style = (Style)FindResource("DarkMenuItem") };
+        copyPathItem.Click += (_, _) => _ = CopyRemoteClipPathAsync(relativePath, file);
+        var deleteItem = new MenuItem { Header = "Delete", Style = (Style)FindResource("DarkMenuItem"), Foreground = (Brush)FindResource("Rec") };
         deleteItem.Click += (_, _) => DeleteRemoteClip(relativePath, file);
         contextMenu.Items.Add(openFolderItem);
+        contextMenu.Items.Add(copyPathItem);
         contextMenu.Items.Add(deleteItem);
         iconHost.ContextMenu = contextMenu;
 
@@ -4162,6 +4651,23 @@ public partial class MainWindow : Window
             }
         }
         RevealInExplorerAndClose(destPath);
+    }
+
+    /// <summary>Same "ensure the local cache copy exists first" reasoning as OpenRemoteClipFileLocationAsync just above -- there's no real local path to copy for a clip that lives on a different machine until it's actually cached.</summary>
+    private async Task CopyRemoteClipPathAsync(string relativePath, RemoteGalleryFile file)
+    {
+        string destPath = GetRemoteClipCachePath(relativePath, file.Name);
+        if (!File.Exists(destPath))
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(destPath)!);
+            (bool success, string? error) = await _pairing.DownloadRemoteClipAsync(relativePath, destPath);
+            if (!success)
+            {
+                MessageBox.Show(this, $"Couldn't download that clip: {error}", "Backtrack");
+                return;
+            }
+        }
+        Clipboard.SetText(destPath);
     }
 
     /// <summary>
@@ -4457,6 +4963,8 @@ public partial class MainWindow : Window
         _trimStart = null;
         _trimEnd = null;
         TrimPanel.Visibility = Visibility.Collapsed;
+        StopPreviewLoop();
+        ResetPlaybackSpeed();
         PlayerVideoView.Visibility = Visibility.Visible;
 
         ShowScreen(Screen.Player);
@@ -4801,9 +5309,12 @@ public partial class MainWindow : Window
         var contextMenu = new ContextMenu { Style = (Style)FindResource("DarkContextMenu") };
         var openFolderItem = new MenuItem { Header = "Open file location", Style = (Style)FindResource("DarkMenuItem") };
         openFolderItem.Click += (_, _) => RevealInExplorerAndClose(file.FullName);
-        var deleteItem = new MenuItem { Header = "Delete", Style = (Style)FindResource("DarkMenuItem") };
+        var copyPathItem = new MenuItem { Header = "Copy path", Style = (Style)FindResource("DarkMenuItem") };
+        copyPathItem.Click += (_, _) => Clipboard.SetText(file.FullName);
+        var deleteItem = new MenuItem { Header = "Delete", Style = (Style)FindResource("DarkMenuItem"), Foreground = (Brush)FindResource("Rec") };
         deleteItem.Click += (_, _) => DeleteClip(file, card);
         contextMenu.Items.Add(openFolderItem);
+        contextMenu.Items.Add(copyPathItem);
         contextMenu.Items.Add(deleteItem);
         thumb.ContextMenu = contextMenu;
 
@@ -5204,6 +5715,14 @@ public partial class MainWindow : Window
             return;
         }
 
+        // Default back target -- see _playerBackTarget's own comment. Set
+        // unconditionally here so every OTHER caller (Gallery cards, remote
+        // clip open, etc.) keeps the existing Gallery behavior without each
+        // needing to remember to set this themselves; only
+        // ShowMainWindowAndOpenInPlayer overrides it, and only after this
+        // call returns.
+        _playerBackTarget = Screen.Gallery;
+
         // See _clipOpenToken's own comment -- this counts as "the user wants
         // to be watching THIS clip now" regardless of whether it got here via
         // a plain local-clip click or a remote download that just finished,
@@ -5221,6 +5740,8 @@ public partial class MainWindow : Window
         _trimStart = null;
         _trimEnd = null;
         TrimPanel.Visibility = Visibility.Collapsed;
+        StopPreviewLoop();
+        ResetPlaybackSpeed();
 
         // Undoes ShowScreen's own Collapse of VideoView itself (set whenever
         // Player was left -- see its comment); needed here too, not just
@@ -5548,6 +6069,11 @@ public partial class MainWindow : Window
 
         if (lengthMs <= 0)
             return;
+
+        // See PreviewLoopButton_Click's own comment -- reads the trim
+        // boundaries live rather than a snapshot taken when looping started.
+        if (_previewLooping && _trimStart is not null && _trimEnd is not null && timeMs >= _trimEnd.Value.TotalMilliseconds)
+            CommitSeek((long)_trimStart.Value.TotalMilliseconds);
 
         PlayerCurrentTime.Text = FormatDuration(Math.Max(timeMs, 0));
         PlayerDurationText.Text = FormatDuration(Math.Max(lengthMs, 0));
@@ -5990,6 +6516,28 @@ public partial class MainWindow : Window
             });
     }
 
+    // -------------------------------------------------------- playback speed
+
+    private void PlayerSpeedButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_vlcPlayer is null)
+            return;
+        _playbackSpeedIndex = (_playbackSpeedIndex + 1) % PlaybackSpeeds.Length;
+        float speed = PlaybackSpeeds[_playbackSpeedIndex];
+        _vlcPlayer.SetRate(speed);
+        PlayerSpeedText.Text = speed == (int)speed ? $"{(int)speed}x" : $"{speed}x";
+    }
+
+    private void ResetPlaybackSpeed()
+    {
+        _playbackSpeedIndex = 1; // 1f
+        PlayerSpeedText.Text = "1x";
+        // No SetRate(1f) call needed here -- this only ever runs right before
+        // a fresh MediaPlayer is created/reused for a new clip (see
+        // ShowPlayerLoadingUi/OpenInPlayer), which already starts at normal
+        // speed on its own.
+    }
+
     // ------------------------------------------------------------------ trim
 
     private void PlayerTrim_Click(object sender, RoutedEventArgs e)
@@ -6021,11 +6569,52 @@ public partial class MainWindow : Window
         TrimEndText.Text = "0:00";
         TrimStatusText.Text = "";
         TrimPanel.Visibility = Visibility.Collapsed;
+        StopPreviewLoop();
     }
 
     private async void TrimReplace_Click(object sender, RoutedEventArgs e) => await RunTrimAsync(replaceOriginal: true);
 
     private async void TrimSaveNew_Click(object sender, RoutedEventArgs e) => await RunTrimAsync(replaceOriginal: false);
+
+    /// <summary>
+    /// Loops playback between Set start and Set end -- lets the exact
+    /// selection get reviewed repeatedly before committing to Replace/Save,
+    /// instead of guessing the boundaries, trimming, checking the result,
+    /// and re-trimming if they were off. The actual loop check runs off the
+    /// same _seekTimer tick UpdatePlayerSeekUi already uses (100ms), not a
+    /// separate timer -- reads _trimStart/_trimEnd live each tick, so
+    /// adjusting either boundary while looping takes effect immediately
+    /// without needing to stop and restart the loop.
+    /// </summary>
+    private void PreviewLoopButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_vlcPlayer is null)
+            return;
+
+        if (_previewLooping)
+        {
+            StopPreviewLoop();
+            return;
+        }
+
+        if (_trimStart is null || _trimEnd is null || _trimEnd <= _trimStart)
+        {
+            MessageBox.Show(this, "Set both a start and an end point first.", "Backtrack");
+            return;
+        }
+
+        _previewLooping = true;
+        PreviewLoopButton.Content = "Stop preview";
+        CommitSeek((long)_trimStart.Value.TotalMilliseconds);
+        if (!_vlcPlayer.IsPlaying)
+            _vlcPlayer.Play();
+    }
+
+    private void StopPreviewLoop()
+    {
+        _previewLooping = false;
+        PreviewLoopButton.Content = "Preview";
+    }
 
     /// <summary>
     /// Exports via LibVLC's own transcode/sout chain (no ffmpeg dependency) using a
@@ -6205,6 +6794,29 @@ public partial class MainWindow : Window
         RefreshThemeSwatchSelection();
         EnableAnimationsToggle.IsChecked = _settings.EnableAnimations;
 
+        DiagnosticLogToggle.IsChecked = _settings.DiagnosticLogEnabled;
+        OpenDiagnosticLogButton.Visibility = _settings.DiagnosticLogEnabled ? Visibility.Visible : Visibility.Collapsed;
+
+        // One-time nudge, not a permanent lock -- Developer Mode is the real
+        // authority on dev-build status now (UpdateService.IsDevBuild), so
+        // this only ever pre-sets it once, the first time Settings notices a
+        // location mismatch; every load after that just reflects whatever
+        // the toggle is actually set to, freely changeable either direction.
+        if (!_settings.DeveloperModeAutoSuggested)
+        {
+            _settings.DeveloperModeAutoSuggested = true;
+            _settings.Save();
+            if (UpdateService.IsRunningFromDevLocation)
+            {
+                SetDeveloperModeEnabled(true);
+                DeveloperModeLockedNoteText.Visibility = Visibility.Visible;
+            }
+        }
+        DeveloperModeToggle.IsChecked = _settings.DeveloperModeEnabled;
+
+        DisableHardwareAccelToggle.IsChecked = _settings.DisableHardwareAcceleration;
+
+        ShowRecentClipsToggle.IsChecked = _settings.ShowRecentClipsOverlay;
         LaunchWithWindowsToggle.IsChecked = _settings.LaunchWithWindows;
         ClipsFolderText.Text = _settings.ClipsFolder;
         BufferDurationSlider.Value = _settings.ReplayBufferMinutes;
@@ -6224,7 +6836,7 @@ public partial class MainWindow : Window
         LoadDisplaySelector();
 
         ShareClipsToggle.IsChecked = _settings.ShareClipsEnabled;
-        RefreshShareClipsStatusText();
+        RefreshShareClipsUi();
         RefreshPairingStatusUi();
         RenderDiscoveredDevices();
 
@@ -6305,20 +6917,56 @@ public partial class MainWindow : Window
 
     // -------------------------------------------------------------- pairing
 
-    private void RefreshShareClipsStatusText()
+    /// <summary>
+    /// Also shows/hides AuthorizedDeviceRow -- pulled out of the status
+    /// subtitle text (used to read "...authorized: {name}" crammed in there)
+    /// into its own row with a Deauthorize button, since that text alone
+    /// gave no way to actually revoke access short of turning sharing off
+    /// entirely (which also stops announcing/accepting new pairing requests,
+    /// not just this one device's).
+    /// </summary>
+    private void RefreshShareClipsUi()
     {
+        bool hasAuthorizedDevice = !string.IsNullOrEmpty(_settings.AuthorizedClientName);
+
         if (!_settings.ShareClipsEnabled)
         {
             ShareClipsStatusText.Text = "Off";
         }
-        else if (!string.IsNullOrEmpty(_settings.AuthorizedClientName))
+        else if (hasAuthorizedDevice)
         {
-            ShareClipsStatusText.Text = $"Sharing as \"{Environment.MachineName}\", authorized: {_settings.AuthorizedClientName}";
+            ShareClipsStatusText.Text = $"Sharing as \"{Environment.MachineName}\"";
         }
         else
         {
             ShareClipsStatusText.Text = $"Sharing as \"{Environment.MachineName}\", waiting for a PC to pair";
         }
+
+        // Only shown while sharing is actually on too -- a stale authorized
+        // device from before "Share my clips" got turned off would otherwise
+        // show a Deauthorize button for a connection that's already refused
+        // regardless (StopPairingServer means nothing gets through even with
+        // a valid secret), which reads as "this device still has access"
+        // when it doesn't.
+        AuthorizedDeviceRow.Visibility = _settings.ShareClipsEnabled && hasAuthorizedDevice ? Visibility.Visible : Visibility.Collapsed;
+        AuthorizedDeviceNameText.Text = _settings.AuthorizedClientName ?? "";
+    }
+
+    private void DeauthorizeButton_Click(object sender, RoutedEventArgs e)
+    {
+        string? name = _settings.AuthorizedClientName;
+        if (name is null)
+            return;
+
+        if (MessageBox.Show(this, $"Remove \"{name}\"'s access to this PC's clips? It'll need to pair again to reconnect.",
+                "Backtrack", MessageBoxButton.YesNo) != MessageBoxResult.Yes)
+            return;
+
+        _settings.AuthorizedClientDeviceId = null;
+        _settings.AuthorizedClientName = null;
+        _settings.AuthorizedClientSecret = null;
+        _settings.Save();
+        RefreshShareClipsUi();
     }
 
     private void ShareClipsToggle_Click(object sender, RoutedEventArgs e)
@@ -6338,7 +6986,7 @@ public partial class MainWindow : Window
             _pairing.StopPairingServer();
         }
 
-        RefreshShareClipsStatusText();
+        RefreshShareClipsUi();
     }
 
     private void RefreshPairingStatusUi()
@@ -6715,6 +7363,96 @@ public partial class MainWindow : Window
         _settings.Save();
     }
 
+    private void ShowRecentClipsToggle_Click(object sender, RoutedEventArgs e)
+    {
+        bool enabled = ShowRecentClipsToggle.IsChecked == true;
+        _settings.ShowRecentClipsOverlay = enabled;
+
+        // Clearing the saved spot here (not just hiding the window) is what
+        // actually makes "turn it off, turn it back on" a real reset --
+        // previously this left RecentClipsOverlayX/Y untouched, so re-
+        // enabling just re-showed it at the exact same dragged-to spot,
+        // which isn't what "reset" means to someone toggling it off and on
+        // specifically to move it back. PositionRecentClipsOverlay falls
+        // back to PositionInBottomRightCorner whenever these are null.
+        if (!enabled)
+        {
+            _settings.RecentClipsOverlayX = null;
+            _settings.RecentClipsOverlayY = null;
+        }
+        _settings.Save();
+
+        // We're on the Settings screen right now, so this always ends up
+        // hiding it (Idle-only -- see UpdateRecentClipsOverlayVisibility's
+        // own comment) regardless of `enabled`; it'll reappear on its own
+        // next time the HUD lands back on Idle. Still routed through the
+        // shared helper rather than an unconditional Hide() so the logic
+        // for "should it actually be visible" only lives in one place.
+        UpdateRecentClipsOverlayVisibility(_lastScreen);
+    }
+
+    private void DiagnosticLogToggle_Click(object sender, RoutedEventArgs e) => SetDiagnosticLogEnabled(DiagnosticLogToggle.IsChecked == true);
+
+    private void SetDiagnosticLogEnabled(bool enabled)
+    {
+        _settings.DiagnosticLogEnabled = enabled;
+        _settings.Save();
+        AppLog.FileLoggingEnabled = enabled;
+        DiagnosticLogToggle.IsChecked = enabled;
+        OpenDiagnosticLogButton.Visibility = enabled ? Visibility.Visible : Visibility.Collapsed;
+        if (enabled)
+            AppLog.Write("Diagnostic log file enabled");
+    }
+
+    private void DeveloperModeToggle_Click(object sender, RoutedEventArgs e) => SetDeveloperModeEnabled(DeveloperModeToggle.IsChecked == true);
+
+    private void SetDeveloperModeEnabled(bool enabled)
+    {
+        _settings.DeveloperModeEnabled = enabled;
+        _settings.Save();
+        AppLog.DeveloperModeEnabled = enabled;
+        UpdateService.DeveloperModeEnabled = enabled;
+        DeveloperModeToggle.IsChecked = enabled;
+
+        // Turning Developer Mode ON also turns the diagnostic log file on --
+        // the whole point of Developer Mode (full exception detail via
+        // AppLog.WriteError) only actually goes anywhere useful once
+        // something's persisting it; without this it's silently a no-op
+        // until someone separately remembers to flip the other toggle too.
+        // Deliberately one-directional: turning Developer Mode back OFF
+        // doesn't turn the log back off, since someone may still want
+        // whatever's already logging independent of dev mode.
+        if (enabled && !_settings.DiagnosticLogEnabled)
+            SetDiagnosticLogEnabled(true);
+    }
+
+    private void DisableHardwareAccelToggle_Click(object sender, RoutedEventArgs e)
+    {
+        // Not applied live -- see AppSettings.DisableHardwareAcceleration's
+        // own comment on why this needs a fresh process (App.xaml.cs reads it
+        // once, before any window is created).
+        _settings.DisableHardwareAcceleration = DisableHardwareAccelToggle.IsChecked == true;
+        _settings.Save();
+        MessageBox.Show(this, "This takes effect the next time Backtrack starts.", "Backtrack");
+    }
+
+    private void OpenDiagnosticLogButton_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            if (!File.Exists(AppLog.LogFilePath))
+            {
+                MessageBox.Show(this, "Nothing's been logged to the file yet.", "Backtrack");
+                return;
+            }
+            Process.Start(new ProcessStartInfo(AppLog.LogFilePath) { UseShellExecute = true });
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, $"Couldn't open the log file: {ex.Message}", "Backtrack");
+        }
+    }
+
     // Uses a Scheduled Task (not the Run registry key) so the app can launch
     // already elevated/consistent across Windows updates without a UAC prompt
     // every boot; Task Scheduler is also easier to inspect/remove by hand than
@@ -6739,19 +7477,34 @@ public partial class MainWindow : Window
         }
     }
 
+    // %SystemRoot%\System32\schtasks.exe explicitly, not just "schtasks.exe"
+    // relying on PATH resolution -- a broken/nonstandard PATH (locked-down
+    // corporate images, some antivirus PATH sanitizing, etc.) would make
+    // Process.Start throw Win32Exception "The system cannot find the file
+    // specified" for what's actually a PATH problem, not a real schtasks
+    // failure, and that exception's own message doesn't make that obvious --
+    // easy to misread as a permissions/elevation error instead.
+    private static string SchtasksPath =>
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "schtasks.exe");
+
     private static void CreateOrUpdateStartupTask()
     {
-        // No /RL HIGHEST -- that requests the task run elevated, which schtasks.exe
-        // itself refuses to REGISTER unless the calling process already has admin
-        // rights (Access is denied), regardless of what happens at ONLOGON time.
-        // Backtrack never needs to run elevated (only the RAM disk driver install
-        // does, and that's its own separate, explicit UAC prompt via RamDisk.cs),
-        // so this was failing "Launch with Windows" outright for any non-admin
-        // account -- which is most of them -- for a feature that has no actual
-        // reason to need elevation at all.
+        // /RL LIMITED explicit, not just omitted -- omitting it relies on
+        // schtasks.exe's own default, which is LIMITED when run from a
+        // non-elevated process, but documented inconsistently (and reported
+        // inconsistently in practice) for what happens when the CALLING
+        // process itself is already elevated (e.g. someone ran Backtrack "As
+        // administrator" at least once). Spelling it out removes that
+        // ambiguity entirely instead of depending on an implicit default that
+        // may not behave the same on every machine.
+        //
+        // Backtrack never needs to run elevated (only the RAM disk driver
+        // install does, and that's its own separate, explicit UAC prompt via
+        // RamDisk.cs) -- LIMITED is correct regardless of what account or
+        // elevation state created this task.
         string exePath = Environment.ProcessPath ?? Process.GetCurrentProcess().MainModule!.FileName;
-        var psi = new ProcessStartInfo("schtasks.exe",
-            $"/Create /F /SC ONLOGON /TN \"{ScheduledTaskName}\" /TR \"\\\"{exePath}\\\"\"")
+        var psi = new ProcessStartInfo(SchtasksPath,
+            $"/Create /F /SC ONLOGON /RL LIMITED /TN \"{ScheduledTaskName}\" /TR \"\\\"{exePath}\\\"\"")
         { UseShellExecute = false, RedirectStandardError = true, CreateNoWindow = true };
         using Process proc = Process.Start(psi)!;
         string stderr = proc.StandardError.ReadToEnd();
@@ -6764,10 +7517,25 @@ public partial class MainWindow : Window
 
     private static void DeleteStartupTask()
     {
-        var psi = new ProcessStartInfo("schtasks.exe", $"/Delete /F /TN \"{ScheduledTaskName}\"")
-        { UseShellExecute = false, CreateNoWindow = true };
+        // Mirrors CreateOrUpdateStartupTask's own error handling -- this used
+        // to never check the exit code at all, so a real failure here (schtasks
+        // itself missing/blocked, a permissions issue) was swallowed silently:
+        // the toggle would save as "off" and look successful even though the
+        // scheduled task was still sitting there, unremoved. "Task doesn't
+        // exist" specifically (schtasks' own message for that, checked by
+        // substring since its exact wording has varied across Windows
+        // versions) is the one failure that's actually fine to ignore --
+        // toggling off a task that was never successfully created in the
+        // first place is a normal case, not an error worth surfacing.
+        var psi = new ProcessStartInfo(SchtasksPath, $"/Delete /F /TN \"{ScheduledTaskName}\"")
+        { UseShellExecute = false, RedirectStandardError = true, CreateNoWindow = true };
         using Process proc = Process.Start(psi)!;
+        string stderr = proc.StandardError.ReadToEnd();
         proc.WaitForExit();
+        if (proc.ExitCode != 0 && !stderr.Contains("cannot find", StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException(string.IsNullOrWhiteSpace(stderr)
+                ? "schtasks.exe failed to remove the startup task."
+                : $"schtasks.exe failed to remove the startup task: {stderr.Trim()}");
     }
 
     private void ChangeClipsFolder_Click(object sender, RoutedEventArgs e)

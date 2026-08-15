@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -25,6 +26,7 @@ public partial class ToastOverlay : Window
     private static readonly SolidColorBrush Stream = new(Color.FromRgb(0xA8, 0x55, 0xF7));
     private static readonly SolidColorBrush Warning = new(Color.FromRgb(0xF0, 0xA0, 0x20));
     private static readonly SolidColorBrush Accent = new(Color.FromRgb(0x3E, 0xCF, 0x8E));
+    private static readonly SolidColorBrush Grey = new(Color.FromRgb(0xAE, 0xB4, 0xBD)); // matches Text1 across all four themes -- "in progress, not success/error/rec/stream yet" has no color of its own otherwise
 
     private static Brush PanelBg => ThemeBrush("PanelBg");
     private static Brush Hairline => ThemeBrush("Hairline");
@@ -92,8 +94,175 @@ public partial class ToastOverlay : Window
     public void ShowReplaySaved(string label, string resolvedPath) =>
         Show(GlyphIcon("\u21bb", Green), Green, $"{label} saved", $"Saved at '{resolvedPath}'");
 
-    public void ShowUpdateApplied(string component, string version) =>
+    // Keyed by row key, not label -- CompleteProcessingClip needs to find the
+    // right toast again once ReplaySaved fires for that same key, and two
+    // rows can share a label in principle (nothing enforces uniqueness on
+    // obs-replay-slider's side).
+    private readonly Dictionary<string, (Border Toast, Border Fill, DispatcherTimer Timer)> _processingToasts = new();
+
+    /// <summary>
+    /// Fired the moment a row's Save button is clicked, before the actual work
+    /// is even confirmed started -- obs-replay-slider's save_row request
+    /// returns almost instantly (it just flushes the buffer), but the real
+    /// trim down to the requested clip length happens afterward, on a
+    /// background thread on the OBS side, with zero progress signal
+    /// Backtrack can see (that background thread is C++/Qt on the OBS
+    /// process, not something this app has any visibility into). So the
+    /// fill bar here is a SIMULATED estimate, not real progress: eases up to
+    /// 100% over ~6s (long enough for a typical short clip to genuinely
+    /// finish inside that window) and then just holds there, full, for
+    /// however much longer a big buffer's real trim actually needs, rather
+    /// than snapping back to 0 or lying about being done. Unlike every other
+    /// toast in this file, this one does NOT auto-dismiss on a timer --
+    /// CompleteProcessingClip (called once the matching ReplaySaved event
+    /// actually arrives) is the only thing that removes it.
+    /// </summary>
+    public void ShowProcessingClip(string key, string label)
+    {
+        // A second click on the same row while one's still in flight (or a
+        // stale leftover some other edge case left behind) shouldn't stack a
+        // duplicate -- replace it instead of piling toasts up.
+        RemoveProcessingToast(key);
+
+        IntPtr hwnd = new WindowInteropHelper(this).Handle;
+        if (hwnd != IntPtr.Zero)
+            WindowZOrder.BringToFrontWithoutActivating(hwnd);
+
+        var msg = new TextBlock { Text = "Processing clip...", FontWeight = FontWeights.Bold, FontSize = 12.5, Foreground = Text0 };
+        var sub = new TextBlock
+        {
+            Text = $"Processing {label}",
+            FontSize = 10.5,
+            Foreground = Text2,
+            Margin = new Thickness(0, 2, 0, 0),
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            MaxWidth = 210,
+        };
+        var body = new StackPanel();
+        body.Children.Add(msg);
+        body.Children.Add(sub);
+
+        // Same glyph as ShowReplaySaved's own icon -- grey instead of green
+        // is what marks this as "still in progress, not the success state".
+        var row = new StackPanel { Orientation = Orientation.Horizontal };
+        row.Children.Add(GlyphIcon("\u21bb", Grey));
+        row.Children.Add(body);
+
+        // Fills UP toward 100%, opposite direction from Show()'s own
+        // progressFill (which counts DOWN to 0 as a dismiss timer) -- same
+        // visual language (a bar at the bottom of the card), different
+        // meaning, so this can't just reuse Show()'s timer logic as-is.
+        var progressTrack = new Grid { Height = 3, Background = ThemeBrush("BorderMedium"), VerticalAlignment = VerticalAlignment.Bottom };
+        var progressFill = new Border { Background = Grey, HorizontalAlignment = HorizontalAlignment.Left, Width = 0 };
+        progressTrack.Children.Add(progressFill);
+
+        var cardContent = new StackPanel();
+        cardContent.Children.Add(new Border { Padding = new Thickness(12, 10, 14, 10), Child = row });
+        cardContent.Children.Add(progressTrack);
+
+        var toast = new Border
+        {
+            Background = PanelBg,
+            BorderBrush = Hairline,
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(0),
+            Margin = new Thickness(0, 0, 0, 8),
+            ClipToBounds = true,
+            Child = cardContent,
+        };
+
+        ToastStack.Children.Insert(0, toast);
+
+        const double rampSec = 6.0;
+        var startTime = DateTime.UtcNow;
+        double CurrentFraction() => Math.Clamp((DateTime.UtcNow - startTime).TotalSeconds / rampSec, 0.0, 1.0);
+        double Eased(double t) => 1.0 - Math.Pow(1.0 - t, 3); // cubic ease-out -- settles in, doesn't just count linearly
+
+        var timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(16) }; // 60 FPS
+        timer.Tick += (_, _) =>
+        {
+            double t = CurrentFraction();
+            progressFill.Width = Eased(t) * toast.ActualWidth;
+            if (t >= 1.0)
+                timer.Stop(); // holds flat, full -- nothing left to animate until CompleteProcessingClip
+        };
+        toast.SizeChanged += (_, _) => progressFill.Width = Eased(CurrentFraction()) * toast.ActualWidth;
+        timer.Start();
+
+        _processingToasts[key] = (toast, progressFill, timer);
+    }
+
+    /// <summary>
+    /// Called once the matching ReplaySaved event actually arrives. Rather
+    /// than yanking the processing toast out and dropping ShowReplaySaved in
+    /// its place regardless of whatever percentage the simulated bar
+    /// happened to be sitting at (jarring if it was caught mid-ramp, e.g. a
+    /// short clip that finished before the ~6s ease-out settled), this
+    /// quick-finishes that SAME bar to full over ~250ms first, then swaps to
+    /// the completed toast once it visually reads as "done" rather than
+    /// "interrupted".
+    /// </summary>
+    public void CompleteProcessingClip(string key, string label, string resolvedPath)
+    {
+        if (!_processingToasts.Remove(key, out var entry))
+        {
+            // No processing toast was showing for this key (e.g. an
+            // OBS-hotkey-triggered save -- see ShowProcessingClip's own
+            // comment) -- nothing to finish, just show the normal toast.
+            ShowReplaySaved(label, resolvedPath);
+            return;
+        }
+
+        entry.Timer.Stop(); // the slow ~6s ramp is done deciding this bar's width; the finish below takes over
+
+        const double finishSec = 0.25;
+        double startWidth = entry.Fill.Width;
+        var startTime = DateTime.UtcNow;
+        var finishTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(16) };
+        finishTimer.Tick += (_, _) =>
+        {
+            double t = Math.Clamp((DateTime.UtcNow - startTime).TotalSeconds / finishSec, 0.0, 1.0);
+            double fullWidth = entry.Toast.ActualWidth;
+            entry.Fill.Width = startWidth + (fullWidth - startWidth) * t;
+            if (t < 1.0)
+                return;
+
+            finishTimer.Stop();
+            ToastStack.Children.Remove(entry.Toast);
+            ShowReplaySaved(label, resolvedPath);
+        };
+        finishTimer.Start();
+    }
+
+    /// <summary>Immediate removal, no finish-animation -- only for ShowProcessingClip's own re-click dedup, where there's no label/path to hand off to a completion toast anyway.</summary>
+    private void RemoveProcessingToast(string key)
+    {
+        if (!_processingToasts.Remove(key, out var entry))
+            return;
+        entry.Timer.Stop();
+        ToastStack.Children.Remove(entry.Toast);
+    }
+
+    // Keyed by component name ("Replay Slider", "Source Record", "Backtrack")
+    // -- same grouping idea as _processingToasts: ShowUpdateInProgress/
+    // ShowUpdateApplied for the SAME component share one toast slot instead
+    // of stacking as two independent toasts, and two DIFFERENT components
+    // updating around the same time (see CheckForUpdatesAsync's batch) each
+    // still only ever show one toast at a time, not one per call.
+    private readonly Dictionary<string, Border> _updateInProgressToasts = new();
+
+    public void ShowUpdateApplied(string component, string version)
+    {
+        ClearUpdateInProgress(component);
         Show(GlyphIcon("\u2b06", Green), Green, $"{component} updated", $"Now on version {version}");
+    }
+
+    /// <summary>Removes component's in-progress toast without showing anything in its place -- for a failed/aborted update, so it doesn't sit there claiming to still be updating forever.</summary>
+    public void ClearUpdateInProgress(string component)
+    {
+        if (_updateInProgressToasts.Remove(component, out Border? existing))
+            ToastStack.Children.Remove(existing);
+    }
 
     public void ShowAppStarted(string hotkeyText) =>
         Show(GlyphIcon("\u21bb", Accent), Accent, "Backtrack is running", $"Press {hotkeyText} to open the overlay");
@@ -106,11 +275,56 @@ public partial class ToastOverlay : Window
         Show(GlyphIcon("\u21bb", Accent), Accent, "Setting up clip sharing",
             "Windows may ask for admin permission once, just to open two Backtrack-only network ports");
 
-    // Fired right before the download+install actually starts (which can take
-    // a while and, for a plugin, closes and relaunches OBS along the way) so
-    // it doesn't look like the app just silently glitched or hung.
-    public void ShowUpdateInProgress(string component) =>
-        Show(GlyphIcon("\u2b07", Accent), Accent, $"Updating {component}...", "Downloading and installing in the background");
+    /// <summary>
+    /// Fired right before the download+install actually starts (which can
+    /// take a while and, for a plugin, closes and relaunches OBS along the
+    /// way) so it doesn't look like the app just silently glitched or hung.
+    /// Persistent, no auto-dismiss timer like every OTHER toast here -- an
+    /// install can genuinely take longer than the usual 4s, and this is
+    /// meant to be replaced by ShowUpdateApplied (or cleared by
+    /// ClearUpdateInProgress on failure) once this component's own update
+    /// actually resolves, not to vanish on its own partway through.
+    /// </summary>
+    public void ShowUpdateInProgress(string component)
+    {
+        ClearUpdateInProgress(component); // dedupe -- a second call for the same component replaces, doesn't stack
+
+        var msg = new TextBlock { Text = $"Updating {component}...", FontWeight = FontWeights.Bold, FontSize = 12.5, Foreground = Text0 };
+        var sub = new TextBlock
+        {
+            Text = "Downloading and installing in the background",
+            FontSize = 10.5,
+            Foreground = Text2,
+            Margin = new Thickness(0, 2, 0, 0),
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            MaxWidth = 210,
+        };
+        var body = new StackPanel();
+        body.Children.Add(msg);
+        body.Children.Add(sub);
+
+        var row = new StackPanel { Orientation = Orientation.Horizontal };
+        row.Children.Add(GlyphIcon("\u2b07", Accent));
+        row.Children.Add(body);
+
+        var toast = new Border
+        {
+            Background = PanelBg,
+            BorderBrush = Hairline,
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(0),
+            Margin = new Thickness(0, 0, 0, 8),
+            ClipToBounds = true,
+            Child = new Border { Padding = new Thickness(12, 10, 14, 10), Child = row },
+        };
+
+        IntPtr hwnd = new WindowInteropHelper(this).Handle;
+        if (hwnd != IntPtr.Zero)
+            WindowZOrder.BringToFrontWithoutActivating(hwnd);
+
+        ToastStack.Children.Insert(0, toast);
+        _updateInProgressToasts[component] = toast;
+    }
 
     private static TextBlock GlyphIcon(string glyph, Brush color) => new()
     {

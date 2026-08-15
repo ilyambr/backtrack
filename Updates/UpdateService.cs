@@ -37,11 +37,18 @@ public sealed record ReleaseInfo(string Version, string? DownloadUrl, DateTimeOf
 public sealed class UpdateService
 {
     /// <summary>
-    /// True unless running from the real installed location
-    /// (%LocalAppData%\Programs\Backtrack, per installer/Program.cs's own
-    /// installDir) -- i.e. a local dev build, running straight out of a repo's
-    /// bin\ folder or copied somewhere else entirely.
-    ///
+    /// Set from AppSettings.DeveloperModeEnabled (Settings > Experimental >
+    /// Diagnostics) -- the actual, sole authority for IsDevBuild below now,
+    /// not an override on top of a path guess. MainWindow.LoadSettingsUi
+    /// pre-sets it to true, once, the first time IsRunningFromDevLocation
+    /// suggests it (see that property's own comment) -- after that one-time
+    /// nudge it's fully user-controlled either direction, including turning
+    /// it back off while running somewhere IsRunningFromDevLocation would
+    /// still flag, or on while running from a genuinely installed copy.
+    /// </summary>
+    public static bool DeveloperModeEnabled { get; set; }
+
+    /// <summary>
     /// Auto-update is deliberately never allowed to run here: a locally
     /// compiled binary's digest will essentially never match the official
     /// release's (builds aren't byte-reproducible across machines/compile
@@ -49,17 +56,36 @@ public sealed class UpdateService
     /// "out of date" by the digest check regardless of its version string --
     /// and worse, letting the startup auto-apply run would silently overwrite
     /// whatever's actively being tested with the real published release.
-    /// Based on install location rather than a Debug/Release or feature-flag
-    /// check, since this whole session's dev builds are Release builds too --
-    /// a location check can't be accidentally left in the wrong state, unlike
-    /// a flag someone has to remember to toggle back.
+    ///
+    /// Used to be a path comparison against a single hardcoded install
+    /// location, which broke the moment the installer could put Backtrack
+    /// anywhere else (see the installer's own new folder-picker) -- ANY
+    /// custom-but-legitimate install location would have permanently and
+    /// silently misidentified itself as a dev build forever, no way to
+    /// self-correct. DeveloperModeEnabled is the real signal now;
+    /// IsRunningFromDevLocation only ever feeds it a one-time initial guess.
     /// </summary>
-    public static bool IsDevBuild
+    public static bool IsDevBuild => DeveloperModeEnabled;
+
+    /// <summary>
+    /// True unless running from wherever the installer itself last recorded
+    /// as the real install location (its own uninstall registry key's
+    /// InstallLocation value -- see installer/Program.cs), or that key
+    /// doesn't exist at all (never installed through it). Purely a one-time
+    /// suggestion signal for MainWindow.LoadSettingsUi to pre-set
+    /// DeveloperModeEnabled with -- see that property's own comment on why
+    /// this isn't IsDevBuild's actual authority anymore.
+    /// </summary>
+    public static bool IsRunningFromDevLocation
     {
         get
         {
-            string installedDir = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Programs", "Backtrack");
+            string? installedDir = Registry.CurrentUser
+                .OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Uninstall\Backtrack")?
+                .GetValue("InstallLocation") as string;
+            if (string.IsNullOrEmpty(installedDir))
+                return true; // never installed through installer/Program.cs at all
+
             string running = AppContext.BaseDirectory.TrimEnd('\\', '/');
             return !string.Equals(running, installedDir.TrimEnd('\\', '/'), StringComparison.OrdinalIgnoreCase);
         }
@@ -240,9 +266,21 @@ public sealed class UpdateService
     /// <summary>
     /// Downloads and silently installs a plugin's Windows installer, closing OBS
     /// first if it's running (installing over a loaded plugin DLL fails while
-    /// OBS holds it open) and relaunching OBS afterward if it was running.
+    /// OBS holds it open).
+    ///
+    /// reopenAfterInstall=false (used when updating more than one plugin in the
+    /// same batch -- see CheckForUpdatesAsync) skips relaunching here; the
+    /// caller is responsible for doing that itself, once, after every plugin in
+    /// the batch has been installed. Reopening after EACH individual plugin
+    /// used to mean: close OBS, install plugin 1, relaunch OBS, then almost
+    /// immediately close it again for plugin 2 -- OBS still mid-startup (main
+    /// window not up yet, websocket server not listening yet) got killed out
+    /// from under itself, which is exactly the kind of race that would explain
+    /// the second plugin's update looking like it failed right after the first
+    /// one succeeded. Returns whether OBS was actually running (and so got
+    /// closed) either way, so the caller knows whether it owes a reopen.
     /// </summary>
-    public async Task InstallPluginUpdateAsync(string downloadUrl, string? expectedDigest = null)
+    public async Task<bool> InstallPluginUpdateAsync(string downloadUrl, string? expectedDigest = null, bool reopenAfterInstall = true)
     {
         string tempPath = Path.Combine(Path.GetTempPath(), $"cc_update_{Guid.NewGuid():N}.exe");
         await DownloadFileAsync(downloadUrl, tempPath, expectedDigest);
@@ -256,7 +294,16 @@ public sealed class UpdateService
 
         try { File.Delete(tempPath); } catch { /* best-effort cleanup */ }
 
-        if (wasObsRunning && File.Exists(Obs64Path))
+        if (reopenAfterInstall && wasObsRunning)
+            RelaunchObsIfInstalled();
+
+        return wasObsRunning;
+    }
+
+    /// <summary>Extracted so a caller managing OBS lifecycle across several plugin installs (see reopenAfterInstall above) can call this itself, once, after the whole batch.</summary>
+    public void RelaunchObsIfInstalled()
+    {
+        if (File.Exists(Obs64Path))
             Process.Start(new ProcessStartInfo(Obs64Path) { UseShellExecute = true, WorkingDirectory = Path.GetDirectoryName(Obs64Path) });
     }
 
