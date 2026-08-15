@@ -364,6 +364,16 @@ public sealed class ObsService
 
     public async Task<bool> GetStreamActiveAsync()
     {
+        // IsRecordingOrStreamingAsync already guards its OWN call to this with
+        // the same check, but two other callers (CheckAndApplyPluginUpdateAsync's
+        // livestream-block, both inside and outside ApplyAsync) call this
+        // directly -- OBS simply not running at all (very much the normal case
+        // right before installing a plugin update) meant _client.RequestAsync
+        // threw "Not connected to OBS" straight through, which those callers'
+        // generic catch block then misread as an update failure (red status
+        // dot) instead of "OBS isn't running, obviously not streaming".
+        if (!IsConnected)
+            return false;
         JsonElement d = await _client.RequestAsync("GetStreamStatus");
         return d.GetProperty("outputActive").GetBoolean();
     }

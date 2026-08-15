@@ -18,8 +18,32 @@ static class Program
 
         string installDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Programs", "Backtrack");
 
-        DialogResult res = MessageBox.Show($"Install Backtrack to:\n{installDir}\n\nThis will also add Backtrack to your Start Menu.", "Backtrack Setup", MessageBoxButtons.OKCancel, MessageBoxIcon.Information);
-        if (res != DialogResult.OK) return;
+        DialogResult res = MessageBox.Show($"Install Backtrack to:\n{installDir}\n\nThis will also add Backtrack to your Start Menu.\n\nYes = install here. No = choose a different folder.",
+            "Backtrack Setup", MessageBoxButtons.YesNoCancel, MessageBoxIcon.Information);
+        if (res == DialogResult.Cancel) return;
+        if (res == DialogResult.No)
+        {
+            // FolderBrowserDialog's own dialog doesn't let you type/create a
+            // brand new leaf folder by name the way a real "choose install
+            // location" flow needs (only navigate to EXISTING ones) --
+            // SelectedPath pre-seeded at the default install dir at least
+            // means picking a parent and accepting it back gives a sane
+            // "<chosen>\Backtrack"-shaped result instead of installing
+            // straight into whatever folder they happened to land on.
+            using var folderDialog = new FolderBrowserDialog
+            {
+                Description = "Choose a folder for Backtrack (a \"Backtrack\" subfolder will be created inside it)",
+                SelectedPath = Path.GetDirectoryName(installDir) ?? Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                ShowNewFolderButton = true,
+            };
+            if (folderDialog.ShowDialog() != DialogResult.OK) return;
+
+            string chosenPath = folderDialog.SelectedPath ?? installDir;
+            installDir = Path.GetFileName(chosenPath.TrimEnd(Path.DirectorySeparatorChar))
+                .Equals("Backtrack", StringComparison.OrdinalIgnoreCase)
+                ? chosenPath
+                : Path.Combine(chosenPath, "Backtrack");
+        }
 
         try
         {

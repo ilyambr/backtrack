@@ -607,6 +607,10 @@
             <!-- Gallery screen -->
             <DockPanel x:Name="GalleryPanel" Visibility="Collapsed" Margin="16,14,16,16">
                 <Grid DockPanel.Dock="Top" Margin="0,0,0,12">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition/>
+                        <ColumnDefinition Width="220"/>
+                    </Grid.ColumnDefinitions>
                     <StackPanel Orientation="Horizontal">
                         <Grid Style="{StaticResource BackButtonHost}" MouseLeftButtonUp="BackToIdle_Click">
                             <Ellipse Fill="{DynamicResource BorderSubtle}"/>
@@ -614,6 +618,18 @@
                         </Grid>
                         <TextBlock Text="Gallery" Style="{StaticResource ScreenTitle}"/>
                     </StackPanel>
+                    <!-- Filters the current folder's clips (and subfolder tiles) by name,
+                         live as you type. Not a recursive whole-library search, just this
+                         folder's own view, same scope LoadGallery already renders.
+                         GalleryFilterPlaceholder is a plain overlaid label, not a real
+                         watermark (WPF TextBox has no built-in one); toggled in the
+                         TextChanged handler alongside the actual filtering. -->
+                    <Grid Grid.Column="1" VerticalAlignment="Center">
+                        <TextBox x:Name="GalleryFilterBox" Background="{DynamicResource RowBg}" Foreground="{DynamicResource Text0}"
+                                 CaretBrush="{DynamicResource Text0}" BorderThickness="0" Padding="10,7" TextChanged="GalleryFilterBox_TextChanged"/>
+                        <TextBlock x:Name="GalleryFilterPlaceholder" Text="Search clips..." FontSize="12" Foreground="{DynamicResource Text2}"
+                                   Margin="10,0,0,0" VerticalAlignment="Center" IsHitTestVisible="False"/>
+                    </Grid>
                 </Grid>
 
                 <!-- Only shown at all once paired with a transmitter PC (see
@@ -693,6 +709,8 @@
                                 <TextBlock x:Name="TrimStatusText" Grid.Column="4" Text="" FontSize="11" Foreground="{DynamicResource Text2}" VerticalAlignment="Center"/>
                             </Grid>
                             <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+                                <Button x:Name="PreviewLoopButton" Content="Preview" Style="{StaticResource FlatButton}" Margin="0,0,8,0" Click="PreviewLoopButton_Click"
+                                        ToolTip="Loop playback between Set start and Set end"/>
                                 <Button x:Name="TrimReplaceButton" Content="Replace original" Style="{StaticResource FlatButton}" Margin="0,0,8,0" Click="TrimReplace_Click"/>
                                 <Button x:Name="TrimSaveNewButton" Content="Save as new clip" Style="{StaticResource FlatButton}" Margin="0,0,8,0" Click="TrimSaveNew_Click"/>
                                 <Button Content="Cancel" Style="{StaticResource IconButton}" Margin="0" Click="TrimCancel_Click"/>
@@ -704,6 +722,7 @@
                                 <ColumnDefinition Width="Auto"/>
                                 <ColumnDefinition Width="Auto"/>
                                 <ColumnDefinition/>
+                                <ColumnDefinition Width="Auto"/>
                                 <ColumnDefinition Width="Auto"/>
                                 <ColumnDefinition Width="Auto"/>
                                 <ColumnDefinition Width="Auto"/>
@@ -743,13 +762,17 @@
                                        Foreground="{DynamicResource Text1}" VerticalAlignment="Center" Margin="10,0,14,0"/>
                             <ComboBox x:Name="AudioTrackCombo" Grid.Column="4" Width="120" Style="{StaticResource ModernComboBox}" Margin="0,0,10,0" Visibility="Collapsed"
                                       DisplayMemberPath="Name" SelectedValuePath="Id" SelectionChanged="AudioTrackCombo_SelectionChanged" ToolTip="Audio track"/>
+                            <Button x:Name="PlayerSpeedButton" Grid.Column="5" Style="{StaticResource TileButton}" Padding="10,10"
+                                    VerticalAlignment="Center" Click="PlayerSpeedButton_Click" ToolTip="Playback speed">
+                                <TextBlock x:Name="PlayerSpeedText" Text="1x" FontSize="12" FontWeight="Bold" Foreground="{DynamicResource Text1}"/>
+                            </Button>
                             <!-- Slider starts Collapsed inside a Popup anchored to this button (same
                                  Placement="Top" pattern as SeekTooltipPopup above, already proven to
                                  render correctly above the video from inside this same transport bar);
                                  opens on hovering either the button or the slider itself, closes on a
                                  short debounce once the mouse leaves both: PlayerVolumeArea_MouseEnter/
                                  Leave, wired to both, handles that. -->
-                            <Button x:Name="PlayerVolumeButton" Grid.Column="5" Style="{StaticResource TileButton}" Padding="10"
+                            <Button x:Name="PlayerVolumeButton" Grid.Column="6" Style="{StaticResource TileButton}" Padding="10"
                                     VerticalAlignment="Center" Click="PlayerVolumeButton_Click"
                                     MouseEnter="PlayerVolumeArea_MouseEnter" MouseLeave="PlayerVolumeArea_MouseLeave" ToolTip="Volume">
                                 <Grid>
@@ -768,7 +791,7 @@
                                     </Popup>
                                 </Grid>
                             </Button>
-                            <Button x:Name="PlayerFullscreenButton" Grid.Column="6" Style="{StaticResource TileButton}" Padding="14"
+                            <Button x:Name="PlayerFullscreenButton" Grid.Column="7" Style="{StaticResource TileButton}" Padding="14"
                                     VerticalAlignment="Center" Click="ToggleFullscreen_Click" ToolTip="Fullscreen">
                                 <Path x:Name="PlayerFullscreenIcon" Data="M7,14H5v5h5v-2H7V14zM5,10h2V7h3V5H5V10zM17,17h-3v2h5v-5h-2V17zM14,5v2h3v3h2V5H14z"
                                       Fill="{DynamicResource Text1}" Width="13" Height="13" Stretch="Uniform"/>
@@ -979,7 +1002,7 @@
                         <Border Style="{StaticResource SettingsRow}" BorderThickness="0">
                             <StackPanel>
                                 <TextBlock Text="Theme" FontSize="13" FontWeight="Bold" Foreground="{DynamicResource Text0}"/>
-                                <TextBlock Text="Applies everywhere -- the HUD and every small overlay window." FontSize="11" Foreground="{DynamicResource Text2}" Margin="0,3,0,14" TextWrapping="Wrap"/>
+                                <TextBlock Text="Applies to the HUD and every small overlay window." FontSize="11" Foreground="{DynamicResource Text2}" Margin="0,3,0,14" TextWrapping="Wrap"/>
                                 <StackPanel Orientation="Horizontal">
                                     <!-- Each swatch is a tiny fixed mockup of that theme's own real
                                          palette (matching Theme.Dark.xaml/Theme.Light.xaml's literal
@@ -1125,7 +1148,7 @@
                                         </Grid>
                                     </StackPanel>
                                     <TextBlock x:Name="PluginStatusRemoteNotice" Visibility="Collapsed"
-                                               Text="OBS is on a different PC -- these two check/update the PC this Backtrack is running on, not the transmitter. See &quot;Transmitter's plugins&quot; below instead."
+                                               Text="OBS is on a different PC, so these two check/update the PC this Backtrack is running on, not the transmitter. See &quot;Transmitter's plugins&quot; below instead."
                                                FontSize="10.5" Foreground="{DynamicResource Rec}" TextWrapping="Wrap" Margin="0,0,0,4"/>
                                 </StackPanel>
                                 <Grid Margin="0,10,0,0">
@@ -1223,7 +1246,7 @@
                             </Grid>
                         </Border>
                         <StackPanel Margin="0,0,0,10">
-                            <TextBlock Text="How much footage each Source Record filter keeps armed and flushes to disk in one shot on every save -- not the same as the trimmed clip length below. Longer reaches back further but writes more all at once; 30 min is a safe default, up to 60 min if your RAM disk (and its actual encoder bitrate) can take it."
+                            <TextBlock Text="How much footage each Source Record filter keeps armed and writes to disk on every save (not the trimmed clip length below). 30 min is a safe default; raise it if your storage and encoder bitrate can keep up."
                                        FontSize="11" Foreground="{DynamicResource Text2}" TextWrapping="Wrap" Margin="0,0,0,8"/>
                             <Slider x:Name="BufferDurationSlider" Minimum="1" Maximum="60" TickFrequency="1" IsSnapToTickEnabled="True" ValueChanged="BufferDurationSlider_ValueChanged"/>
                             <TextBlock x:Name="BufferDurationWarningText" FontSize="10.5" Foreground="{DynamicResource Rec}" TextWrapping="Wrap" Visibility="Collapsed" Margin="0,6,0,0"/>
@@ -1232,13 +1255,13 @@
 
                         <TextBlock Text="BUFFERS" Style="{StaticResource SettingsSectionHeader}"/>
                         <StackPanel Margin="0,0,0,10">
-                            <TextBlock Text="Hide a buffer to drop it from the &quot;Save which buffer?&quot; screen -- it keeps buffering and can still be saved from its own OBS hotkey, it just won't show as a button here until you turn it back on."
+                            <TextBlock Text="Enable or disable a buffer, and set its destination folder."
                                        FontSize="11" Foreground="{DynamicResource Text2}" TextWrapping="Wrap" Margin="0,0,0,10"/>
                             <StackPanel x:Name="BufferVisibilityPanel"/>
                         </StackPanel>
                         <TextBlock Text="RECORDINGS" Style="{StaticResource SettingsSectionHeader}"/>
                         <StackPanel Margin="0,0,0,10">
-                            <TextBlock Text="Configure destination folders for each Source Record filter tracked by OBS."
+                            <TextBlock Text="Enable or disable a recording source, and set its destination folder."
                                        FontSize="11" Foreground="{DynamicResource Text2}" TextWrapping="Wrap" Margin="0,0,0,10"/>
                             <StackPanel x:Name="RecordFolderPanel"/>
                         </StackPanel>
@@ -1252,7 +1275,7 @@
                                 </Grid.ColumnDefinitions>
                                 <StackPanel VerticalAlignment="Center" Margin="0,0,16,0">
                                     <TextBlock Text="OBS is on a different PC" FontSize="13" FontWeight="Bold" Foreground="{DynamicResource Text0}"/>
-                                    <TextBlock Text="e.g. a separate stream/broadcast PC -- off means OBS on this same PC" FontSize="11" Foreground="{DynamicResource Text2}" TextWrapping="Wrap" Margin="0,3,0,0"/>
+                                    <TextBlock Text="e.g. a separate stream/broadcast PC. Off means OBS runs on this PC." FontSize="11" Foreground="{DynamicResource Text2}" TextWrapping="Wrap" Margin="0,3,0,0"/>
                                 </StackPanel>
                                 <ToggleButton x:Name="ObsRemoteToggle" Grid.Column="1" Style="{StaticResource AppToggle}" VerticalAlignment="Center" Click="ObsRemoteToggle_Click"/>
                             </Grid>
@@ -1284,6 +1307,21 @@
                                     <TextBlock x:Name="ShareClipsStatusText" Text="Off" FontSize="11" Foreground="{DynamicResource Text2}" Margin="0,3,0,0" TextWrapping="Wrap"/>
                                 </StackPanel>
                                 <ToggleButton x:Name="ShareClipsToggle" Grid.Column="1" Style="{StaticResource AppToggle}" VerticalAlignment="Center" Click="ShareClipsToggle_Click"/>
+                            </Grid>
+                        </Border>
+                        <!-- Collapsed whenever no device is currently authorized to pull clips
+                             from this PC; RefreshShareClipsUi is what shows/hides this. -->
+                        <Border x:Name="AuthorizedDeviceRow" Style="{StaticResource SettingsRow}" BorderThickness="0" Visibility="Collapsed">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <StackPanel VerticalAlignment="Center">
+                                    <TextBlock Text="Connected device" FontSize="11" FontWeight="Bold" Foreground="{DynamicResource Text1}"/>
+                                    <TextBlock x:Name="AuthorizedDeviceNameText" Text="" FontSize="13" FontWeight="Bold" Foreground="{DynamicResource Text0}" Margin="0,3,0,0" TextWrapping="Wrap"/>
+                                </StackPanel>
+                                <Button x:Name="DeauthorizeButton" Grid.Column="1" Content="Deauthorize" Style="{StaticResource FlatButton}" VerticalAlignment="Center" Click="DeauthorizeButton_Click"/>
                             </Grid>
                         </Border>
                         <Border Style="{StaticResource SettingsRow}">
@@ -1332,6 +1370,20 @@
                                 <Button x:Name="HotkeyCaptureButton" Grid.Column="1" Content="Ctrl+Alt+G" Style="{StaticResource FlatButton}" VerticalAlignment="Center" Click="HotkeyCaptureButton_Click"/>
                             </Grid>
                         </Border>
+                        <Border Style="{StaticResource SettingsRow}" BorderThickness="0">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <StackPanel VerticalAlignment="Center">
+                                    <TextBlock Text="Show recent clips" FontSize="13" FontWeight="Bold" Foreground="{DynamicResource Text0}"/>
+                                    <TextBlock Text="A small floating, draggable strip showing your last few clips. Click one to open it, right-click for the same options as Gallery."
+                                               FontSize="11" Foreground="{DynamicResource Text2}" Margin="0,3,0,0" TextWrapping="Wrap"/>
+                                </StackPanel>
+                                <ToggleButton x:Name="ShowRecentClipsToggle" Grid.Column="1" Style="{StaticResource AppToggle}" VerticalAlignment="Center" Click="ShowRecentClipsToggle_Click"/>
+                            </Grid>
+                        </Border>
 
                         <!-- Collapsed by default, and kept last: this is the RAM disk stuff, which most
                              people never need to touch and shouldn't have to scroll past to reach the
@@ -1343,7 +1395,7 @@
                         <StackPanel x:Name="ExperimentalContent" Visibility="Collapsed" Margin="0,10,0,0">
                             <TextBlock Text="RAM DISK" FontSize="11" FontWeight="Bold" Foreground="{DynamicResource Text1}" Margin="0,0,0,10"/>
                             <TextBlock x:Name="RamDiskRemoteNotice" Visibility="Collapsed"
-                                       Text="OBS is on a different PC right now, so a RAM disk mounted here wouldn't be the one OBS actually writes to. This section is disabled -- use &quot;Transmitter's RAM disk&quot; below instead, which controls it on the PC that's actually running OBS."
+                                       Text="OBS is on a different PC right now, so a RAM disk mounted here wouldn't be the one OBS actually writes to. This section is disabled; use &quot;Transmitter's RAM disk&quot; below instead, which controls it on the PC that's actually running OBS."
                                        FontSize="11" Foreground="{DynamicResource Rec}" TextWrapping="Wrap" Margin="0,0,0,10"/>
                             <StackPanel x:Name="LocalRamDiskSection">
                                 <Border Style="{StaticResource SettingsRow}" BorderThickness="0">
@@ -1360,7 +1412,7 @@
                                     </Grid>
                                 </Border>
                                 <StackPanel x:Name="RamDiskFields" Visibility="Collapsed" Margin="0,14,0,6">
-                                    <TextBlock Text="Uses ImDisk (free, open source) to create a virtual RAM drive. Point OBS's Replay Buffer output path (Settings &gt; Output &gt; Replay Buffer) at the drive letter below -- that's a one-time manual step, since OBS has no API for Backtrack to set it automatically."
+                                    <TextBlock Text="Uses ImDisk (free, open source) to create a virtual RAM drive. Point OBS's Replay Buffer output path (Settings &gt; Output &gt; Replay Buffer) at the drive letter below. That's a one-time manual step; OBS has no API for Backtrack to set it automatically."
                                                FontSize="11" Foreground="{DynamicResource Text2}" TextWrapping="Wrap" Margin="0,0,0,10"/>
                                     <TextBlock Text="Drive letter and size (MB)" FontSize="11" FontWeight="Bold" Foreground="{DynamicResource Text1}" Margin="0,0,0,6"/>
                                     <Grid Margin="0,0,0,6">
@@ -1372,7 +1424,7 @@
                                         <TextBox x:Name="RamDiskDriveBox" Background="{DynamicResource RowBg}" Foreground="{DynamicResource Text0}" CaretBrush="{DynamicResource Text0}" BorderThickness="0" Padding="10,8" MaxLength="1" TextAlignment="Center"/>
                                         <TextBox x:Name="RamDiskSizeBox" Grid.Column="2" Background="{DynamicResource RowBg}" Foreground="{DynamicResource Text0}" CaretBrush="{DynamicResource Text0}" BorderThickness="0" Padding="10,8"/>
                                     </Grid>
-                                    <TextBlock Text="Start small and raise it once you've confirmed OBS is actually writing there -- a full buffer at high bitrate can need several GB."
+                                    <TextBlock Text="Start small and raise it once you've confirmed OBS is actually writing there. A full buffer at high bitrate can need several GB."
                                                FontSize="10.5" Foreground="{DynamicResource Text2}" TextWrapping="Wrap" Margin="0,0,0,10"/>
                                     <Grid Margin="0,0,0,10">
                                         <Grid.ColumnDefinitions>
@@ -1447,10 +1499,63 @@
                                     </Grid.ColumnDefinitions>
                                     <StackPanel VerticalAlignment="Center">
                                         <TextBlock Text="Enable animations" FontSize="13" FontWeight="Bold" Foreground="{DynamicResource Text0}"/>
-                                        <TextBlock Text="Fade/scale transitions between screens and when opening/closing the overlay. Off by default -- can look smooth or noticeably janky depending on your hardware and what's running underneath (a game in particular)."
+                                        <TextBlock Text="Fade/scale transitions between screens and when opening/closing the overlay. Off by default; can look janky depending on your hardware and what's running underneath (a game in particular)."
                                                    FontSize="11" Foreground="{DynamicResource Text2}" Margin="0,3,0,0" TextWrapping="Wrap"/>
                                     </StackPanel>
                                     <ToggleButton x:Name="EnableAnimationsToggle" Grid.Column="1" Style="{StaticResource AppToggle}" VerticalAlignment="Center" Click="EnableAnimationsToggle_Click"/>
+                                </Grid>
+                            </Border>
+
+                            <TextBlock Text="DIAGNOSTICS" FontSize="11" FontWeight="Bold" Foreground="{DynamicResource Text1}" Margin="0,24,0,10"/>
+                            <Border Style="{StaticResource SettingsRow}" BorderThickness="0">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel VerticalAlignment="Center">
+                                        <TextBlock Text="Diagnostic log file" FontSize="13" FontWeight="Bold" Foreground="{DynamicResource Text0}"/>
+                                        <TextBlock Text="Writes what already shows in the bottom-right overlay log to a real file on disk too, so it survives a restart instead of only ever being a glance at recent activity."
+                                                   FontSize="11" Foreground="{DynamicResource Text2}" Margin="0,3,0,0" TextWrapping="Wrap"/>
+                                    </StackPanel>
+                                    <ToggleButton x:Name="DiagnosticLogToggle" Grid.Column="1" Style="{StaticResource AppToggle}" VerticalAlignment="Center" Click="DiagnosticLogToggle_Click"/>
+                                </Grid>
+                            </Border>
+                            <Button x:Name="OpenDiagnosticLogButton" Content="Open log file" Style="{StaticResource FlatButton}" HorizontalAlignment="Left"
+                                    Margin="0,8,0,0" Visibility="Collapsed" Click="OpenDiagnosticLogButton_Click"/>
+
+                            <Border Style="{StaticResource SettingsRow}" BorderThickness="0" Margin="0,14,0,0">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel VerticalAlignment="Center">
+                                        <TextBlock Text="Developer mode" FontSize="13" FontWeight="Bold" Foreground="{DynamicResource Text0}"/>
+                                        <TextBlock Text="Errors get logged (and shown in dialogs) with full detail, stack trace included. Turns the diagnostic log file on automatically."
+                                                   FontSize="11" Foreground="{DynamicResource Text2}" Margin="0,3,0,0" TextWrapping="Wrap"/>
+                                        <TextBlock Text="Enabling this will disable Backtrack updates." FontSize="11" FontWeight="Bold"
+                                                   Foreground="{DynamicResource Rec}" Margin="0,3,0,0" TextWrapping="Wrap"/>
+                                        <TextBlock x:Name="DeveloperModeLockedNoteText" Visibility="Collapsed"
+                                                   Text="Turned on automatically: Backtrack noticed this isn't the installed copy. Feel free to turn it back off; this only happens once."
+                                                   FontSize="11" Foreground="{DynamicResource Text2}" Margin="0,3,0,0" TextWrapping="Wrap"/>
+                                    </StackPanel>
+                                    <ToggleButton x:Name="DeveloperModeToggle" Grid.Column="1" Style="{StaticResource AppToggle}" VerticalAlignment="Center" Click="DeveloperModeToggle_Click"/>
+                                </Grid>
+                            </Border>
+
+                            <Border Style="{StaticResource SettingsRow}" BorderThickness="0" Margin="0,14,0,0">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel VerticalAlignment="Center">
+                                        <TextBlock Text="Disable hardware acceleration" FontSize="13" FontWeight="Bold" Foreground="{DynamicResource Text0}"/>
+                                        <TextBlock Text="Forces Backtrack's own rendering onto the CPU instead of the GPU. Only worth trying for actual visual glitches on unusual GPU/driver setups. Makes rendering slower, not faster, and takes effect after restarting."
+                                                   FontSize="11" Foreground="{DynamicResource Text2}" Margin="0,3,0,0" TextWrapping="Wrap"/>
+                                    </StackPanel>
+                                    <ToggleButton x:Name="DisableHardwareAccelToggle" Grid.Column="1" Style="{StaticResource AppToggle}" VerticalAlignment="Center" Click="DisableHardwareAccelToggle_Click"/>
                                 </Grid>
                             </Border>
                         </StackPanel>
