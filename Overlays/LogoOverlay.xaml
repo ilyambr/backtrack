@@ -35,12 +35,12 @@
     <Grid>
         <Rectangle x:Name="IlyambrLogo" Width="160" Height="46" Opacity="0" CacheMode="BitmapCache">
             <Rectangle.Fill>
-                <ImageBrush ImageSource="Assets/ilyambr.png" Stretch="Uniform" Opacity="0.7"/>
+                <ImageBrush ImageSource="/Assets/ilyambr.png" Stretch="Uniform" Opacity="0.7"/>
             </Rectangle.Fill>
         </Rectangle>
         <Rectangle x:Name="BacktrackLogo" Width="160" Height="46" Opacity="0" CacheMode="BitmapCache">
             <Rectangle.Fill>
-                <ImageBrush ImageSource="Assets/logo.png" Stretch="Uniform" Opacity="0.7"/>
+                <ImageBrush ImageSource="/Assets/logo.png" Stretch="Uniform" Opacity="0.7"/>
             </Rectangle.Fill>
         </Rectangle>
     </Grid>

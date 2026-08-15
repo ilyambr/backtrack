@@ -82,6 +82,34 @@ public partial class ToastOverlay : Window
     public void ShowEncoderOverload(string summary) =>
         Show(GlyphIcon("⚠", Warning), Warning, "Encoder overloaded", summary);
 
+    /// <summary>
+    /// 10s, not the usual 4s -- this one means "whatever you were about to
+    /// do with that PC's clips just stopped working," worth a longer look
+    /// than a routine confirmation toast. Same red warning-triangle glyph
+    /// as StatusOverlay's own ObsDisconnectedBadge (Google Material Icons,
+    /// Apache 2.0), a real vector Path rather than GlyphIcon's Unicode
+    /// character so it's a pixel-exact visual match, not just similar.
+    /// </summary>
+    public void ShowRemotePcDisconnected(string ip)
+    {
+        // Font Awesome solid "triangle-exclamation" (CC BY 4.0), not Google
+        // Material's outline glyph originally used here -- see
+        // StatusOverlay.xaml's ObsDisconnectedBadge comment for why (the
+        // outline "!" is a hairline stroke, invisible at small sizes; this
+        // one cuts it as solid negative space out of a filled triangle).
+        var icon = new Path
+        {
+            Data = Geometry.Parse("F1 M256 32c14.2 0 27.3 7.5 34.5 19.8l216 368c7.3 12.4 7.3 27.7 .2 40.1S486.3 480 472 480L40 480c-14.3 0-27.6-7.7-34.7-20.1s-7-27.8 .2-40.1l216-368C228.7 39.5 241.8 32 256 32zm0 128c-13.3 0-24 10.7-24 24l0 112c0 13.3 10.7 24 24 24s24-10.7 24-24l0-112c0-13.3-10.7-24-24-24zm32 224a32 32 0 1 0 -64 0 32 32 0 1 0 64 0z"),
+            Fill = Rec,
+            Width = 16,
+            Height = 16,
+            Stretch = Stretch.Uniform,
+            Margin = new Thickness(0, 1, 10, 0),
+            VerticalAlignment = VerticalAlignment.Top,
+        };
+        Show(icon, Rec, "Remote PC Disconnected", $"{ip} lost connection.", durationSec: 10.0);
+    }
+
     public void ShowStreaming(bool started)
     {
         // Same real-Ellipse-for-the-started-dot reasoning as ShowRecording above.
@@ -463,7 +491,7 @@ public partial class ToastOverlay : Window
         timer.Start();
     }
 
-    private void Show(UIElement icon, Brush accentColor, string message, string? subMessage)
+    private void Show(UIElement icon, Brush accentColor, string message, string? subMessage, double durationSec = 4.0)
     {
         IntPtr hwnd = new WindowInteropHelper(this).Handle;
         if (hwnd != IntPtr.Zero)
@@ -513,7 +541,6 @@ public partial class ToastOverlay : Window
 
         ToastStack.Children.Insert(0, toast);
 
-        const double durationSec = 4.0;
         var startTime = DateTime.UtcNow;
         var timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(16) }; // 60 FPS
 

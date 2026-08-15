@@ -121,7 +121,11 @@ public partial class App : Application
         // The status overlay and toast notifications are always visible,
         // independent of the hotkey-summoned HUD -- create and show them first.
         _status = new StatusOverlay();
-        _status.Show();
+        // Off at startup if the user last had it hidden (via the tray icon's
+        // own toggle or Settings' "Show status indicator") -- see
+        // AppSettings.ShowStatusIndicator's own comment.
+        if (startupSettings.ShowStatusIndicator)
+            _status.Show();
 
         _toasts = new ToastOverlay();
         _toasts.Show();

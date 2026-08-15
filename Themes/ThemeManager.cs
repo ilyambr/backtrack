@@ -23,12 +23,19 @@ public static class ThemeManager
     public static void Apply(AppTheme theme)
     {
         Current = theme;
+        // Root-relative ("/Themes/...", not "Theme.Dark.xaml") -- a bare
+        // relative Uri resolves against the CALLING code's own location,
+        // which happens to still work here since ThemeManager.cs lives in
+        // the same Themes/ folder as the XAML files it's loading, but a
+        // leading slash is the actually-correct, location-independent form
+        // for a pack URI and doesn't silently break if either one ever
+        // moves again on its own.
         string file = theme switch
         {
-            AppTheme.Light => "Theme.Light.xaml",
-            AppTheme.Yami => "Theme.Yami.xaml",
-            AppTheme.Amoled => "Theme.Amoled.xaml",
-            _ => "Theme.Dark.xaml",
+            AppTheme.Light => "/Themes/Theme.Light.xaml",
+            AppTheme.Yami => "/Themes/Theme.Yami.xaml",
+            AppTheme.Amoled => "/Themes/Theme.Amoled.xaml",
+            _ => "/Themes/Theme.Dark.xaml",
         };
         var dict = new ResourceDictionary { Source = new Uri(file, UriKind.Relative) };
 
