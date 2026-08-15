@@ -3086,8 +3086,17 @@ public partial class MainWindow : Window
         // the menu rather than guessing.
         try
         {
+            // Same "not connected to OBS" screen Save Replay already shows
+            // (LoadRecordRowsAsync's own early-return message) -- this used
+            // to just silently return here instead, so clicking Start
+            // Recording while disconnected did nothing at all, not even
+            // navigate to the screen.
             if (!_obs.IsConnected)
+            {
+                ShowScreen(Screen.StartRecord);
+                _ = LoadRecordRowsAsync();
                 return;
+            }
 
             RecordStatus mainStatus = await _obs.GetRecordStatusAsync();
             List<RecordRow> activeRows = (await _obs.ListRecordRowsAsync()).Where(r => r.Status == RecordStatusRecording).ToList();
@@ -7360,7 +7369,27 @@ public partial class MainWindow : Window
 
         UpdateStatusIndicatorPreview();
 
+        // Self-heal, not just lock: Developer Mode may have been turned on
+        // in a PRIOR session, before this forced-auto-update-disable feature
+        // existed (or from a settings.json saved by an older build), so
+        // DisableBacktrackAutoUpdate itself can still be false on disk even
+        // though DeveloperModeEnabled is true. Reading it here without this
+        // meant the toggle rendered visibly OFF despite being correctly
+        // locked (IsEnabled=false) -- the lock and the checked-state were
+        // being sourced from two different truths. Force them back in sync
+        // here too, the same way SetDeveloperModeEnabled does at the moment
+        // the dev-mode toggle itself gets clicked.
+        if (_settings.DeveloperModeEnabled && !_settings.DisableBacktrackAutoUpdate)
+        {
+            _settings.DisableBacktrackAutoUpdate = true;
+            _settings.Save();
+        }
         DisableBacktrackAutoUpdateToggle.IsChecked = _settings.DisableBacktrackAutoUpdate;
+        // Locked ON while Developer Mode is already active from a previous
+        // session -- see SetDeveloperModeEnabled's own comment; this covers
+        // the case where Settings is opened fresh with dev mode already on,
+        // not just the moment the dev mode toggle itself gets clicked.
+        DisableBacktrackAutoUpdateToggle.IsEnabled = !_settings.DeveloperModeEnabled;
         DisablePluginAutoUpdateToggle.IsChecked = _settings.DisablePluginAutoUpdate;
         HotkeyCaptureButton.Content = FormatHotkey((GlobalHotkey.Modifiers)_settings.HotkeyModifiers, (uint)_settings.HotkeyVirtualKey);
 
@@ -8074,6 +8103,19 @@ public partial class MainWindow : Window
         // whatever's already logging independent of dev mode.
         if (enabled && !_settings.DiagnosticLogEnabled)
             SetDiagnosticLogEnabled(true);
+
+        // Developer Mode forces "Disable Backtrack auto-updates" ON and
+        // locks it (checked, IsEnabled=false, can't be clicked) -- a dev
+        // build auto-updating itself over the developer's own local build is
+        // never what's wanted while actively developing against it. Unlike
+        // the diagnostic log above, this one IS undone automatically when
+        // Developer Mode goes back off, since there's no reason to keep
+        // auto-updates disabled once dev mode itself is no longer the
+        // reason they were.
+        _settings.DisableBacktrackAutoUpdate = enabled;
+        _settings.Save();
+        DisableBacktrackAutoUpdateToggle.IsChecked = enabled;
+        DisableBacktrackAutoUpdateToggle.IsEnabled = !enabled;
     }
 
     private void DisableHardwareAccelToggle_Click(object sender, RoutedEventArgs e)
