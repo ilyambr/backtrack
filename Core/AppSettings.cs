@@ -37,6 +37,19 @@ public sealed class AppSettings
 
     public bool ShowDisclaimer { get; set; } = true;
 
+    // Mirrors the tray icon's own "Hide Status Overlay"/"Show Status Overlay"
+    // menu item -- either toggling this in Settings or from the tray flips
+    // the same underlying window and this same setting, so both stay in
+    // sync and the choice persists across restarts (the tray toggle alone
+    // used to be runtime-only, resetting to visible on every launch).
+    public bool ShowStatusIndicator { get; set; } = true;
+
+    // Defaults match the status indicator's original hardcoded shape/position
+    // (horizontal strip, top-right) so upgrading doesn't move it. See the
+    // enums' own comments (StatusOverlay.xaml.cs) for what each value means.
+    public StatusIndicatorOrientation StatusIndicatorOrientation { get; set; } = StatusIndicatorOrientation.Horizontal;
+    public StatusIndicatorLocation StatusIndicatorLocation { get; set; } = StatusIndicatorLocation.TopRight;
+
     // Both off by default (auto-update stays on unless explicitly turned off).
     // Only gate the automatic startup check in CheckForUpdatesAsync -- the
     // "Check now" button always still works regardless of either, same as

@@ -181,6 +181,8 @@ public partial class MainWindow : Window
     private TimeSpan? _trimStart;
     private TimeSpan? _trimEnd;
     private bool _previewLooping;
+    private enum TrimDragMode { None, Start, End, Seek }
+    private TrimDragMode _trimDragMode = TrimDragMode.None;
 
     // Playback speed -- cycled by PlayerSpeedButton, not a slider; a small
     // fixed set covers the actual use cases here (slow-mo review, skimming a
@@ -203,6 +205,14 @@ public partial class MainWindow : Window
     private bool _galleryIsRemote;
     // Relative to the remote PC's own ClipsFolder root; null means "at that root".
     private string? _currentRemoteGalleryFolder;
+    // Edge-triggered ("only when it actually changes") -- starts false so
+    // the very first failed remote gallery load (before ever successfully
+    // reaching that PC this session) doesn't fire a "lost connection" toast
+    // for a connection that never actually existed yet; the inline Gallery
+    // message already covers that case. Only set true after a real
+    // successful listing, only reset (with the toast firing) on the
+    // transition FROM that back to a failed one.
+    private bool _remotePcWasConnected;
 
     private readonly HashSet<string> _selectedClipPaths = new(StringComparer.OrdinalIgnoreCase);
     // Rebuilt every LoadGallery() call -- lets mass actions and the selection-circle
@@ -546,6 +556,10 @@ public partial class MainWindow : Window
         {
             if (!IsVisible) ToggleVisible();
             ShowScreen(Screen.Settings);
+            // See SettingsButton_Click's own comment on why this resets to
+            // the top rather than leaving whatever scroll position the
+            // ScrollViewer happened to still be holding from last time.
+            SettingsScrollHost.ScrollToTop();
         });
         _trayManager.OnOpenClipsFolderRequested += () => Dispatcher.BeginInvoke(() =>
         {
@@ -560,6 +574,20 @@ public partial class MainWindow : Window
             _trayManager.UpdateStatus(_obs.IsConnected, _statusOverlay.IsVisible);
         });
         _trayManager.OnQuitRequested += () => Dispatcher.BeginInvoke(() => Application.Current.Shutdown());
+
+        // Nothing else in this file ever reacted to Windows' resolution
+        // actually changing while the app was already running -- every
+        // window's Left/Top is computed from TargetScreenBounds/
+        // DisplayMonitors at the moment it's shown/moved, but "the moment
+        // it's shown" only happens to run again on real navigation (Show
+        // Screen) or manual triggers (Settings' own Display dropdown).
+        // ToggleVisible's own show path in particular just re-Shows the
+        // window as-is, reusing whatever Left/Top was last computed against
+        // the OLD resolution -- after a shrink, that can be entirely off the
+        // new, smaller desktop, with no way back in except killing the
+        // process. Fires on a non-UI thread (SystemEvents' own message-only
+        // window), hence the Dispatcher hop.
+        SystemEvents.DisplaySettingsChanged += (_, _) => Dispatcher.BeginInvoke(RepositionAllForDisplayChange);
 
         try
         {
@@ -734,7 +762,8 @@ public partial class MainWindow : Window
                 return;
 
             List<FileInfo> recent = Directory.EnumerateFiles(_settings.ClipsFolder, "*.*", SearchOption.AllDirectories)
-                .Where(f => VideoExtensions.Contains(Path.GetExtension(f).ToLowerInvariant()))
+                .Where(f => VideoExtensions.Contains(Path.GetExtension(f).ToLowerInvariant())
+                            && !_pendingDeletePaths.Contains(Path.GetFullPath(f)))
                 .Select(f => new FileInfo(f))
                 .Where(f => TryGetCachedDurationMs(f) is not < 2000)
                 .OrderByDescending(f => f.LastWriteTime)
@@ -803,9 +832,13 @@ public partial class MainWindow : Window
             // DeleteClip's Border param is unused internally (confirmed by
             // reading it -- it only drives QueueDeleteWithUndo(file), which
             // finds/removes cards by matching FileInfo, not this reference),
-            // so a throwaway one here is fine.
+            // so a throwaway one here is fine. No RefreshRecentClipsOverlay()
+            // call needed here -- DeleteClip shows an async confirm dialog
+            // first, so calling it right here would've fired before the user
+            // even answered; QueueDeleteWithUndo itself now refreshes this
+            // overlay once the delete is actually queued (see its own
+            // comment), which covers every entry point, not just this one.
             DeleteClip(file, new Border());
-            RefreshRecentClipsOverlay();
         };
         contextMenu.Items.Add(openFolderItem);
         contextMenu.Items.Add(copyPathItem);
@@ -2053,6 +2086,12 @@ public partial class MainWindow : Window
         _toastOverlay.UpdatePosition(false);
         _updatePrompt.HidePrompt();
         RefreshOverlayLogVisibilityAndMode();
+
+        // See StatusOverlay.IsHudOpen's own comment -- back to normal
+        // taskbar-avoiding behavior (or the fullscreen-app check) now that
+        // the HUD itself is no longer the reason to ignore the taskbar.
+        _statusOverlay.IsHudOpen = false;
+        _statusOverlay.Reposition();
     }
 
     private static void RevealInExplorer(string filePath) =>
@@ -2077,6 +2116,13 @@ public partial class MainWindow : Window
             {
                 _activeConfirmDialog.Close();
                 _activeConfirmDialog = null;
+            }
+            else if (TrimPanel.Visibility == Visibility.Visible)
+            {
+                // Matches BackToGallery_Click's own identical branch: Escape
+                // cancels the trim first, same as fullscreen's own
+                // one-press-just-backs-out-of-the-sub-mode precedent below.
+                TrimCancel_Click(sender, e);
             }
             else if (_isPlayerFullscreen)
             {
@@ -2244,8 +2290,19 @@ public partial class MainWindow : Window
                 Show();
             }
             Activate();
-            _statusOverlay.Show();
-            WindowZOrder.BringToFrontWithoutActivating(new WindowInteropHelper(_statusOverlay).Handle);
+            // Set (and re-Reposition()'d) BEFORE Show() below -- see
+            // StatusOverlay.IsHudOpen's own comment: while the HUD is open
+            // this alone forces the indicator to the true screen edge,
+            // taskbar or not, so it needs to already be true by the time
+            // the window actually becomes visible, not caught up to on the
+            // next 300ms poll tick.
+            _statusOverlay.IsHudOpen = true;
+            _statusOverlay.Reposition();
+            if (_settings.ShowStatusIndicator)
+            {
+                _statusOverlay.Show();
+                WindowZOrder.BringToFrontWithoutActivating(new WindowInteropHelper(_statusOverlay).Handle);
+            }
             _toastOverlay.Show();
             _toastOverlay.UpdatePosition(true);
             WindowZOrder.BringToFrontWithoutActivating(new WindowInteropHelper(_toastOverlay).Handle);
@@ -2669,11 +2726,23 @@ public partial class MainWindow : Window
         _cancelPlayerRename?.Invoke();
 
         // Same "back" affordance does double duty, matching Escape's own
-        // handling right below it: the first press just backs out of
-        // fullscreen (still on this clip, sidebar/controls restored), and
-        // only a press after that actually leaves Player for Gallery.
-        // Jumping straight to Gallery from fullscreen would skip past the
-        // in-between state entirely and feel like the button did too much.
+        // handling right below it: while Trim is open, the first press
+        // cancels the trim (same as TrimCancel_Click) instead of leaving
+        // Player entirely -- jumping straight out from mid-trim would
+        // silently discard whatever the user was doing with no confirmation
+        // at all, worse than fullscreen's own "one press just backs out of
+        // the sub-mode" precedent right below, which this now matches.
+        if (TrimPanel.Visibility == Visibility.Visible)
+        {
+            TrimCancel_Click(sender, e);
+            return;
+        }
+
+        // First press just backs out of fullscreen (still on this clip,
+        // sidebar/controls restored), and only a press after that actually
+        // leaves Player for Gallery. Jumping straight to Gallery from
+        // fullscreen would skip past the in-between state entirely and feel
+        // like the button did too much.
         if (_isPlayerFullscreen)
         {
             ExitPlayerFullscreen();
@@ -2688,8 +2757,17 @@ public partial class MainWindow : Window
             LoadGallery();
     }
 
+    /// <summary>
+    /// Shared by the tray icon's "Hide/Show Status Overlay" menu item and
+    /// Settings' own "Show status indicator" toggle -- both flip the same
+    /// window and the same persisted setting, so either one stays in sync
+    /// with the other (see AppSettings.ShowStatusIndicator's own comment).
+    /// </summary>
     private void ToggleStatusOverlay()
     {
+        _settings.ShowStatusIndicator = !_statusOverlay.IsVisible;
+        _settings.Save();
+
         if (_statusOverlay.IsVisible)
         {
             _statusOverlay.Hide();
@@ -2699,6 +2777,87 @@ public partial class MainWindow : Window
             _statusOverlay.Show();
             WindowZOrder.BringToFrontWithoutActivating(new WindowInteropHelper(_statusOverlay).Handle);
         }
+
+        if (SettingsPanel.Visibility == Visibility.Visible)
+            ShowStatusIndicatorToggle.IsChecked = _settings.ShowStatusIndicator;
+    }
+
+    private void ShowStatusIndicatorToggle_Click(object sender, RoutedEventArgs e)
+    {
+        ToggleStatusOverlay();
+        _trayManager?.UpdateStatus(_obs.IsConnected, _statusOverlay.IsVisible);
+    }
+
+    private void StatusIndicatorOrientationSelector_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        _settings.StatusIndicatorOrientation = StatusIndicatorOrientationSelector.SelectedItem is ComboBoxItem { Tag: "Vertical" }
+            ? StatusIndicatorOrientation.Vertical
+            : StatusIndicatorOrientation.Horizontal;
+        _settings.Save();
+        _statusOverlay.Reposition();
+        UpdateStatusIndicatorPreview();
+    }
+
+    private void StatusIndicatorLocationSelector_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        // Items are declared in the same TopLeft/TopRight/BottomLeft/BottomRight
+        // order the enum itself is, so SelectedIndex maps straight across --
+        // simpler than a Tag round-trip through Enum.Parse for four values
+        // that won't be reordered independently of the enum.
+        _settings.StatusIndicatorLocation = (StatusIndicatorLocation)StatusIndicatorLocationSelector.SelectedIndex;
+        _settings.Save();
+        _statusOverlay.Reposition();
+        UpdateStatusIndicatorPreview();
+    }
+
+    /// <summary>
+    /// Mirrors StatusOverlay's own ApplyLayout on the small mock badge strip
+    /// in Settings' Preview box, so the corner/orientation combo the user
+    /// just picked is visible immediately without having to go find the real
+    /// (usually click-through, easy to lose track of) indicator on screen.
+    /// </summary>
+    private void UpdateStatusIndicatorPreview()
+    {
+        bool horizontal = _settings.StatusIndicatorOrientation == StatusIndicatorOrientation.Horizontal;
+        bool isLeft = _settings.StatusIndicatorLocation is StatusIndicatorLocation.TopLeft or StatusIndicatorLocation.BottomLeft;
+        bool isTop = _settings.StatusIndicatorLocation is StatusIndicatorLocation.TopLeft or StatusIndicatorLocation.TopRight;
+
+        StatusIndicatorPreviewPanel.Orientation = horizontal ? Orientation.Horizontal : Orientation.Vertical;
+        StatusIndicatorPreviewPanel.HorizontalAlignment = isLeft ? HorizontalAlignment.Left : HorizontalAlignment.Right;
+        StatusIndicatorPreviewPanel.VerticalAlignment = isTop ? VerticalAlignment.Top : VerticalAlignment.Bottom;
+
+        // Matches StatusOverlay's own real 5px gap (see the preview's XAML
+        // comment on why this whole mockup is drawn true-to-scale).
+        Thickness gap = horizontal ? new Thickness(5, 0, 0, 0) : new Thickness(0, 5, 0, 0);
+        for (int i = 0; i < StatusIndicatorPreviewPanel.Children.Count; i++)
+        {
+            if (StatusIndicatorPreviewPanel.Children[i] is FrameworkElement badge)
+                badge.Margin = i == 0 ? default : gap;
+        }
+    }
+
+    /// <summary>
+    /// Keeps the preview box a genuine 16:9 rectangle as the Settings panel
+    /// resizes (window resize, DPI change, scrollbar appearing/disappearing)
+    /// -- WPF has no native "lock aspect ratio" property, so Height is
+    /// derived from the just-measured Width here instead of a flat guess.
+    /// Guarded against a no-op re-set: setting Height fires this same
+    /// SizeChanged again, and while Width doesn't actually change as a
+    /// result (this row's width is driven by the ScrollViewer, not by this
+    /// Border's own Height), re-assigning an unchanged value would still be
+    /// one extra pointless layout pass every time.
+    /// </summary>
+    private void StatusIndicatorPreviewBorder_SizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        if (e.NewSize.Width <= 0)
+            return;
+        double targetHeight = e.NewSize.Width * 9.0 / 16.0;
+        // Height starts as NaN (Auto, unset in XAML) -- Math.Abs(NaN - x) is
+        // itself NaN, which a ">" comparison always treats as false, so the
+        // very first measure pass needs its own explicit check or this
+        // would never fire at all.
+        if (double.IsNaN(StatusIndicatorPreviewBorder.Height) || Math.Abs(StatusIndicatorPreviewBorder.Height - targetHeight) > 0.5)
+            StatusIndicatorPreviewBorder.Height = targetHeight;
     }
 
     /// <summary>Circle = idle (matches the universal "record" glyph); red square = recording (matches "stop").</summary>
@@ -2758,6 +2917,7 @@ public partial class MainWindow : Window
             _statusOverlay.SetReplayOnline(false);
             _statusOverlay.SetMicStatus(MicStatus.Hidden);
             _statusOverlay.SetStreaming(false);
+            _statusOverlay.SetObsDisconnected(true);
             _isStreaming = false;
             UpdateStreamingBoxVisibility();
             return;
@@ -2766,6 +2926,7 @@ public partial class MainWindow : Window
         ConnDot.Fill = (Brush)FindResource("Green");
         ConnStatusText.Text = "OBS Connected";
         ConnStatusText.ToolTip = "Connected to OBS";
+        _statusOverlay.SetObsDisconnected(false);
 
         try
         {
@@ -3029,6 +3190,17 @@ public partial class MainWindow : Window
     private void SettingsButton_Click(object sender, RoutedEventArgs e)
     {
         ShowScreen(Screen.Settings);
+        // A WPF ScrollViewer keeps its own vertical offset across a plain
+        // Visibility toggle -- ShowScreen collapses/re-shows SettingsPanel
+        // rather than tearing it down, so without this, reopening Settings
+        // scrolled halfway down (Status Indicators, Experimental, ...) left
+        // it there instead of back at GENERAL where every visit starts.
+        // NOT reset from DisplaySelector_SelectionChanged's own
+        // ShowScreen(Screen.Settings) call, which re-anchors the window
+        // while ALREADY on this screen mid-interaction with that same
+        // dropdown: resetting scroll there would be a genuine regression,
+        // not a fix.
+        SettingsScrollHost.ScrollToTop();
         LoadSettingsUi();
         _ = LoadBufferVisibilityUi();
         _ = LoadRecordFolderUi();
@@ -4486,6 +4658,14 @@ public partial class MainWindow : Window
         RemoteGalleryListing? listing = await _pairing.ListRemoteGalleryAsync(_currentRemoteGalleryFolder ?? "");
         if (listing is null)
         {
+            // Only on the true->false transition -- see _remotePcWasConnected's
+            // own comment on why a first-ever failed attempt doesn't also
+            // fire this.
+            if (_remotePcWasConnected)
+            {
+                _remotePcWasConnected = false;
+                _toastOverlay.ShowRemotePcDisconnected(_settings.PairedPeerHost ?? _settings.PairedPeerName ?? "The remote PC");
+            }
             GalleryGrid.Children.Add(new TextBlock
             {
                 Text = $"Couldn't reach {_settings.PairedPeerName}'s Backtrack -- make sure it's running and paired.",
@@ -4497,6 +4677,7 @@ public partial class MainWindow : Window
             GalleryStatus.Text = "";
             return;
         }
+        _remotePcWasConnected = true;
 
         // Same filtering as the local LoadGallery -- current folder only, by name.
         string filter = GalleryFilterBox.Text.Trim();
@@ -4963,6 +5144,8 @@ public partial class MainWindow : Window
         _trimStart = null;
         _trimEnd = null;
         TrimPanel.Visibility = Visibility.Collapsed;
+        PlayerTransportRow.Visibility = Visibility.Visible;
+        MoveTransportControlsForTrim(intoTrimRow: false);
         StopPreviewLoop();
         ResetPlaybackSpeed();
         PlayerVideoView.Visibility = Visibility.Visible;
@@ -5578,6 +5761,12 @@ public partial class MainWindow : Window
         string fullPath = Path.GetFullPath(file.FullName);
         _pendingDeletePaths.Add(fullPath);
         LoadGallery();
+        // Same "instantly gone, not just after the undo window expires" shape
+        // as LoadGallery() just above -- RefreshRecentClipsOverlay's own
+        // _pendingDeletePaths filter is what makes this take effect
+        // immediately regardless of which screen the delete was triggered
+        // from (Gallery, Player, or the overlay's own tile menu).
+        RefreshRecentClipsOverlay();
 
         _toastOverlay.ShowDeleteUndo(file.Name,
             onExpire: () =>
@@ -5593,12 +5782,17 @@ public partial class MainWindow : Window
                         LoadGallery();
                     else
                         _ = RefreshGalleryCountAsync();
+                    RefreshRecentClipsOverlay();
                 });
             },
             onUndo: () =>
             {
                 _pendingDeletePaths.Remove(fullPath);
-                Dispatcher.BeginInvoke(() => LoadGallery());
+                Dispatcher.BeginInvoke(() =>
+                {
+                    LoadGallery();
+                    RefreshRecentClipsOverlay();
+                });
             });
     }
 
@@ -5617,6 +5811,8 @@ public partial class MainWindow : Window
         foreach (string fullPath in fullPaths)
             _pendingDeletePaths.Add(fullPath);
         LoadGallery();
+        // See QueueDeleteWithUndo's identical comment.
+        RefreshRecentClipsOverlay();
 
         _toastOverlay.ShowMultiDeleteUndo(files.Count,
             onExpire: () =>
@@ -5639,13 +5835,18 @@ public partial class MainWindow : Window
                         LoadGallery();
                     else
                         _ = RefreshGalleryCountAsync();
+                    RefreshRecentClipsOverlay();
                 });
             },
             onUndo: () =>
             {
                 foreach (string fullPath in fullPaths)
                     _pendingDeletePaths.Remove(fullPath);
-                Dispatcher.BeginInvoke(() => LoadGallery());
+                Dispatcher.BeginInvoke(() =>
+                {
+                    LoadGallery();
+                    RefreshRecentClipsOverlay();
+                });
             });
     }
 
@@ -5740,6 +5941,8 @@ public partial class MainWindow : Window
         _trimStart = null;
         _trimEnd = null;
         TrimPanel.Visibility = Visibility.Collapsed;
+        PlayerTransportRow.Visibility = Visibility.Visible;
+        MoveTransportControlsForTrim(intoTrimRow: false);
         StopPreviewLoop();
         ResetPlaybackSpeed();
 
@@ -6086,6 +6289,14 @@ public partial class MainWindow : Window
             PlayerSeekFill.Width = ratio * trackWidth;
             PlayerSeekThumb.Margin = new Thickness(ratio * trackWidth - 7, 0, 0, 0);
         }
+
+        // Keeps the trim timeline's own playhead moving while it's open --
+        // guarded by _isScrubbing same as everything above (both seek bars
+        // share that one flag), so this never fights a Start/End handle
+        // drag either (those don't touch _isScrubbing at all, only Seek
+        // mode on the trim timeline itself does).
+        if (TrimPanel.Visibility == Visibility.Visible)
+            UpdateTrimTimelineUi();
     }
 
     private void PlayerSeekTrack_MouseEnter(object sender, MouseEventArgs e)
@@ -6540,25 +6751,107 @@ public partial class MainWindow : Window
 
     // ------------------------------------------------------------------ trim
 
+    // Original PlayerTransportRow Grid.Column for each control
+    // MoveTransportControlsForTrim reparents -- restored when moving them
+    // back out of the trim row.
+    private const int PlayPauseButtonHomeColumn = 0;
+    private const int AudioTrackComboHomeColumn = 4;
+    private const int PlayerSpeedButtonHomeColumn = 5;
+    private const int PlayerVolumeButtonHomeColumn = 6;
+    private const int PlayerFullscreenButtonHomeColumn = 7;
+
+    // PlayerTransportButton style fixes Play/Pause at 42x42 (deliberately
+    // oversized for its normal role as the Player's primary control -- see
+    // the style's own comment) -- too big to sit comfortably among the
+    // other trim-row icons, which are ~16px glyphs in a compact bare
+    // button. A local Width/Height override (which wins over the style's
+    // own Setters) shrinks it while it's reparented into the trim row;
+    // explicitly setting it back to the style's real values on the way out
+    // restores it exactly, rather than relying on ClearValue subtlety.
+    private const double PlayPauseButtonNormalSize = 42;
+    private const double PlayPauseButtonTrimSize = 28;
+
+    /// <summary>
+    /// Opening defaults the selection to the WHOLE clip (handles at each
+    /// end) -- there's no "Set start"/"Set end" button anymore to build the
+    /// range up from nothing, so starting from "everything selected, drag
+    /// either handle inward to trim it away" matches how every real editor's
+    /// trim timeline actually opens. PlayerTransportRow itself (current
+    /// time, seek bar, duration) is collapsed entirely while trimming --
+    /// the trim timeline already covers scrubbing and playback looping on
+    /// its own, so none of that earns its vertical space back until Trim
+    /// closes, and collapsing the whole row (not just hiding pieces of it)
+    /// actually shrinks the window instead of leaving empty space.
+    /// Play/Pause and audio track/speed/volume/fullscreen are the
+    /// exception: those five get reparented up onto the trim action row
+    /// instead of just disappearing with the rest of the row (see
+    /// MoveTransportControlsForTrim's own comment).
+    /// </summary>
     private void PlayerTrim_Click(object sender, RoutedEventArgs e)
     {
-        TrimPanel.Visibility = TrimPanel.Visibility == Visibility.Visible ? Visibility.Collapsed : Visibility.Visible;
+        bool opening = TrimPanel.Visibility != Visibility.Visible;
+        TrimPanel.Visibility = opening ? Visibility.Visible : Visibility.Collapsed;
+        PlayerTransportRow.Visibility = opening ? Visibility.Collapsed : Visibility.Visible;
+        MoveTransportControlsForTrim(opening);
+        if (opening)
+        {
+            long lengthMs = _vlcPlayer?.Length ?? 0;
+            _trimStart ??= TimeSpan.Zero;
+            _trimEnd ??= TimeSpan.FromMilliseconds(Math.Max(0, lengthMs));
+            BuildTrimRuler();
+            UpdateTrimTimelineUi();
+        }
+        else
+        {
+            StopPreviewLoop();
+        }
     }
 
-    private void TrimSetStart_Click(object sender, RoutedEventArgs e)
+    /// <summary>
+    /// Moves Play/Pause and the audio track/speed/volume/fullscreen
+    /// controls between PlayerTransportRow and their trim-row homes (the
+    /// same instances, not copies -- WPF can't render one element in two
+    /// places at once). Popups anchored to PlayerSpeedButton/
+    /// PlayerVolumeButton via PlacementTarget={Binding ElementName=...}
+    /// keep working regardless of which panel currently parents the button
+    /// itself. Play/Pause goes to the FRONT of TrimActionButtons (leading
+    /// Preview/Replace/Save/Cancel, same position it leads from in the
+    /// normal transport row) and gets shrunk down to fit there; the other
+    /// four go into TrimTransportExtras, right-aligned same as before.
+    /// </summary>
+    private void MoveTransportControlsForTrim(bool intoTrimRow)
     {
-        if (_vlcPlayer is null)
-            return;
-        _trimStart = TimeSpan.FromMilliseconds(_vlcPlayer.Time);
-        TrimStartText.Text = FormatDuration((long)_trimStart.Value.TotalMilliseconds);
-    }
+        PlayPauseButton.Width = PlayPauseButton.Height = intoTrimRow ? PlayPauseButtonTrimSize : PlayPauseButtonNormalSize;
+        // Loses PlayerTransportButton's own filled-circle background while
+        // in the trim row -- BareIconButton's template is just a
+        // ContentPresenter (see its own comment), so this keeps the same
+        // Play/Pause icon content, just without the surrounding circle,
+        // matching the other trim buttons' own bare look.
+        PlayPauseButton.Style = (Style)FindResource(intoTrimRow ? "BareIconButton" : "PlayerTransportButton");
+        // A right margin only while in the trim row -- PlayerTransportRow's
+        // own gap to PlayerCurrentTime already comes from THAT element's
+        // own left margin, so a margin here too would only double it up.
+        PlayPauseButton.Margin = intoTrimRow ? new Thickness(0, 0, 10, 0) : default;
+        Reparent(PlayPauseButton, intoTrimRow ? TrimActionButtons : PlayerTransportRow, intoTrimRow ? null : PlayPauseButtonHomeColumn, insertAtFront: intoTrimRow);
+        Reparent(AudioTrackCombo, intoTrimRow ? TrimTransportExtras : PlayerTransportRow, intoTrimRow ? null : AudioTrackComboHomeColumn);
+        Reparent(PlayerSpeedButton, intoTrimRow ? TrimTransportExtras : PlayerTransportRow, intoTrimRow ? null : PlayerSpeedButtonHomeColumn);
+        Reparent(PlayerVolumeButton, intoTrimRow ? TrimTransportExtras : PlayerTransportRow, intoTrimRow ? null : PlayerVolumeButtonHomeColumn);
+        Reparent(PlayerFullscreenButton, intoTrimRow ? TrimTransportExtras : PlayerTransportRow, intoTrimRow ? null : PlayerFullscreenButtonHomeColumn);
 
-    private void TrimSetEnd_Click(object sender, RoutedEventArgs e)
-    {
-        if (_vlcPlayer is null)
-            return;
-        _trimEnd = TimeSpan.FromMilliseconds(_vlcPlayer.Time);
-        TrimEndText.Text = FormatDuration((long)_trimEnd.Value.TotalMilliseconds);
+        static void Reparent(FrameworkElement element, Panel newParent, int? gridColumn, bool insertAtFront = false)
+        {
+            if (element.Parent is Panel oldParent && !ReferenceEquals(oldParent, newParent))
+                oldParent.Children.Remove(element);
+            if (gridColumn is int col)
+                Grid.SetColumn(element, col);
+            if (!newParent.Children.Contains(element))
+            {
+                if (insertAtFront)
+                    newParent.Children.Insert(0, element);
+                else
+                    newParent.Children.Add(element);
+            }
+        }
     }
 
     private void TrimCancel_Click(object sender, RoutedEventArgs e)
@@ -6569,7 +6862,218 @@ public partial class MainWindow : Window
         TrimEndText.Text = "0:00";
         TrimStatusText.Text = "";
         TrimPanel.Visibility = Visibility.Collapsed;
+        PlayerTransportRow.Visibility = Visibility.Visible;
+        MoveTransportControlsForTrim(intoTrimRow: false);
         StopPreviewLoop();
+    }
+
+    private void TrimStartHandle_MouseDown(object sender, MouseButtonEventArgs e)
+    {
+        _trimDragMode = TrimDragMode.Start;
+        TrimTimelineTrack.CaptureMouse();
+        // Stops this from also bubbling up to TrimTimelineTrack_MouseDown,
+        // which would otherwise ALSO start a Seek drag from the same click.
+        e.Handled = true;
+    }
+
+    private void TrimEndHandle_MouseDown(object sender, MouseButtonEventArgs e)
+    {
+        _trimDragMode = TrimDragMode.End;
+        TrimTimelineTrack.CaptureMouse();
+        e.Handled = true;
+    }
+
+    /// <summary>Clicking the open track itself (not a handle -- those set e.Handled and never reach here) scrubs playback, same as the normal transport seek bar.</summary>
+    private void TrimTimelineTrack_MouseDown(object sender, MouseButtonEventArgs e)
+    {
+        _trimDragMode = TrimDragMode.Seek;
+        _isScrubbing = true;
+        TrimTimelineTrack.CaptureMouse();
+        ProcessTrimTimelineInput(e.GetPosition(TrimTimelineTrack));
+    }
+
+    private void TrimTimelineTrack_MouseMove(object sender, MouseEventArgs e)
+    {
+        if (_trimDragMode == TrimDragMode.None)
+            return;
+        ProcessTrimTimelineInput(e.GetPosition(TrimTimelineTrack));
+    }
+
+    private void TrimTimelineTrack_MouseUp(object sender, MouseButtonEventArgs e)
+    {
+        if (_trimDragMode == TrimDragMode.None)
+            return;
+
+        bool wasSeek = _trimDragMode == TrimDragMode.Seek;
+        TrimTimelineTrack.ReleaseMouseCapture();
+        TrimHandleTooltipPopup.IsOpen = false;
+        if (wasSeek)
+        {
+            ProcessTrimTimelineInput(e.GetPosition(TrimTimelineTrack), immediate: true);
+            _isScrubbing = false;
+        }
+        _trimDragMode = TrimDragMode.None;
+    }
+
+    private void TrimTimelineTrack_SizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        BuildTrimRuler();
+        UpdateTrimTimelineUi();
+    }
+
+    /// <summary>
+    /// Shared math for all three drag modes -- dragging TrimStartHandle
+    /// clamps to just before the current end (can't drag past it), dragging
+    /// TrimEndHandle clamps to just after the current start, and dragging
+    /// the open track scrubs playback through the same CommitSeek/
+    /// _seekDebounceTimer path the normal transport seek bar uses (see
+    /// ProcessSeekInput's own near-identical shape -- kept as a separate
+    /// method rather than shared, since it reads/writes TrimTimelineTrack's
+    /// own elements, not PlayerSeekTrack's).
+    /// </summary>
+    private void ProcessTrimTimelineInput(Point pos, bool immediate = false)
+    {
+        if (_vlcPlayer is null)
+            return;
+        double trackWidth = TrimTimelineTrack.ActualWidth;
+        if (trackWidth <= 0)
+            return;
+
+        long lengthMs = Math.Max(1, _vlcPlayer.Length);
+        double ratio = Math.Clamp(pos.X / trackWidth, 0.0, 1.0);
+        long ms = (long)(ratio * lengthMs);
+
+        switch (_trimDragMode)
+        {
+            case TrimDragMode.Start:
+            {
+                long endMs = (long)(_trimEnd ?? TimeSpan.FromMilliseconds(lengthMs)).TotalMilliseconds;
+                ms = Math.Clamp(ms, 0, Math.Max(0, endMs - 1));
+                _trimStart = TimeSpan.FromMilliseconds(ms);
+                ShowTrimHandleTooltip(pos.X, ms);
+                break;
+            }
+            case TrimDragMode.End:
+            {
+                long startMs = (long)(_trimStart ?? TimeSpan.Zero).TotalMilliseconds;
+                ms = Math.Clamp(ms, Math.Min(lengthMs, startMs + 1), lengthMs);
+                _trimEnd = TimeSpan.FromMilliseconds(ms);
+                ShowTrimHandleTooltip(pos.X, ms);
+                break;
+            }
+            case TrimDragMode.Seek:
+                _targetSeekMs = ms;
+                PlayerCurrentTime.Text = FormatDuration(ms);
+                if (immediate)
+                {
+                    _seekDebounceTimer.Stop();
+                    if (_vlcPlayer.IsSeekable)
+                        CommitSeek(ms);
+                    else
+                        _seekDebounceTimer.Start();
+                }
+                else
+                {
+                    _seekDebounceTimer.Stop();
+                    _seekDebounceTimer.Start();
+                }
+                break;
+        }
+
+        UpdateTrimTimelineUi();
+    }
+
+    private void ShowTrimHandleTooltip(double x, long ms)
+    {
+        TrimHandleTooltipText.Text = FormatDuration(ms);
+        TrimHandleTooltipPopup.HorizontalOffset = x - 15;
+        TrimHandleTooltipPopup.VerticalOffset = -30;
+        TrimHandleTooltipPopup.IsOpen = true;
+    }
+
+    /// <summary>
+    /// Repositions everything on the trim timeline from current state:
+    /// TrimSelectedRange as a single bright band spanning [start, end]
+    /// over TrimTrackBg's dim base (the standard trim-editor look -- one
+    /// highlighted band reads as "this is what gets kept" more clearly than
+    /// two separate "dimmed before"/"dimmed after" overlays would), the two
+    /// handles centered on their own boundary, and the playhead reflecting
+    /// live playback position. Called on open, every drag-move tick, every
+    /// track resize, and from UpdatePlayerSeekUi's own regular tick so the
+    /// playhead keeps moving while the panel's open and nothing's being
+    /// dragged.
+    /// </summary>
+    private void UpdateTrimTimelineUi()
+    {
+        if (_vlcPlayer is null)
+            return;
+        double trackWidth = TrimTimelineTrack.ActualWidth;
+        if (trackWidth <= 0)
+            return;
+
+        long lengthMs = Math.Max(1, _vlcPlayer.Length);
+        long startMs = (long)(_trimStart ?? TimeSpan.Zero).TotalMilliseconds;
+        long endMs = (long)(_trimEnd ?? TimeSpan.FromMilliseconds(lengthMs)).TotalMilliseconds;
+
+        double startX = Math.Clamp((double)startMs / lengthMs, 0, 1) * trackWidth;
+        double endX = Math.Clamp((double)endMs / lengthMs, 0, 1) * trackWidth;
+
+        TrimSelectedRange.Margin = new Thickness(startX, 0, 0, 0);
+        TrimSelectedRange.Width = Math.Max(0, endX - startX);
+
+        // Clamped to stay fully within [0, trackWidth], not just centered on
+        // startX/endX -- at either extreme (trim start at 0:00, or end at
+        // the very end of the clip) centering the handle exactly ON that
+        // boundary pushes half its own width past the track's edge, which
+        // read as the handle getting cut off by the window itself rather
+        // than just sitting flush against the track's own edge.
+        const double handleWidth = 10;
+        double maxHandleX = Math.Max(0, trackWidth - handleWidth);
+        TrimStartHandle.Margin = new Thickness(Math.Clamp(startX - handleWidth / 2, 0, maxHandleX), 0, 0, 0);
+        TrimEndHandle.Margin = new Thickness(Math.Clamp(endX - handleWidth / 2, 0, maxHandleX), 0, 0, 0);
+
+        const double playheadWidth = 2;
+        double playRatio = Math.Clamp((double)_vlcPlayer.Time / lengthMs, 0, 1);
+        double playheadX = Math.Clamp(playRatio * trackWidth - playheadWidth / 2, 0, Math.Max(0, trackWidth - playheadWidth));
+        TrimPlayhead.Margin = new Thickness(playheadX, 0, 0, 0);
+
+        TrimStartText.Text = FormatDuration(startMs);
+        TrimEndText.Text = FormatDuration(endMs);
+    }
+
+    /// <summary>Evenly-spaced time labels along the top of the timeline -- rebuilt on open and on resize (the label text itself never needs a mid-drag update, only the positions would, and those don't change without a resize).</summary>
+    private void BuildTrimRuler()
+    {
+        TrimRulerCanvas.Children.Clear();
+        if (_vlcPlayer is null)
+            return;
+        double trackWidth = TrimTimelineTrack.ActualWidth;
+        if (trackWidth <= 0)
+            return;
+        long lengthMs = Math.Max(1, _vlcPlayer.Length);
+
+        const int tickCount = 6;
+        for (int i = 0; i < tickCount; i++)
+        {
+            double ratio = i / (double)(tickCount - 1);
+            double x = ratio * trackWidth;
+            long ms = (long)(ratio * lengthMs);
+
+            var tick = new Border { Width = 1, Height = 5, Background = (Brush)FindResource("Hairline") };
+            Canvas.SetLeft(tick, x);
+            Canvas.SetTop(tick, 0);
+            TrimRulerCanvas.Children.Add(tick);
+
+            var label = new TextBlock { Text = FormatDuration(ms), FontSize = 9.5, Foreground = (Brush)FindResource("Text2") };
+            label.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
+            // First/last labels clamp inside the track's own bounds instead
+            // of centering on their tick, which would otherwise overhang off
+            // either edge of the panel.
+            double labelX = i == 0 ? x : i == tickCount - 1 ? x - label.DesiredSize.Width : x - label.DesiredSize.Width / 2;
+            Canvas.SetLeft(label, labelX);
+            Canvas.SetTop(label, 6);
+            TrimRulerCanvas.Children.Add(label);
+        }
     }
 
     private async void TrimReplace_Click(object sender, RoutedEventArgs e) => await RunTrimAsync(replaceOriginal: true);
@@ -6577,7 +7081,7 @@ public partial class MainWindow : Window
     private async void TrimSaveNew_Click(object sender, RoutedEventArgs e) => await RunTrimAsync(replaceOriginal: false);
 
     /// <summary>
-    /// Loops playback between Set start and Set end -- lets the exact
+    /// Loops playback between the two trim handles -- lets the exact
     /// selection get reviewed repeatedly before committing to Replace/Save,
     /// instead of guessing the boundaries, trimming, checking the result,
     /// and re-trimming if they were off. The actual loop check runs off the
@@ -6604,7 +7108,13 @@ public partial class MainWindow : Window
         }
 
         _previewLooping = true;
-        PreviewLoopButton.Content = "Stop preview";
+        // Swaps the icon itself (see the XAML's own comment on
+        // PreviewLoopIcon/PreviewStopIcon) -- NOT PreviewLoopButton.Content,
+        // which used to be a plain string assignment here and would
+        // silently replace the whole icon with literal text the moment
+        // this ran.
+        PreviewLoopIcon.Visibility = Visibility.Collapsed;
+        PreviewStopIcon.Visibility = Visibility.Visible;
         CommitSeek((long)_trimStart.Value.TotalMilliseconds);
         if (!_vlcPlayer.IsPlaying)
             _vlcPlayer.Play();
@@ -6613,7 +7123,8 @@ public partial class MainWindow : Window
     private void StopPreviewLoop()
     {
         _previewLooping = false;
-        PreviewLoopButton.Content = "Preview";
+        PreviewLoopIcon.Visibility = Visibility.Visible;
+        PreviewStopIcon.Visibility = Visibility.Collapsed;
     }
 
     /// <summary>
@@ -6724,8 +7235,13 @@ public partial class MainWindow : Window
                 }
             }
 
-            TrimStatusText.Text = "Done.";
+            // No "Done." status text -- TrimPanel collapses on the very next
+            // line anyway, so it only ever rendered for a single stray
+            // frame, reading as random leftover text near the end of the
+            // timeline rather than a real completion message.
             TrimPanel.Visibility = Visibility.Collapsed;
+            PlayerTransportRow.Visibility = Visibility.Visible;
+            MoveTransportControlsForTrim(intoTrimRow: false);
         }
         catch (Exception ex)
         {
@@ -6829,6 +7345,21 @@ public partial class MainWindow : Window
         ObsPasswordBox.Password = _settings.ObsRemotePassword;
 
         ShowDisclaimerToggle.IsChecked = _settings.ShowDisclaimer;
+        ShowStatusIndicatorToggle.IsChecked = _settings.ShowStatusIndicator;
+        // Unsubscribed/resubscribed around SelectedIndex -- see
+        // OverlayLogModeSelector's identical comment just below; a
+        // programmatic assignment fires SelectionChanged too, which would
+        // otherwise re-save+Reposition() just from opening Settings.
+        StatusIndicatorOrientationSelector.SelectionChanged -= StatusIndicatorOrientationSelector_SelectionChanged;
+        StatusIndicatorOrientationSelector.SelectedIndex = _settings.StatusIndicatorOrientation == StatusIndicatorOrientation.Vertical ? 1 : 0;
+        StatusIndicatorOrientationSelector.SelectionChanged += StatusIndicatorOrientationSelector_SelectionChanged;
+
+        StatusIndicatorLocationSelector.SelectionChanged -= StatusIndicatorLocationSelector_SelectionChanged;
+        StatusIndicatorLocationSelector.SelectedIndex = (int)_settings.StatusIndicatorLocation;
+        StatusIndicatorLocationSelector.SelectionChanged += StatusIndicatorLocationSelector_SelectionChanged;
+
+        UpdateStatusIndicatorPreview();
+
         DisableBacktrackAutoUpdateToggle.IsChecked = _settings.DisableBacktrackAutoUpdate;
         DisablePluginAutoUpdateToggle.IsChecked = _settings.DisablePluginAutoUpdate;
         HotkeyCaptureButton.Content = FormatHotkey((GlobalHotkey.Modifiers)_settings.HotkeyModifiers, (uint)_settings.HotkeyVirtualKey);
@@ -6895,6 +7426,7 @@ public partial class MainWindow : Window
         if (DisplaySelector.SelectedValue is not string deviceName)
             return;
 
+        string? previousDeviceName = _settings.DisplayDeviceName;
         _settings.DisplayDeviceName = deviceName;
         _settings.Save();
 
@@ -6908,6 +7440,124 @@ public partial class MainWindow : Window
         _disclaimer.Reposition();
         _logo.Reposition();
         _toastOverlay.UpdatePosition(true);
+
+        // RecentClipsOverlay was missing from this list entirely.
+        if (_settings.ShowRecentClipsOverlay)
+        {
+            RefreshRecentClipsOverlay();
+            RepositionRecentClipsOverlayForDisplayChange(previousDeviceName);
+        }
+    }
+
+    /// <summary>
+    /// Preserves RELATIVE position (e.g. "near the bottom-right corner")
+    /// across a monitor switch, not the raw absolute pixel offset --
+    /// ClampRecentClipsOverlayOnScreen's plain clamp collapsed a position
+    /// near one monitor's right edge to the far LEFT edge of a second
+    /// monitor sitting further right in virtual-desktop space, since the
+    /// old absolute X was simply less than the new monitor's own minimum X;
+    /// that's the right behavior for a same-monitor resolution SHRINK
+    /// (still used there), but not for actually switching which monitor
+    /// this is on. No-ops (falls back to PositionRecentClipsOverlay's own
+    /// default corner) if the overlay's never been dragged, same as every
+    /// other position-related path here.
+    /// </summary>
+    private void RepositionRecentClipsOverlayForDisplayChange(string? previousDeviceName)
+    {
+        if (_settings.RecentClipsOverlayX is not double x || _settings.RecentClipsOverlayY is not double y)
+        {
+            PositionRecentClipsOverlay();
+            return;
+        }
+
+        Rect oldBounds = DisplayMonitors.ResolveBoundsDiu(previousDeviceName);
+        Rect newBounds = TargetScreenBounds; // already reflects the NEW _settings.DisplayDeviceName, set just above
+
+        double relativeX = oldBounds.Width > 0 ? (x - oldBounds.X) / oldBounds.Width : 0;
+        double relativeY = oldBounds.Height > 0 ? (y - oldBounds.Y) / oldBounds.Height : 0;
+
+        double width = _recentClipsOverlay.ActualWidth > 0 ? _recentClipsOverlay.ActualWidth : 260;
+        double height = _recentClipsOverlay.ActualHeight > 0 ? _recentClipsOverlay.ActualHeight : 100;
+        double newX = newBounds.X + relativeX * newBounds.Width;
+        double newY = newBounds.Y + relativeY * newBounds.Height;
+        // Still clamped afterward -- a relative position can round to just
+        // past the edge once the overlay's own width/height is accounted
+        // for, or the new monitor could be smaller than the old one.
+        double clampedX = Math.Clamp(newX, newBounds.X, Math.Max(newBounds.X, newBounds.X + newBounds.Width - width));
+        double clampedY = Math.Clamp(newY, newBounds.Y, Math.Max(newBounds.Y, newBounds.Y + newBounds.Height - height));
+
+        _recentClipsOverlay.Left = clampedX;
+        _recentClipsOverlay.Top = clampedY;
+        _settings.RecentClipsOverlayX = clampedX;
+        _settings.RecentClipsOverlayY = clampedY;
+        _settings.Save();
+    }
+
+    /// <summary>
+    /// SystemEvents.DisplaySettingsChanged's handler -- the automatic
+    /// counterpart to DisplaySelector_SelectionChanged just above (which
+    /// only fires from a manual "pick a different monitor" in Settings).
+    /// A real Windows resolution change needs the same re-anchoring even
+    /// though the user never touched that dropdown and the HUD might be
+    /// hidden, on any screen, or not even summoned yet.
+    /// </summary>
+    private void RepositionAllForDisplayChange()
+    {
+        try
+        {
+            // ShowScreen recomputes MainWindow's own Left/Top/Width/Height
+            // fresh from TargetScreenBounds every time it runs -- but
+            // ToggleVisible's show path doesn't call it, so without this,
+            // simply reopening the HUD after a resolution change would've
+            // kept reusing Left/Top computed against the OLD screen size,
+            // which after a shrink can land entirely off the new desktop.
+            if (IsVisible)
+                ShowScreen(_lastScreen, skipEntranceAnimation: true);
+
+            _statusOverlay.Reposition();
+            _scrim.Reposition();
+            _disclaimer.Reposition();
+            _logo.Reposition();
+            _toastOverlay.UpdatePosition(true);
+            UpdateStreamingBoxVisibility();
+            ClampRecentClipsOverlayOnScreen();
+        }
+        catch (Exception ex)
+        {
+            // Best effort -- a resolution change is rare and this is purely
+            // a recovery path; a failure here shouldn't be allowed to crash
+            // an otherwise-still-working app.
+            AppLog.WriteError("Reposition after display settings changed", ex);
+        }
+    }
+
+    /// <summary>
+    /// RecentClipsOverlay's saved X/Y is a user-DRAGGED absolute position,
+    /// unlike every other overlay here -- PositionRecentClipsOverlay() would
+    /// just reapply that same now-possibly-off-screen value unchanged, so a
+    /// resolution shrink needs its own clamp back into the new visible
+    /// bounds rather than a plain Reposition() call, which would discard
+    /// the user's chosen spot entirely and snap it back to a corner.
+    /// </summary>
+    private void ClampRecentClipsOverlayOnScreen()
+    {
+        if (_settings.RecentClipsOverlayX is not double x || _settings.RecentClipsOverlayY is not double y)
+            return;
+
+        Rect bounds = TargetScreenBounds;
+        double width = _recentClipsOverlay.ActualWidth > 0 ? _recentClipsOverlay.ActualWidth : 260;
+        double height = _recentClipsOverlay.ActualHeight > 0 ? _recentClipsOverlay.ActualHeight : 100;
+        double clampedX = Math.Clamp(x, bounds.X, Math.Max(bounds.X, bounds.X + bounds.Width - width));
+        double clampedY = Math.Clamp(y, bounds.Y, Math.Max(bounds.Y, bounds.Y + bounds.Height - height));
+
+        _recentClipsOverlay.Left = clampedX;
+        _recentClipsOverlay.Top = clampedY;
+        if (clampedX != x || clampedY != y)
+        {
+            _settings.RecentClipsOverlayX = clampedX;
+            _settings.RecentClipsOverlayY = clampedY;
+            _settings.Save();
+        }
     }
 
     private void ObsRemoteToggle_Click(object sender, RoutedEventArgs e)
