@@ -4668,7 +4668,7 @@ public partial class MainWindow : Window
     {
         try
         {
-            return Directory.Exists(_settings.ClipsFolder)
+            string? newest = Directory.Exists(_settings.ClipsFolder)
                 ? Directory.EnumerateFiles(_settings.ClipsFolder, "*", SearchOption.AllDirectories)
                     .Where(f => VideoExtensions.Contains(Path.GetExtension(f).ToLowerInvariant()))
                     .Select(f => new FileInfo(f))
@@ -4676,6 +4676,13 @@ public partial class MainWindow : Window
                     .FirstOrDefault()
                     ?.FullName
                 : null;
+            // Path.GetFullPath, not just FileInfo.FullName as-is -- matches the same
+            // normalization OpenGalleryFolder/GoUpGalleryFolder already rely on for
+            // comparing paths (see their own Path.GetFullPath(...).TrimEnd(...) calls),
+            // so this side of the comparison can't silently drift out of sync with
+            // dir.FullName/file.FullName at the call sites below over some formatting
+            // difference (trailing separator, etc.) neither side alone would catch.
+            return newest is null ? null : Path.GetFullPath(newest);
         }
         catch
         {
@@ -4777,16 +4784,22 @@ public partial class MainWindow : Window
 
         foreach (DirectoryInfo dir in subfolders)
         {
+            // Path.GetFullPath on dir.FullName too, not just newestClipPath's own
+            // side -- normalizes both to the exact same form GetNewestClipPath
+            // already produces, so this can't miss a match over a formatting
+            // difference neither .FullName alone happens to hit.
+            string dirFull = Path.GetFullPath(dir.FullName);
             // Ancestor check via a trailing separator, not a bare StartsWith
             // -- otherwise a folder named e.g. "Clips" would false-positive
             // match a sibling "Clips2" that happens to share the prefix.
             bool leadsToNewest = newestClipPath is not null
-                && newestClipPath.StartsWith(dir.FullName + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
+                && newestClipPath.StartsWith(dirFull + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
             GalleryGrid.Children.Add(BuildFolderCard(dir.Name, () => OpenGalleryFolder(dir.FullName), leadsToNewest));
         }
 
         foreach (FileInfo file in files)
-            GalleryGrid.Children.Add(BuildClipCard(file, isNewest: newestClipPath is not null && string.Equals(file.FullName, newestClipPath, StringComparison.OrdinalIgnoreCase)));
+            GalleryGrid.Children.Add(BuildClipCard(file,
+                isNewest: newestClipPath is not null && string.Equals(Path.GetFullPath(file.FullName), newestClipPath, StringComparison.OrdinalIgnoreCase)));
 
         GalleryStatus.Text = files.Count == 1 ? "1 clip" : $"{files.Count} clips";
     }
@@ -5581,46 +5594,55 @@ public partial class MainWindow : Window
 
         var sub = new TextBlock { Text = "Folder", FontSize = 11, Foreground = (Brush)FindResource("Text2") };
 
+        UIElement titleRow = leadsToNewest ? WithNewestDot(title, "Contains the newest clip") : title;
         var content = new StackPanel();
         content.Children.Add(iconHost);
-        content.Children.Add(title);
+        content.Children.Add(titleRow);
         content.Children.Add(sub);
 
-        UIElement cardContent = leadsToNewest ? WithNewestDot(content, "Contains the newest clip") : content;
-        var card = new Border { Width = 210, Child = cardContent, Cursor = Cursors.Hand };
+        var card = new Border { Width = 210, Child = content, Cursor = Cursors.Hand };
         card.MouseLeftButtonUp += (_, _) => onOpen();
 
         return card;
     }
 
     /// <summary>
-    /// Wraps `content` in a Grid with a small blue dot overlaid on its left
-    /// edge, vertically centered on the whole card -- the "this is (or leads
-    /// to) the newest clip" marker BuildFolderCard/BuildClipCard both use.
-    /// A shared helper rather than duplicated inline in each so the dot's
-    /// look/position only needs to be tuned in one place. NewestClip is a
-    /// fixed brand color like Rec/Stream/Green, not Accent -- see
-    /// Theme.Dark.xaml's own comment on that key.
+    /// Puts a small blue dot immediately to the left of `title`, in the
+    /// title's own row -- the "this is (or leads to) the newest clip"
+    /// marker BuildFolderCard/BuildClipCard both use. `title`'s own
+    /// top/bottom margin moves onto the wrapping row (title itself gets a
+    /// small left margin instead) so overall card spacing doesn't change.
+    ///
+    /// This used to overlay the dot on the whole card via a Grid, floating
+    /// it at the vertical center of everything (icon + title + subtitle
+    /// stacked) -- centered on nothing in particular, and it sat ON TOP of
+    /// the thumbnail instead of making room for itself next to the actual
+    /// label. Putting it in the title's own row and letting the text shift
+    /// right instead reads as an actual inline marker, not a floating badge.
+    ///
+    /// NewestClip is a fixed brand color like Rec/Stream/Green, not Accent --
+    /// see Theme.Dark.xaml's own comment on that key.
     /// </summary>
-    private Grid WithNewestDot(UIElement content, string tooltip)
+    private StackPanel WithNewestDot(TextBlock title, string tooltip)
     {
+        Thickness titleMargin = title.Margin;
+        title.Margin = new Thickness(4, 0, 0, 0);
+
         // System.Windows.Shapes.Ellipse fully qualified, not `using`'d file-wide --
         // same reasoning as the Path glyph a bit above this (System.IO.Path collision).
         var dot = new System.Windows.Shapes.Ellipse
         {
-            Width = 9,
-            Height = 9,
+            Width = 7,
+            Height = 7,
             Fill = (Brush)FindResource("NewestClip"),
-            HorizontalAlignment = HorizontalAlignment.Left,
             VerticalAlignment = VerticalAlignment.Center,
-            Margin = new Thickness(-4, 0, 0, 0),
             ToolTip = tooltip,
-            IsHitTestVisible = false, // purely a visual marker -- clicks pass through to the card underneath
         };
-        var grid = new Grid();
-        grid.Children.Add(content);
-        grid.Children.Add(dot);
-        return grid;
+
+        var row = new StackPanel { Orientation = Orientation.Horizontal, Margin = titleMargin };
+        row.Children.Add(dot);
+        row.Children.Add(title);
+        return row;
     }
 
     private Border BuildClipCard(FileInfo file, bool isNewest = false)
@@ -5728,9 +5750,10 @@ public partial class MainWindow : Window
         subRow.Children.Add(sub);
         subRow.Children.Add(durationText);
 
+        UIElement titleRow = isNewest ? WithNewestDot(title, "Newest clip") : title;
         var content = new StackPanel();
         content.Children.Add(thumb);
-        content.Children.Add(title);
+        content.Children.Add(titleRow);
         content.Children.Add(subRow);
 
         _ = LoadThumbnailAsync(file, thumbImage, knownDurationMs is null ? durationText : null);
@@ -5739,11 +5762,7 @@ public partial class MainWindow : Window
         // card's 240-wide, ~186-tall content) already reserve the gutter uniformly on
         // every cell, top-left aligned by default, so the leftover space itself becomes
         // the gap to the next card without needing a per-card Margin to also add one.
-        // WithNewestDot wraps `content` in a Grid, not `content` itself -- later code
-        // below still mutates `content`'s own Children (copyBtn) directly, which stays
-        // correct either way since that's the same StackPanel instance regardless of
-        // what it's nested inside for display.
-        var card = new Border { Width = 210, Child = isNewest ? WithNewestDot(content, "Newest clip") : content };
+        var card = new Border { Width = 210, Child = content };
 
         // Only worth showing when the clip isn't already local -- this is the
         // "bring it from the stream PC to this one" action. Everything else
