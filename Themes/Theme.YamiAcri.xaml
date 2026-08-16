@@ -1,18 +1,28 @@
 <ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
                     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
     <!--
-      OBS Studio's own default "Yami" theme, ported from its real palette
-      (obs-studio's frontend/data/themes/Yami.obt, the grey/blue scale OBS
-      itself ships with) rather than invented; so this genuinely looks
-      like the OBS window it sits next to, not just "another dark theme".
+      OBS Studio's "Acri" variant of its own Yami theme (obs-studio's
+      themes/Yami_Acri.ovt), same source-of-truth approach as Theme.Yami.xaml
+      right next to this file: ported from the real files, not invented.
+      Acri is a Yami VARIANT, not a from-scratch theme; its own .ovt only
+      overrides the accent/button colors (a moodier navy blue instead of
+      Yami's default brighter blue), the neutral grey ramp underneath is
+      identical to base Yami. So this file is Theme.Yami.xaml's neutrals
+      verbatim, with only Accent swapped to Acri's own palette.
 
-      Grey ramp used: grey8 #13141A (darkest) .. grey1 #5B6273 (lightest),
-      window bg is grey7, panel/row surfaces step up through grey6-grey4.
-      Accent blue is Yami's own "highlight_color" variable (blue1 #718CDC).
+      Acri's .ovt defines the "primary" variable as rgb(19,26,48) (very dark
+      navy), "primary_light" as rgb(42,58,117) (the actual hover/interactive
+      navy), and a literal button background of #162458. primary_light
+      (#2A3A75) is the one that actually shows up as the visible accent in
+      practice: button hover, tab hover, toolbutton hover, and scrollbar
+      hover all use it, so that's what Accent maps to here, not the
+      near-black primary variable or the flat #162458 button base (too
+      low-contrast to double as a general highlight color the way
+      Backtrack's single Accent key gets used).
 
       Rec/RecDark/Stream/Green stay Backtrack's own brand colors, same as
-      Dark/Light; see Theme.Dark.xaml's comment on why those don't change
-      per theme, only the neutrals borrow Yami's real values.
+      every other theme; see Theme.Dark.xaml's comment on why those don't
+      change per theme, only the neutrals/accent borrow the real OBS values.
     -->
     <SolidColorBrush x:Key="PanelBg" Color="#1D1F26"/>
     <SolidColorBrush x:Key="PanelBgOpaque" Color="#EC1D1F26"/>
@@ -24,7 +34,7 @@
     <SolidColorBrush x:Key="Text0" Color="#FFFFFF"/>
     <SolidColorBrush x:Key="Text1" Color="#B4B4B4"/>
     <SolidColorBrush x:Key="Text2" Color="#969696"/>
-    <SolidColorBrush x:Key="Accent" Color="#718CDC"/>
+    <SolidColorBrush x:Key="Accent" Color="#2A3A75"/>
 
     <SolidColorBrush x:Key="Rec" Color="#FF5B52"/>
     <SolidColorBrush x:Key="RecDark" Color="#7A1F1F"/>

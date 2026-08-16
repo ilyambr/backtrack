@@ -63,10 +63,19 @@ public partial class MainWindow : Window
     private bool _lastKnownAnyRowError;
     private int _lastKnownActiveRecordRowCount;
     private bool _refreshStatusRunning;
-    // Set the moment a filter-only recording (main not active) is first
-    // noticed, cleared once nothing's recording -- see RefreshStatusAsync's
-    // own comment on why this is an approximation, not a true start time.
-    private DateTime? _recordRowActiveSinceUtc;
+    // Per-row (not one shared value): the moment RefreshStatusAsync first
+    // notices each individual Source Record row actively recording, keyed by
+    // RecordRow.Key, pruned once that row stops. Approximate, not a true
+    // start time -- see RefreshStatusAsync's own comment. Needs to be
+    // per-row rather than one shared timestamp for two reasons: (1) it used
+    // to get wiped to null every single tick the MAIN recording was active,
+    // even while a row was ALSO recording that whole time, so the moment
+    // main stopped and a still-running row took over the display, the timer
+    // read "just started" instead of however long that row had genuinely
+    // been going; (2) two different rows starting at two different times
+    // need their own separate timestamps to compare, not one shared "since
+    // SOMETHING became active" value that can't tell them apart.
+    private readonly Dictionary<string, DateTime> _recordRowActiveSinceUtc = new();
 
     private readonly DispatcherTimer _pollTimer;
     private readonly DispatcherTimer _micTimer;
@@ -110,6 +119,19 @@ public partial class MainWindow : Window
     // Cooldown gate for the EncoderOverloadDetected toast -- see that
     // subscription's own comment for why this isn't a plain de-dup.
     private DateTime _lastEncoderOverloadToastUtc = DateTime.MinValue;
+    // Separate from the toast cooldown above: the plugin only re-emits
+    // EncoderOverloadDetected roughly every ~2s for as long as an overload
+    // is actually ongoing, and never fires a distinct "it stopped" event --
+    // so RefreshStatusAsync infers "still overloaded right now" purely from
+    // how recently this was last touched (see its own check), independent of
+    // whatever the toast's own 30s cooldown is doing. Touched by TWO
+    // independent detectors, whichever notices first: this event (requires
+    // obs-source-record with an active Source Record filter somewhere) and
+    // RefreshObsModeLogAsync's own raw-GetStats delta check (needs nothing
+    // but stock obs-websocket, so it's the one that still works with zero
+    // filters running).
+    private DateTime _lastEncoderOverloadEventUtc = DateTime.MinValue;
+    private bool _encoderOverloadedShown;
     private readonly PairingService _pairing;
     private readonly Dictionary<string, string> _rowLabels = new();
     private List<ReplayRow> _lastReplayRows = new();
@@ -325,8 +347,22 @@ public partial class MainWindow : Window
             _statusOverlay.SetStreaming(active);
             UpdateStreamingBoxVisibility();
         });
+        // Snappier than waiting for RefreshStatusAsync's own 1s poll (which
+        // still covers Backtrack opening or OBS reconnecting while the
+        // Virtual Camera is already on -- see its own comment); no toast,
+        // just the status indicator, since nothing asked for one here.
+        _obs.VirtualCamStateChanged += active => Dispatcher.BeginInvoke(() =>
+        {
+            _statusOverlay.SetVirtualCamActive(active);
+        });
         _obs.EncoderOverloadDetected += info => Dispatcher.BeginInvoke(() =>
         {
+            // Always touch this, regardless of the toast's own cooldown
+            // below -- RefreshStatusAsync's status-indicator badge needs to
+            // know an overload is STILL happening right now every ~2s,
+            // independent of how often a toast is allowed to pop up about it.
+            _lastEncoderOverloadEventUtc = DateTime.UtcNow;
+
             // The plugin re-emits this roughly every ~2s for as long as the
             // condition holds, not just once on a transition -- showing a
             // fresh toast every single time would spam the screen for a
@@ -944,22 +980,48 @@ public partial class MainWindow : Window
     /// Overload warnings persist for as long as the condition keeps being true
     /// on each poll; one-off save messages (see ShowObsModeMessage) instead
     /// clear themselves after a few seconds via _obsLogClearAtUtc.
+    ///
+    /// The stats fetch/delta-tracking below now always runs while connected,
+    /// regardless of the in-HUD overlay log's own settings -- it used to
+    /// bail out immediately whenever OverlayLogEnabled/IsVisible/OverlayLogMode
+    /// said not to show the text in the HUD, which also meant the underlying
+    /// overload DETECTION silently stopped too (not just its display), the
+    /// entire time the HUD was closed -- i.e. almost always, since this is a
+    /// hotkey-summoned overlay. That's what fed the always-on status
+    /// indicator's own encoder-overload badge dark: this detector, unlike
+    /// obs-source-record's own vendor event (a completely separate, older
+    /// detection path -- see ObsService.EncoderOverloadDetected), doesn't
+    /// depend on any Source Record filter existing at all, so it's the one
+    /// that actually caught a main-output overload with none active. Only
+    /// the SetObsLine display calls further down still respect those
+    /// HUD-only settings.
     /// </summary>
     private async Task RefreshObsModeLogAsync()
     {
-        if (!_settings.OverlayLogEnabled || !IsVisible || _settings.OverlayLogMode == "Backtrack")
-            return;
-
         if (!_obs.IsConnected)
         {
             _overlayLog.SetObsLine("");
             return;
         }
 
+        bool showInOverlayLog = _settings.OverlayLogEnabled && IsVisible && _settings.OverlayLogMode != "Backtrack";
+
         try
         {
             ObsStats stats = await _obs.GetStatsAsync();
             string? warning = ComputeObsOverloadWarning(stats);
+            if (warning is not null)
+            {
+                // Same timestamp the vendor-event path below touches --
+                // either signal means "an overload is happening right now"
+                // to RefreshStatusAsync's badge check, whichever one catches
+                // it first.
+                _lastEncoderOverloadEventUtc = DateTime.UtcNow;
+            }
+
+            if (!showInOverlayLog)
+                return;
+
             if (warning is not null)
             {
                 _overlayLog.SetObsLine(warning);
@@ -2900,12 +2962,78 @@ public partial class MainWindow : Window
     {
         _trayManager?.UpdateStatus(_obs.IsConnected, _statusOverlay.IsVisible);
 
+        // Runs before the connected/disconnected branch below (and its early
+        // return) on purpose -- a dropped OBS connection should clear this
+        // badge quickly too, not leave it flashing on stale data forever.
+        // 4s is roughly 2x the ~2s interval EncoderOverloadDetected re-fires
+        // at while a real overload is ongoing, enough slack to not flicker
+        // off between two individual re-emits.
+        bool encoderOverloadedNow = DateTime.UtcNow - _lastEncoderOverloadEventUtc < TimeSpan.FromSeconds(4);
+        if (encoderOverloadedNow != _encoderOverloadedShown)
+        {
+            _encoderOverloadedShown = encoderOverloadedNow;
+            _statusOverlay.SetEncoderOverloaded(encoderOverloadedNow);
+        }
+
         if (!_obs.IsConnected)
         {
             ConnDot.Fill = (Brush)FindResource("Rec");
             ConnStatusText.Text = "OBS Disconnected";
-            ConnStatusText.ToolTip = !_serverEnabledAtStartup
-                ? "OBS's WebSocket server is disabled -- enable it in OBS: Tools > WebSocket Server Settings"
+
+            // _serverEnabledAtStartup is a one-time snapshot taken when this
+            // app itself launched (or last Reconfigure()'d) -- it goes stale
+            // the moment the user flips the server on/off in OBS's own UI
+            // WHILE Backtrack keeps running, which is the normal case here
+            // (Backtrack usually launches once and stays open for the whole
+            // session). Read the config file fresh every tick instead so
+            // this reacts to a live toggle, not just what was true at boot.
+            //
+            // All of it (file read, process enumeration, and the possible
+            // config rewrite below) is real synchronous OS I/O -- offloaded
+            // via Task.Run so this 1s poll, which keeps firing indefinitely
+            // for as long as OBS stays disconnected (including a fresh
+            // install with no config file yet), doesn't block the UI thread
+            // doing it every single tick.
+            bool serverEnabledNow = _serverEnabledAtStartup;
+            if (!_settings.ObsIsRemote)
+            {
+                (bool enabledNow, bool autoFixed) = await Task.Run(() =>
+                {
+                    (bool enabled, string? _) = ObsConfigReader.ReadLocalConfig();
+
+                    // Local mode + server off + OBS not even running yet:
+                    // silently flip server_enabled in obs-websocket's own
+                    // config now, so the moment the user actually launches
+                    // OBS it just connects, no manual trip to Tools >
+                    // WebSocket Server Settings required. Gated on "not
+                    // running" specifically -- that config file is only read
+                    // at OBS's own startup, so rewriting it while OBS is
+                    // already open with the server off wouldn't do anything
+                    // until a restart anyway, and risks racing OBS saving its
+                    // own settings back to the same file. This also means
+                    // telling the user to "restart OBS" (below) is a real
+                    // fix, not just a suggestion: the moment they close it,
+                    // this same check fixes the file, and the next launch
+                    // picks it up.
+                    if (!enabled && Process.GetProcessesByName("obs64").Length == 0 && ObsConfigReader.TryEnableServer())
+                        return (true, true);
+                    return (enabled, false);
+                });
+                serverEnabledNow = enabledNow;
+                if (autoFixed)
+                    AppLog.Write("ObsConfigReader.TryEnableServer: OBS's WebSocket server was off and OBS wasn't running -- enabled it for the next launch.");
+            }
+
+            // Keep the field itself current too, not just this tick's local
+            // variable -- LoadReplayRowsAsync/LoadRecordRowsAsync (BufRowsPanel/
+            // RecRowsPanel's own "not connected" messaging) still read
+            // _serverEnabledAtStartup directly rather than doing their own live
+            // config read, so without this they could show a stale message
+            // (e.g. "server disabled") contradicting this tooltip's fresh one.
+            _serverEnabledAtStartup = serverEnabledNow;
+
+            ConnStatusText.ToolTip = !serverEnabledNow
+                ? "OBS's WebSocket server is disabled -- enable it in OBS: Tools > WebSocket Server Settings, or just restart OBS (Backtrack will turn it on for you the moment OBS closes)"
                 : _obs.LastError is null ? "Not connected to OBS" : $"OBS: {_obs.LastError}";
             RecordLabel.Text = "Start Recording";
             RecordStatusText.Text = "--:--";
@@ -2917,6 +3045,7 @@ public partial class MainWindow : Window
             _statusOverlay.SetReplayOnline(false);
             _statusOverlay.SetMicStatus(MicStatus.Hidden);
             _statusOverlay.SetStreaming(false);
+            _statusOverlay.SetVirtualCamActive(false);
             _statusOverlay.SetObsDisconnected(true);
             _isStreaming = false;
             UpdateStreamingBoxVisibility();
@@ -2930,7 +3059,7 @@ public partial class MainWindow : Window
 
         try
         {
-            // Fired together, not one at a time -- these 5 are mutually
+            // Fired together, not one at a time -- these 6 are mutually
             // independent OBS requests. Awaiting each immediately (the original
             // shape) meant this tick's total latency was the SUM of all of
             // them; kicking them all off first and only then awaiting means
@@ -2941,6 +3070,7 @@ public partial class MainWindow : Window
             Task<bool> replayBufferActiveTask = _obs.GetReplayBufferActiveAsync();
             Task<List<ReplayRow>> replayRowsTask = _obs.ListReplayRowsAsync();
             Task<bool> streamActiveTask = _obs.GetStreamActiveAsync();
+            Task<bool> virtualCamActiveTask = _obs.GetVirtualCamActiveAsync();
 
             RecordStatus recStatus = await recStatusTask;
             // Not just OBS's single global recording: a Source Record filter can be
@@ -2956,7 +3086,26 @@ public partial class MainWindow : Window
             try
             {
                 List<RecordRow> recordRows = await recordRowsTask;
-                activeRecordRowCount = recordRows.Count(r => r.Status == RecordStatusRecording);
+
+                // Start tracking any row that's newly recording, and drop
+                // tracking for any row that's no longer actively recording --
+                // TryAdd leaves an already-tracked row's original timestamp
+                // alone (so it keeps counting from its real start, not this
+                // poll tick), and removing a stopped row means if it starts
+                // again later it gets a genuinely fresh "since", not a stale
+                // reused one from its earlier run.
+                var activeKeys = new HashSet<string>();
+                foreach (RecordRow row in recordRows)
+                {
+                    if (row.Status != RecordStatusRecording)
+                        continue;
+                    activeKeys.Add(row.Key);
+                    _recordRowActiveSinceUtc.TryAdd(row.Key, DateTime.UtcNow);
+                }
+                foreach (string staleKey in _recordRowActiveSinceUtc.Keys.Where(k => !activeKeys.Contains(k)).ToList())
+                    _recordRowActiveSinceUtc.Remove(staleKey);
+
+                activeRecordRowCount = activeKeys.Count;
                 _lastKnownActiveRecordRowCount = activeRecordRowCount;
             }
             catch
@@ -2976,28 +3125,42 @@ public partial class MainWindow : Window
             RecordLabel.Text = singleActiveTarget ? "Stop Recording" : "Start Recording";
             SetRecordIcon(recordingAnything);
 
-            // No per-filter duration is available from the bridge -- when only a
-            // filter (not the main recording) is active, this instead times "since
-            // Backtrack first noticed it recording", which can undercount if it was
-            // already running before Backtrack opened or this poll caught it (e.g.
-            // started from ControlPanelDock's own button in OBS). recStatus's own
-            // duration above is exact -- obs-websocket tracks the real start time
-            // for the main output specifically.
+            // The pill shows whichever of "main recording" and "every
+            // currently-active row" has actually been going the LONGEST, not
+            // just whichever one happens to be main vs. a filter -- so it
+            // stays correct through any combination: main stops but a row
+            // that was already recording keeps going (row's own real elapsed
+            // time keeps showing, doesn't reset), or two different rows
+            // started at two different times (the earlier one wins, same as
+            // it would if it were the main recording instead). No per-filter
+            // duration is available from the bridge, so each row's own
+            // elapsed time is "since Backtrack first noticed it recording"
+            // (_recordRowActiveSinceUtc, maintained above), which can
+            // undercount if it was already running before Backtrack opened
+            // or this poll caught it. recStatus's own duration is exact by
+            // comparison -- obs-websocket tracks the real start time for the
+            // main output specifically -- so it's used as-is, not converted
+            // through the same wall-clock approximation as the rows.
+            long? bestDurationMs = null;
+            bool bestIsMainPaused = false;
             if (recStatus.Active)
             {
-                _recordRowActiveSinceUtc = null;
-                RecordStatusText.Text = recStatus.Paused ? $"{FormatDuration(recStatus.DurationMs)} (Paused)" : FormatDuration(recStatus.DurationMs);
+                bestDurationMs = recStatus.DurationMs;
+                bestIsMainPaused = recStatus.Paused;
             }
-            else if (anyRecordRowActive)
+            DateTime nowUtc = DateTime.UtcNow;
+            foreach (DateTime since in _recordRowActiveSinceUtc.Values)
             {
-                _recordRowActiveSinceUtc ??= DateTime.UtcNow;
-                RecordStatusText.Text = FormatDuration((long)(DateTime.UtcNow - _recordRowActiveSinceUtc.Value).TotalMilliseconds);
+                long rowMs = (long)(nowUtc - since).TotalMilliseconds;
+                if (bestDurationMs is null || rowMs > bestDurationMs)
+                {
+                    bestDurationMs = rowMs;
+                    bestIsMainPaused = false; // pausing only applies to the main recording, not a row
+                }
             }
-            else
-            {
-                _recordRowActiveSinceUtc = null;
-                RecordStatusText.Text = "--:--";
-            }
+            RecordStatusText.Text = bestDurationMs is long ms
+                ? (bestIsMainPaused ? $"{FormatDuration(ms)} (Paused)" : FormatDuration(ms))
+                : "--:--";
             _statusOverlay.SetRecording(recordingAnything);
 
             // Not just OBS's single global replay-buffer flag: obs-replay-slider (and
@@ -3050,6 +3213,18 @@ public partial class MainWindow : Window
                 _isStreaming = await streamActiveTask;
                 _statusOverlay.SetStreaming(_isStreaming);
                 UpdateStreamingBoxVisibility();
+            }
+            catch
+            {
+                // Leave it showing whatever it last correctly showed.
+            }
+
+            // Same "every poll tick, not just the event" reasoning as
+            // streaming above -- covers Backtrack opening (or OBS
+            // reconnecting) while the Virtual Camera is already running.
+            try
+            {
+                _statusOverlay.SetVirtualCamActive(await virtualCamActiveTask);
             }
             catch
             {
@@ -4055,6 +4230,13 @@ public partial class MainWindow : Window
     private const int RecordStatusStopped = 1;   // capturing fine, just not recording
     private const int RecordStatusRecording = 2;
     private const int RecordStatusError = 3;     // was recording, the output stopped with a failure
+    // Distinct from Inactive: the source itself is visible/enabled, but the
+    // device has no signal right now (Elgato unplugged, Window Capture with
+    // no window selected, etc.) -- clicking Start used to silently arm
+    // record_mode=Always and then immediately look like it failed once
+    // nothing actually started recording. Disabled below same as Inactive,
+    // just with its own label so it's clear WHY.
+    private const int RecordStatusNoSignal = 4;
 
     /// <summary>
     /// "Main" (OBS's own single global recording) plus one row per Source
@@ -4102,7 +4284,16 @@ public partial class MainWindow : Window
             return;
         }
 
-        List<RecordRow> visibleRows = rows.Where(r => !_settings.HiddenBufferLabels.Contains(r.Label)).ToList();
+        // Stopped/Recording (both actually clickable/meaningful right now)
+        // sort above Inactive/NoSignal (both disabled, nothing to do with
+        // them -- see BuildRecordRowButton's own comment) -- same idea as
+        // LoadReplayRowsAsync's own OrderBy just below, keeping the rows you
+        // can actually act on from getting buried under a pile of hidden or
+        // signal-less ones. OrderBy is stable, so rows within each group
+        // keep the bridge's own original order relative to each other.
+        List<RecordRow> visibleRows = rows.Where(r => !_settings.HiddenBufferLabels.Contains(r.Label))
+            .OrderBy(r => r.Status is RecordStatusStopped or RecordStatusRecording ? 0 : 1)
+            .ToList();
         foreach (RecordRow row in visibleRows)
         {
             string key = row.Key;
@@ -4122,6 +4313,7 @@ public partial class MainWindow : Window
             RecordStatusRecording => ("Rec", "Recording"),
             RecordStatusError => ("RecDark", "Error"),
             RecordStatusInactive => ("Text2", "Inactive"),
+            RecordStatusNoSignal => ("Text2", "No Signal"),
             _ => ("Text2", "Stopped"),
         };
 
@@ -4191,8 +4383,14 @@ public partial class MainWindow : Window
         // it's a real, meaningfully-detected state (hidden via its scene's
         // eye icon), clicking Start on it would just try to record a source
         // that genuinely has nothing to capture -- disable it instead of
-        // leaving that as a confusing no-op/failure.
-        if (status == RecordStatusInactive)
+        // leaving that as a confusing no-op/failure. NoSignal (source
+        // visible/enabled, but the device itself has nothing to capture --
+        // e.g. a capture card unplugged) gets the same treatment: clicking
+        // Start used to silently arm record_mode=Always and then look like
+        // it failed the moment the next poll showed nothing actually
+        // recording. Both share this disabled path; only the label above
+        // differs, so it's clear WHICH of the two is actually going on.
+        if (status == RecordStatusInactive || status == RecordStatusNoSignal)
         {
             button.IsEnabled = false;
             return button;
@@ -4455,6 +4653,36 @@ public partial class MainWindow : Window
         }
     }
 
+    /// <summary>
+    /// The single most-recently-written clip anywhere in the whole clips
+    /// tree (not just the folder currently being viewed) -- drives the blue
+    /// "newest" dot on both BuildClipCard (the clip itself) and
+    /// BuildFolderCard (any folder that leads to it), so the trail is
+    /// followable while browsing into subfolders, not just visible once
+    /// you're already in the right one. Same recursive-scan cost/precedent
+    /// as CountClips right above; not worth caching across LoadGallery calls
+    /// since a new recording landing is exactly the case this needs to
+    /// notice on the very next refresh.
+    /// </summary>
+    private string? GetNewestClipPath()
+    {
+        try
+        {
+            return Directory.Exists(_settings.ClipsFolder)
+                ? Directory.EnumerateFiles(_settings.ClipsFolder, "*", SearchOption.AllDirectories)
+                    .Where(f => VideoExtensions.Contains(Path.GetExtension(f).ToLowerInvariant()))
+                    .Select(f => new FileInfo(f))
+                    .OrderByDescending(f => f.LastWriteTime)
+                    .FirstOrDefault()
+                    ?.FullName
+                : null;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
     private void GalleryFilterBox_TextChanged(object sender, TextChangedEventArgs e)
     {
         GalleryFilterPlaceholder.Visibility = GalleryFilterBox.Text.Length == 0 ? Visibility.Visible : Visibility.Collapsed;
@@ -4545,11 +4773,20 @@ public partial class MainWindow : Window
             return;
         }
 
+        string? newestClipPath = GetNewestClipPath();
+
         foreach (DirectoryInfo dir in subfolders)
-            GalleryGrid.Children.Add(BuildFolderCard(dir.Name, () => OpenGalleryFolder(dir.FullName)));
+        {
+            // Ancestor check via a trailing separator, not a bare StartsWith
+            // -- otherwise a folder named e.g. "Clips" would false-positive
+            // match a sibling "Clips2" that happens to share the prefix.
+            bool leadsToNewest = newestClipPath is not null
+                && newestClipPath.StartsWith(dir.FullName + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
+            GalleryGrid.Children.Add(BuildFolderCard(dir.Name, () => OpenGalleryFolder(dir.FullName), leadsToNewest));
+        }
 
         foreach (FileInfo file in files)
-            GalleryGrid.Children.Add(BuildClipCard(file));
+            GalleryGrid.Children.Add(BuildClipCard(file, isNewest: newestClipPath is not null && string.Equals(file.FullName, newestClipPath, StringComparison.OrdinalIgnoreCase)));
 
         GalleryStatus.Text = files.Count == 1 ? "1 clip" : $"{files.Count} clips";
     }
@@ -5305,7 +5542,7 @@ public partial class MainWindow : Window
     /// and BuildRemoteFolderCard(string)) were the displayed name and what
     /// opening the folder means, both of which the caller already knows.
     /// </summary>
-    private Border BuildFolderCard(string name, Action onOpen)
+    private Border BuildFolderCard(string name, Action onOpen, bool leadsToNewest = false)
     {
         var iconHost = new Border
         {
@@ -5349,13 +5586,44 @@ public partial class MainWindow : Window
         content.Children.Add(title);
         content.Children.Add(sub);
 
-        var card = new Border { Width = 210, Child = content, Cursor = Cursors.Hand };
+        UIElement cardContent = leadsToNewest ? WithNewestDot(content, "Contains the newest clip") : content;
+        var card = new Border { Width = 210, Child = cardContent, Cursor = Cursors.Hand };
         card.MouseLeftButtonUp += (_, _) => onOpen();
 
         return card;
     }
 
-    private Border BuildClipCard(FileInfo file)
+    /// <summary>
+    /// Wraps `content` in a Grid with a small blue dot overlaid on its left
+    /// edge, vertically centered on the whole card -- the "this is (or leads
+    /// to) the newest clip" marker BuildFolderCard/BuildClipCard both use.
+    /// A shared helper rather than duplicated inline in each so the dot's
+    /// look/position only needs to be tuned in one place. NewestClip is a
+    /// fixed brand color like Rec/Stream/Green, not Accent -- see
+    /// Theme.Dark.xaml's own comment on that key.
+    /// </summary>
+    private Grid WithNewestDot(UIElement content, string tooltip)
+    {
+        // System.Windows.Shapes.Ellipse fully qualified, not `using`'d file-wide --
+        // same reasoning as the Path glyph a bit above this (System.IO.Path collision).
+        var dot = new System.Windows.Shapes.Ellipse
+        {
+            Width = 9,
+            Height = 9,
+            Fill = (Brush)FindResource("NewestClip"),
+            HorizontalAlignment = HorizontalAlignment.Left,
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(-4, 0, 0, 0),
+            ToolTip = tooltip,
+            IsHitTestVisible = false, // purely a visual marker -- clicks pass through to the card underneath
+        };
+        var grid = new Grid();
+        grid.Children.Add(content);
+        grid.Children.Add(dot);
+        return grid;
+    }
+
+    private Border BuildClipCard(FileInfo file, bool isNewest = false)
     {
         // Neutral placeholder shown until the real frame loads in behind it
         // (LoadThumbnailAsync, kicked off below) -- not a fake thumbnail like the
@@ -5471,7 +5739,11 @@ public partial class MainWindow : Window
         // card's 240-wide, ~186-tall content) already reserve the gutter uniformly on
         // every cell, top-left aligned by default, so the leftover space itself becomes
         // the gap to the next card without needing a per-card Margin to also add one.
-        var card = new Border { Width = 210, Child = content };
+        // WithNewestDot wraps `content` in a Grid, not `content` itself -- later code
+        // below still mutates `content`'s own Children (copyBtn) directly, which stays
+        // correct either way since that's the same StackPanel instance regardless of
+        // what it's nested inside for display.
+        var card = new Border { Width = 210, Child = isNewest ? WithNewestDot(content, "Newest clip") : content };
 
         // Only worth showing when the clip isn't already local -- this is the
         // "bring it from the stream PC to this one" action. Everything else
@@ -7991,6 +8263,8 @@ public partial class MainWindow : Window
 
     private void YamiThemeSwatch_Click(object sender, MouseButtonEventArgs e) => ApplyTheme(AppTheme.Yami);
 
+    private void YamiAcriThemeSwatch_Click(object sender, MouseButtonEventArgs e) => ApplyTheme(AppTheme.YamiAcri);
+
     private void AmoledThemeSwatch_Click(object sender, MouseButtonEventArgs e) => ApplyTheme(AppTheme.Amoled);
 
     private void ApplyTheme(AppTheme theme)
@@ -8003,7 +8277,7 @@ public partial class MainWindow : Window
 
     // Highlight ring around whichever swatch matches the currently active
     // theme; Green isn't tied to "success" here, just the app's one
-    // consistent selection accent, and it reads fine over all four swatches
+    // consistent selection accent, and it reads fine over all five swatches
     // since it's a fixed brand color, not a themed neutral.
     private void RefreshThemeSwatchSelection()
     {
@@ -8011,6 +8285,7 @@ public partial class MainWindow : Window
         DarkThemeSwatch.BorderBrush = ThemeManager.Current == AppTheme.Dark ? selected : Brushes.Transparent;
         LightThemeSwatch.BorderBrush = ThemeManager.Current == AppTheme.Light ? selected : Brushes.Transparent;
         YamiThemeSwatch.BorderBrush = ThemeManager.Current == AppTheme.Yami ? selected : Brushes.Transparent;
+        YamiAcriThemeSwatch.BorderBrush = ThemeManager.Current == AppTheme.YamiAcri ? selected : Brushes.Transparent;
         AmoledThemeSwatch.BorderBrush = ThemeManager.Current == AppTheme.Amoled ? selected : Brushes.Transparent;
     }
 

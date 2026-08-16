@@ -74,6 +74,9 @@ public sealed class ObsService
     /// <summary>Fires the moment OBS's own stream output actually starts/stops -- event-driven, same idea as RecordingStateChanged.</summary>
     public event Action<bool>? StreamingStateChanged;
 
+    /// <summary>Fires the moment OBS's own Virtual Camera output actually starts/stops -- event-driven, same idea as StreamingStateChanged.</summary>
+    public event Action<bool>? VirtualCamStateChanged;
+
     /// <summary>Fires when a Replay Slider row's buffer actually finishes saving: (rowKey, path). This is the real "yes, the clip exists now" confirmation.</summary>
     public event Action<string, string>? ReplaySaved;
 
@@ -121,6 +124,17 @@ public sealed class ObsService
                 StreamingStateChanged?.Invoke(true);
             else if (state == "OBS_WEBSOCKET_OUTPUT_STOPPED")
                 StreamingStateChanged?.Invoke(false);
+        }
+        else if (eventType == "VirtualcamStateChanged" && data.TryGetProperty("outputState", out JsonElement vcamStateEl))
+        {
+            // Same double-fire-per-transition reasoning as RecordStateChanged above.
+            // Event name really is lowercase-c "Virtualcam" -- that's obs-websocket's
+            // own spelling for this one, unlike "VirtualCam" everywhere else in its API.
+            string? state = vcamStateEl.GetString();
+            if (state == "OBS_WEBSOCKET_OUTPUT_STARTED")
+                VirtualCamStateChanged?.Invoke(true);
+            else if (state == "OBS_WEBSOCKET_OUTPUT_STOPPED")
+                VirtualCamStateChanged?.Invoke(false);
         }
         else if (eventType == "VendorEvent" &&
                  data.TryGetProperty("vendorName", out JsonElement overloadVn) && overloadVn.GetString() == "source-record" &&
@@ -375,6 +389,15 @@ public sealed class ObsService
         if (!IsConnected)
             return false;
         JsonElement d = await _client.RequestAsync("GetStreamStatus");
+        return d.GetProperty("outputActive").GetBoolean();
+    }
+
+    /// <summary>Same shape/reasoning as GetStreamActiveAsync above -- OBS's Virtual Camera output, a plain obs-websocket request with no plugin dependency.</summary>
+    public async Task<bool> GetVirtualCamActiveAsync()
+    {
+        if (!IsConnected)
+            return false;
+        JsonElement d = await _client.RequestAsync("GetVirtualCamStatus");
         return d.GetProperty("outputActive").GetBoolean();
     }
 

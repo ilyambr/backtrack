@@ -1154,6 +1154,22 @@
                                             <Rectangle Height="5" Width="50" Fill="#969696" RadiusX="2" RadiusY="2" Margin="0,6,0,0"/>
                                         </StackPanel>
                                     </Border>
+                                    <!-- Ported from OBS's own "Acri" variant of its Yami theme (see
+                                         Theme.YamiAcri.xaml's comment); same neutrals as Yami above,
+                                         just its own moodier navy-blue accent instead of Yami's
+                                         brighter blue. -->
+                                    <Border x:Name="YamiAcriThemeSwatch" Width="122" Height="78" CornerRadius="6" Background="#1D1F26"
+                                            BorderThickness="2" BorderBrush="Transparent" Cursor="Hand"
+                                            MouseLeftButtonUp="YamiAcriThemeSwatch_Click" Margin="0,0,12,0">
+                                        <StackPanel Margin="10">
+                                            <StackPanel Orientation="Horizontal">
+                                                <Ellipse Width="8" Height="8" Fill="#2A3A75" VerticalAlignment="Center" Margin="0,0,6,0"/>
+                                                <Rectangle Height="6" Width="46" Fill="#FFFFFF" RadiusX="3" RadiusY="3"/>
+                                            </StackPanel>
+                                            <Rectangle Height="5" Width="70" Fill="#969696" RadiusX="2" RadiusY="2" Margin="0,12,0,0"/>
+                                            <Rectangle Height="5" Width="50" Fill="#969696" RadiusX="2" RadiusY="2" Margin="0,6,0,0"/>
+                                        </StackPanel>
+                                    </Border>
                                     <!-- True #000000, not just a very dark grey; see Theme.Amoled.xaml's
                                          own comment for why (real OLED power savings, sidesteps the
                                          near-black color-crush issue #080808 hit on some monitors). -->
@@ -1174,6 +1190,7 @@
                                     <TextBlock Text="Dark" Width="134" FontSize="11" FontWeight="Bold" Foreground="{DynamicResource Text2}"/>
                                     <TextBlock Text="Light" Width="134" FontSize="11" FontWeight="Bold" Foreground="{DynamicResource Text2}"/>
                                     <TextBlock Text="Yami (OBS)" Width="134" FontSize="11" FontWeight="Bold" Foreground="{DynamicResource Text2}"/>
+                                    <TextBlock Text="Yami Acri (OBS)" Width="134" FontSize="11" FontWeight="Bold" Foreground="{DynamicResource Text2}"/>
                                     <TextBlock Text="AMOLED" FontSize="11" FontWeight="Bold" Foreground="{DynamicResource Text2}"/>
                                 </StackPanel>
                             </StackPanel>
@@ -1571,10 +1588,12 @@
                                     <Viewbox Stretch="Uniform">
                                         <Grid Width="800" Height="450" ClipToBounds="True">
                                             <StackPanel x:Name="StatusIndicatorPreviewPanel" Orientation="Horizontal" Margin="6">
+                                                <!-- Encoder-overload badge: same glyph as StatusOverlay's real
+                                                     EncoderOverloadBadge, but Fill is a plain static DynamicResource
+                                                     here since this preview is a still mockup; the real one flashes
+                                                     dark-red/light-red on a loop from code-behind (see
+                                                     StatusOverlay.SetEncoderOverloaded's own comment). -->
                                                 <Border Width="27" Height="27" Background="{DynamicResource BadgeBg}" BorderBrush="{DynamicResource BadgeBorder}" BorderThickness="1">
-                                                    <!-- Font Awesome solid "triangle-exclamation" (CC BY 4.0): see
-                                                         ObsDisconnectedBadge's own comment on why not the outline glyph
-                                                         originally used here. -->
                                                     <Path Fill="{DynamicResource Rec}" Stretch="Uniform" Width="15" Height="15"
                                                           Data="F1 M256 32c14.2 0 27.3 7.5 34.5 19.8l216 368c7.3 12.4 7.3 27.7 .2 40.1S486.3 480 472 480L40 480c-14.3 0-27.6-7.7-34.7-20.1s-7-27.8 .2-40.1l216-368C228.7 39.5 241.8 32 256 32zm0 128c-13.3 0-24 10.7-24 24l0 112c0 13.3 10.7 24 24 24s24-10.7 24-24l0-112c0-13.3-10.7-24-24-24zm32 224a32 32 0 1 0 -64 0 32 32 0 1 0 64 0z"/>
                                                 </Border>
@@ -1583,6 +1602,12 @@
                                                 </Border>
                                                 <Border Width="27" Height="27" Background="{DynamicResource BadgeBg}" BorderBrush="{DynamicResource BadgeBorder}" BorderThickness="1" Margin="5,0,0,0">
                                                     <Ellipse Width="10" Height="10" Fill="{DynamicResource Stream}" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                                </Border>
+                                                <!-- Virtual Camera badge: same glyph as StatusOverlay's real
+                                                     VirtualCamBadge (Font Awesome solid "video", CC BY 4.0). -->
+                                                <Border Width="27" Height="27" Background="{DynamicResource BadgeBg}" BorderBrush="{DynamicResource BadgeBorder}" BorderThickness="1" Margin="5,0,0,0">
+                                                    <Path Fill="{DynamicResource Green}" Stretch="Uniform" Width="15" Height="15"
+                                                          Data="M0 128C0 92.7 28.7 64 64 64l256 0c35.3 0 64 28.7 64 64l0 256c0 35.3-28.7 64-64 64L64 448c-35.3 0-64-28.7-64-64L0 128zM559.1 99.8c10.4 5.6 16.9 16.4 16.9 28.2l0 256c0 11.8-6.5 22.6-16.9 28.2s-23 5-32.9-1.6l-96-64L416 337.1l0-17.1 0-128 0-17.1 14.2-9.5 96-64c9.8-6.5 22.4-7.2 32.9-1.6z"/>
                                                 </Border>
                                                 <Border Width="27" Height="27" Background="{DynamicResource BadgeBg}" BorderBrush="{DynamicResource BadgeBorder}" BorderThickness="1" Margin="5,0,0,0">
                                                     <TextBlock Text="&#8635;" FontSize="16" FontWeight="Bold" Foreground="{DynamicResource Green}" HorizontalAlignment="Center" VerticalAlignment="Center" Margin="0,-2,0,0"/>

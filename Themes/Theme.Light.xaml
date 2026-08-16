@@ -24,6 +24,9 @@
     <SolidColorBrush x:Key="RecDark" Color="#7A1F1F"/>
     <SolidColorBrush x:Key="Stream" Color="#A855F7"/>
     <SolidColorBrush x:Key="Green" Color="#3ECF8E"/>
+    <!-- See Theme.Dark.xaml's own comment on this key: a fixed brand blue,
+         same reasoning as Rec/Stream/Green, not derived from Accent. -->
+    <SolidColorBrush x:Key="NewestClip" Color="#3B82F6"/>
 
     <!-- Black-tinted instead of white-tinted; "add a bit of black" is what
          reads as "slightly darker than the background" on a light panel,
