@@ -2,13 +2,15 @@
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Interop;
+using System.Windows.Media;
+using System.Windows.Media.Animation;
 using System.Windows.Threading;
 using Backtrack.Interop;
 using Backtrack.Obs;
 
 namespace Backtrack;
 
-/// <summary>Which axis the four status badges lay out along. Settings > Status Indicators > Orientation.</summary>
+/// <summary>Which axis the status badges lay out along. Settings > Status Indicators > Orientation.</summary>
 public enum StatusIndicatorOrientation { Horizontal, Vertical }
 
 /// <summary>Which screen corner the status indicator anchors to. Settings > Status Indicators > Location.</summary>
@@ -16,8 +18,8 @@ public enum StatusIndicatorLocation { TopLeft, TopRight, BottomLeft, BottomRight
 
 public partial class StatusOverlay : Window
 {
-    // 5 badges * 27px + 4 * 5px gaps between them.
-    private const double StripLength = 5 * 27 + 4 * 5;
+    // 7 badges * 27px + 6 * 5px gaps between them.
+    private const double StripLength = 7 * 27 + 6 * 5;
     private const double StripThickness = 27;
     // Distance (px) at which the fade starts -- full opacity outside this
     // radius, fading down smoothly to fully transparent right at the badges.
@@ -115,10 +117,11 @@ public partial class StatusOverlay : Window
     }
 
     /// <summary>
-    /// The strip is a fixed size (room for all 4 badges) regardless of
+    /// The strip is a fixed size (room for all badges) regardless of
     /// orientation or how many badges happen to be visible right now --
     /// SizeToContent would need Reposition() re-run on every single
-    /// SetRecording/SetStreaming/SetReplayOnline/SetMicStatus call just to
+    /// SetRecording/SetStreaming/SetVirtualCamActive/SetReplayOnline/
+    /// SetMicStatus/SetObsDisconnected/SetEncoderOverloaded call just to
     /// stay anchored to a right/bottom corner as the content shrinks or
     /// grows, since a resize on those edges moves the window's own Left/Top.
     /// A fixed frame means only BadgesPanel's alignment (toward whichever
@@ -193,6 +196,53 @@ public partial class StatusOverlay : Window
         RefreshBadgeMargins();
     }
 
+    /// <summary>
+    /// Dark-red/light-red flashing warning-triangle, shown for as long as
+    /// MainWindow's own edge-triggered overload check (see its
+    /// EncoderOverloadDetected handler) considers a real overload ongoing.
+    /// The animation itself is built here, not in XAML, because it needs to
+    /// flash between two THEMED colors (RecDark/Rec) -- a plain XAML
+    /// Storyboard can't read DynamicResource values, and the two colors are
+    /// read fresh from Application.Current.Resources each time this turns on
+    /// rather than cached, same reasoning as ToastOverlay's own
+    /// dynamically-built elements (see CLAUDE.md's theming section).
+    /// </summary>
+    public void SetEncoderOverloaded(bool overloaded)
+    {
+        if (overloaded)
+        {
+            Color dark = ((SolidColorBrush)Application.Current.Resources["RecDark"]).Color;
+            Color light = ((SolidColorBrush)Application.Current.Resources["Rec"]).Color;
+            var brush = new SolidColorBrush(dark);
+            EncoderOverloadIconPath.Fill = brush;
+
+            var flash = new ColorAnimation
+            {
+                From = dark,
+                To = light,
+                Duration = TimeSpan.FromMilliseconds(600),
+                AutoReverse = true,
+                RepeatBehavior = RepeatBehavior.Forever,
+            };
+            brush.BeginAnimation(SolidColorBrush.ColorProperty, flash);
+
+            EncoderOverloadBadge.Visibility = Visibility.Visible;
+        }
+        else
+        {
+            // Stop the clock explicitly rather than just collapsing the
+            // badge -- a Forever animation on a brush nobody's looking at
+            // anymore is a small but pointless ongoing CPU cost. (The next
+            // time this turns back on, a brand new brush is created above,
+            // so this isn't needed to get a clean dark-red restart -- it's
+            // purely to actually stop the old clock.)
+            if (EncoderOverloadIconPath.Fill is SolidColorBrush activeBrush)
+                activeBrush.BeginAnimation(SolidColorBrush.ColorProperty, null);
+            EncoderOverloadBadge.Visibility = Visibility.Collapsed;
+        }
+        RefreshBadgeMargins();
+    }
+
     public void SetRecording(bool active)
     {
         RecBadge.Visibility = active ? Visibility.Visible : Visibility.Collapsed;
@@ -208,6 +258,12 @@ public partial class StatusOverlay : Window
     public void SetReplayOnline(bool active)
     {
         ReplayBadge.Visibility = active ? Visibility.Visible : Visibility.Collapsed;
+        RefreshBadgeMargins();
+    }
+
+    public void SetVirtualCamActive(bool active)
+    {
+        VirtualCamBadge.Visibility = active ? Visibility.Visible : Visibility.Collapsed;
         RefreshBadgeMargins();
     }
 

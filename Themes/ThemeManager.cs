@@ -6,11 +6,12 @@ namespace Backtrack;
 // Appended in order added (never inserted before an existing member) --
 // AppSettings persists this as JsonSerializer's default numeric enum value,
 // so an existing settings file's stored 0/1/2 must keep meaning Dark/Light/Yami.
-public enum AppTheme { Dark, Light, Yami, Amoled }
+public enum AppTheme { Dark, Light, Yami, Amoled, YamiAcri }
 
 /// <summary>
 /// Loads/swaps the app-wide theme resource dictionary (Theme.Dark.xaml,
-/// Theme.Light.xaml, Theme.Yami.xaml, or Theme.Amoled.xaml) into
+/// Theme.Light.xaml, Theme.Yami.xaml, Theme.Amoled.xaml, or
+/// Theme.YamiAcri.xaml) into
 /// Application.Resources -- every window references the same shared keys
 /// (PanelBg, Text0, Rec, ...) via DynamicResource (never StaticResource,
 /// which wouldn't react to a runtime swap), so a single Apply() call here
@@ -35,6 +36,7 @@ public static class ThemeManager
             AppTheme.Light => "/Themes/Theme.Light.xaml",
             AppTheme.Yami => "/Themes/Theme.Yami.xaml",
             AppTheme.Amoled => "/Themes/Theme.Amoled.xaml",
+            AppTheme.YamiAcri => "/Themes/Theme.YamiAcri.xaml",
             _ => "/Themes/Theme.Dark.xaml",
         };
         var dict = new ResourceDictionary { Source = new Uri(file, UriKind.Relative) };

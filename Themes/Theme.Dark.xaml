@@ -37,6 +37,11 @@
     <SolidColorBrush x:Key="RecDark" Color="#7A1F1F"/>
     <SolidColorBrush x:Key="Stream" Color="#A855F7"/>
     <SolidColorBrush x:Key="Green" Color="#3ECF8E"/>
+    <!-- Newest-clip/folder-trail dot on the Gallery; a genuinely fixed blue
+         for the same reason as Rec/Stream/Green above, not Accent: Accent
+         is a general highlight color that's near-white/near-black in
+         Dark/Light/Amoled, only incidentally blue in Yami/YamiAcri. -->
+    <SolidColorBrush x:Key="NewestClip" Color="#3B82F6"/>
 
     <!-- Subtle white-tinted overlays for hover/pressed/row backgrounds and
          borders; on a dark panel, "add a bit of white" is what reads as
