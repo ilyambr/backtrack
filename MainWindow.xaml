@@ -1088,7 +1088,16 @@
                     </Grid>
                     <TextBlock Text="Settings" Style="{StaticResource ScreenTitle}"/>
                 </StackPanel>
-                <ScrollViewer x:Name="SettingsScrollHost" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Focusable="False">
+                <!-- Real middle-click autoscroll (SettingsScrollHost_PreviewMouseDown/Up and
+                     the SettingsAutoscroll_Tick loop the down starts, in code-behind), the
+                     conventional button for this gesture (browsers/most apps use it), so
+                     it doesn't compete with a left click on any of the rows/controls
+                     inside. Pressing sets a fixed reference point and starts scrolling;
+                     releasing (anywhere: mouse capture, not hover) stops it: see the
+                     code-behind's own comment for the full behavior. -->
+                <ScrollViewer x:Name="SettingsScrollHost" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Focusable="False"
+                              PreviewMouseDown="SettingsScrollHost_PreviewMouseDown"
+                              PreviewMouseUp="SettingsScrollHost_PreviewMouseUp">
                     <StackPanel Margin="0,0,10,0">
                         <Border Style="{StaticResource SettingsRow}" BorderThickness="0">
                             <Grid>
@@ -1109,90 +1118,34 @@
                             <StackPanel>
                                 <TextBlock Text="Theme" FontSize="13" FontWeight="Bold" Foreground="{DynamicResource Text0}"/>
                                 <TextBlock Text="Applies to the HUD and every small overlay window." FontSize="11" Foreground="{DynamicResource Text2}" Margin="0,3,0,14" TextWrapping="Wrap"/>
-                                <StackPanel Orientation="Horizontal">
-                                    <!-- Each swatch is a tiny fixed mockup of that theme's own real
-                                         palette (matching Theme.Dark.xaml/Theme.Light.xaml's literal
-                                         values), NOT DynamicResource; these need to keep showing
-                                         what dark/light actually look like regardless of which one
-                                         is currently active, so they can't react to the live swap. -->
-                                    <Border x:Name="DarkThemeSwatch" Width="122" Height="78" CornerRadius="6" Background="#101113"
-                                            BorderThickness="2" BorderBrush="Transparent" Cursor="Hand"
-                                            MouseLeftButtonUp="DarkThemeSwatch_Click" Margin="0,0,12,0">
-                                        <StackPanel Margin="10">
-                                            <StackPanel Orientation="Horizontal">
-                                                <Ellipse Width="8" Height="8" Fill="#FF5B52" VerticalAlignment="Center" Margin="0,0,6,0"/>
-                                                <Rectangle Height="6" Width="46" Fill="#F5F6F8" RadiusX="3" RadiusY="3"/>
-                                            </StackPanel>
-                                            <Rectangle Height="5" Width="70" Fill="#767D87" RadiusX="2" RadiusY="2" Margin="0,12,0,0"/>
-                                            <Rectangle Height="5" Width="50" Fill="#767D87" RadiusX="2" RadiusY="2" Margin="0,6,0,0"/>
-                                        </StackPanel>
-                                    </Border>
-                                    <Border x:Name="LightThemeSwatch" Width="122" Height="78" CornerRadius="6" Background="#F7F7F8"
-                                            BorderThickness="2" BorderBrush="Transparent" Cursor="Hand"
-                                            MouseLeftButtonUp="LightThemeSwatch_Click" Margin="0,0,12,0">
-                                        <StackPanel Margin="10">
-                                            <StackPanel Orientation="Horizontal">
-                                                <Ellipse Width="8" Height="8" Fill="#FF5B52" VerticalAlignment="Center" Margin="0,0,6,0"/>
-                                                <Rectangle Height="6" Width="46" Fill="#16171A" RadiusX="3" RadiusY="3"/>
-                                            </StackPanel>
-                                            <Rectangle Height="5" Width="70" Fill="#82868E" RadiusX="2" RadiusY="2" Margin="0,12,0,0"/>
-                                            <Rectangle Height="5" Width="50" Fill="#82868E" RadiusX="2" RadiusY="2" Margin="0,6,0,0"/>
-                                        </StackPanel>
-                                    </Border>
-                                    <!-- Ported from OBS's own default "Yami" theme palette (see
-                                         Theme.Yami.xaml's comment); swatch mockup uses its real
-                                         grey/blue scale, not an invented dark variant. -->
-                                    <Border x:Name="YamiThemeSwatch" Width="122" Height="78" CornerRadius="6" Background="#1D1F26"
-                                            BorderThickness="2" BorderBrush="Transparent" Cursor="Hand"
-                                            MouseLeftButtonUp="YamiThemeSwatch_Click" Margin="0,0,12,0">
-                                        <StackPanel Margin="10">
-                                            <StackPanel Orientation="Horizontal">
-                                                <Ellipse Width="8" Height="8" Fill="#718CDC" VerticalAlignment="Center" Margin="0,0,6,0"/>
-                                                <Rectangle Height="6" Width="46" Fill="#FFFFFF" RadiusX="3" RadiusY="3"/>
-                                            </StackPanel>
-                                            <Rectangle Height="5" Width="70" Fill="#969696" RadiusX="2" RadiusY="2" Margin="0,12,0,0"/>
-                                            <Rectangle Height="5" Width="50" Fill="#969696" RadiusX="2" RadiusY="2" Margin="0,6,0,0"/>
-                                        </StackPanel>
-                                    </Border>
-                                    <!-- Ported from OBS's own "Acri" variant of its Yami theme (see
-                                         Theme.YamiAcri.xaml's comment); same neutrals as Yami above,
-                                         just its own moodier navy-blue accent instead of Yami's
-                                         brighter blue. -->
-                                    <Border x:Name="YamiAcriThemeSwatch" Width="122" Height="78" CornerRadius="6" Background="#1D1F26"
-                                            BorderThickness="2" BorderBrush="Transparent" Cursor="Hand"
-                                            MouseLeftButtonUp="YamiAcriThemeSwatch_Click" Margin="0,0,12,0">
-                                        <StackPanel Margin="10">
-                                            <StackPanel Orientation="Horizontal">
-                                                <Ellipse Width="8" Height="8" Fill="#2A3A75" VerticalAlignment="Center" Margin="0,0,6,0"/>
-                                                <Rectangle Height="6" Width="46" Fill="#FFFFFF" RadiusX="3" RadiusY="3"/>
-                                            </StackPanel>
-                                            <Rectangle Height="5" Width="70" Fill="#969696" RadiusX="2" RadiusY="2" Margin="0,12,0,0"/>
-                                            <Rectangle Height="5" Width="50" Fill="#969696" RadiusX="2" RadiusY="2" Margin="0,6,0,0"/>
-                                        </StackPanel>
-                                    </Border>
-                                    <!-- True #000000, not just a very dark grey; see Theme.Amoled.xaml's
-                                         own comment for why (real OLED power savings, sidesteps the
-                                         near-black color-crush issue #080808 hit on some monitors). -->
-                                    <Border x:Name="AmoledThemeSwatch" Width="122" Height="78" CornerRadius="6" Background="#000000"
-                                            BorderThickness="2" BorderBrush="Transparent" Cursor="Hand"
-                                            MouseLeftButtonUp="AmoledThemeSwatch_Click">
-                                        <StackPanel Margin="10">
-                                            <StackPanel Orientation="Horizontal">
-                                                <Ellipse Width="8" Height="8" Fill="#FF5B52" VerticalAlignment="Center" Margin="0,0,6,0"/>
-                                                <Rectangle Height="6" Width="46" Fill="#FFFFFF" RadiusX="3" RadiusY="3"/>
-                                            </StackPanel>
-                                            <Rectangle Height="5" Width="70" Fill="#757575" RadiusX="2" RadiusY="2" Margin="0,12,0,0"/>
-                                            <Rectangle Height="5" Width="50" Fill="#757575" RadiusX="2" RadiusY="2" Margin="0,6,0,0"/>
-                                        </StackPanel>
-                                    </Border>
+                                <!-- However many themes ThemeManager.DiscoverThemes finds (122px each
+                                     + margins), which can run wider than the settings panel once there
+                                     are more than a handful: horizontal drag-to-scroll
+                                     (ThemeSwatchesScroll_PreviewMouseXxx in code-behind) rather than a
+                                     visible scrollbar, since these are meant to read as a single strip
+                                     of physical swatches you can slide, not a scrolling list. Wraps
+                                     BOTH the swatch row and its label row below in one ScrollViewer so
+                                     a drag moves them together, keeping each label under its own
+                                     swatch. -->
+                                <ScrollViewer x:Name="ThemeSwatchesScroll" HorizontalScrollBarVisibility="Hidden" VerticalScrollBarVisibility="Disabled"
+                                              PreviewMouseLeftButtonDown="ThemeSwatchesScroll_PreviewMouseLeftButtonDown"
+                                              PreviewMouseMove="ThemeSwatchesScroll_PreviewMouseMove"
+                                              PreviewMouseLeftButtonUp="ThemeSwatchesScroll_PreviewMouseLeftButtonUp"
+                                              MouseLeave="ThemeSwatchesScroll_PreviewMouseLeave">
+                                <StackPanel>
+                                <!-- Populated by BuildThemeSwatches() in code-behind, reading each
+                                     theme's own real ResourceDictionary (PanelBg/Accent/Text0/Text2)
+                                     rather than duplicating hex values here by hand: the previous
+                                     version hardcoded a literal color per swatch and it drifted out
+                                     of sync with Theme.YamiAcri.xaml's real palette the very first
+                                     time that file changed after the swatch was written, silently,
+                                     with nothing to catch it. Building from the real dictionaries
+                                     means a themes's swatch can't go stale independently of the
+                                     theme itself ever again. -->
+                                <StackPanel x:Name="ThemeSwatchesPanel" Orientation="Horizontal"/>
+                                <StackPanel x:Name="ThemeSwatchLabelsPanel" Orientation="Horizontal" Margin="0,8,0,0"/>
                                 </StackPanel>
-                                <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
-                                    <TextBlock Text="Dark" Width="134" FontSize="11" FontWeight="Bold" Foreground="{DynamicResource Text2}"/>
-                                    <TextBlock Text="Light" Width="134" FontSize="11" FontWeight="Bold" Foreground="{DynamicResource Text2}"/>
-                                    <TextBlock Text="Yami (OBS)" Width="134" FontSize="11" FontWeight="Bold" Foreground="{DynamicResource Text2}"/>
-                                    <TextBlock Text="Yami Acri (OBS)" Width="134" FontSize="11" FontWeight="Bold" Foreground="{DynamicResource Text2}"/>
-                                    <TextBlock Text="AMOLED" FontSize="11" FontWeight="Bold" Foreground="{DynamicResource Text2}"/>
-                                </StackPanel>
+                                </ScrollViewer>
                             </StackPanel>
                         </Border>
 
@@ -1362,6 +1315,62 @@
                                 <Button Grid.Column="1" Content="Change" Style="{StaticResource FlatButton}" VerticalAlignment="Center" Click="ChangeClipsFolder_Click"/>
                             </Grid>
                         </Border>
+
+                        <Border Style="{StaticResource SettingsRow}" BorderThickness="0">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <StackPanel VerticalAlignment="Center">
+                                    <TextBlock Text="Storage limit" FontSize="13" FontWeight="Bold" Foreground="{DynamicResource Text0}"/>
+                                    <TextBlock x:Name="StorageLimitStatusText" Text="Off - no limit" FontSize="11" Foreground="{DynamicResource Text2}" Margin="0,3,0,0" TextWrapping="Wrap"/>
+                                </StackPanel>
+                                <ToggleButton x:Name="StorageLimitToggle" Grid.Column="1" Style="{StaticResource AppToggle}" VerticalAlignment="Center" Click="StorageLimitToggle_Click"/>
+                            </Grid>
+                        </Border>
+                        <StackPanel x:Name="StorageLimitFields" Visibility="Collapsed" Margin="0,10,0,10">
+                            <TextBlock Text="Stops you from starting a new recording or saving a replay once your clips folder reaches this size. Nothing gets deleted automatically - free up space, delete clips yourself, or raise this to keep going."
+                                       FontSize="11" Foreground="{DynamicResource Text2}" TextWrapping="Wrap" Margin="0,0,0,8"/>
+                            <Grid Margin="0,0,0,10">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="80"/>
+                                    <ColumnDefinition Width="8"/>
+                                    <ColumnDefinition/>
+                                </Grid.ColumnDefinitions>
+                                <TextBox x:Name="StorageLimitGbBox" Background="{DynamicResource RowBg}" Foreground="{DynamicResource Text0}" CaretBrush="{DynamicResource Text0}" BorderThickness="0" Padding="10,8" TextAlignment="Center"/>
+                                <TextBlock Grid.Column="2" Text="GB" FontSize="12" Foreground="{DynamicResource Text2}" VerticalAlignment="Center"/>
+                            </Grid>
+                            <Button Content="Save &amp; apply" Style="{StaticResource FlatButton}" HorizontalAlignment="Left" Click="ApplyStorageLimit_Click"/>
+                        </StackPanel>
+
+                        <Border Style="{StaticResource SettingsRow}" BorderThickness="0" Margin="0,10,0,0">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <StackPanel VerticalAlignment="Center">
+                                    <TextBlock Text="Auto-delete old clips" FontSize="13" FontWeight="Bold" Foreground="{DynamicResource Text0}"/>
+                                    <TextBlock Text="Sends clips older than the age below to the Recycle Bin automatically, checked every few hours."
+                                               FontSize="11" Foreground="{DynamicResource Text2}" Margin="0,3,0,0" TextWrapping="Wrap"/>
+                                </StackPanel>
+                                <ToggleButton x:Name="AutoDeleteOldClipsToggle" Grid.Column="1" Style="{StaticResource AppToggle}" VerticalAlignment="Center" Click="AutoDeleteOldClipsToggle_Click"/>
+                            </Grid>
+                        </Border>
+                        <StackPanel x:Name="AutoDeleteOldClipsFields" Visibility="Collapsed" Margin="0,10,0,10">
+                            <Grid Margin="0,0,0,10">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="80"/>
+                                    <ColumnDefinition Width="8"/>
+                                    <ColumnDefinition/>
+                                </Grid.ColumnDefinitions>
+                                <TextBox x:Name="AutoDeleteOldClipsDaysBox" Background="{DynamicResource RowBg}" Foreground="{DynamicResource Text0}" CaretBrush="{DynamicResource Text0}" BorderThickness="0" Padding="10,8" TextAlignment="Center"/>
+                                <TextBlock Grid.Column="2" Text="days" FontSize="12" Foreground="{DynamicResource Text2}" VerticalAlignment="Center"/>
+                            </Grid>
+                            <Button Content="Save &amp; apply" Style="{StaticResource FlatButton}" HorizontalAlignment="Left" Click="ApplyAutoDeleteOldClips_Click"/>
+                        </StackPanel>
+
                         <Border Style="{StaticResource SettingsRow}" BorderThickness="0">
                             <Grid>
                                 <Grid.ColumnDefinitions>
@@ -1606,7 +1615,7 @@
                                                 <!-- Virtual Camera badge: same glyph as StatusOverlay's real
                                                      VirtualCamBadge (Font Awesome solid "video", CC BY 4.0). -->
                                                 <Border Width="27" Height="27" Background="{DynamicResource BadgeBg}" BorderBrush="{DynamicResource BadgeBorder}" BorderThickness="1" Margin="5,0,0,0">
-                                                    <Path Fill="{DynamicResource Green}" Stretch="Uniform" Width="15" Height="15"
+                                                    <Path Fill="{DynamicResource Green}" Stretch="Uniform" Width="13" Height="13"
                                                           Data="M0 128C0 92.7 28.7 64 64 64l256 0c35.3 0 64 28.7 64 64l0 256c0 35.3-28.7 64-64 64L64 448c-35.3 0-64-28.7-64-64L0 128zM559.1 99.8c10.4 5.6 16.9 16.4 16.9 28.2l0 256c0 11.8-6.5 22.6-16.9 28.2s-23 5-32.9-1.6l-96-64L416 337.1l0-17.1 0-128 0-17.1 14.2-9.5 96-64c9.8-6.5 22.4-7.2 32.9-1.6z"/>
                                                 </Border>
                                                 <Border Width="27" Height="27" Background="{DynamicResource BadgeBg}" BorderBrush="{DynamicResource BadgeBorder}" BorderThickness="1" Margin="5,0,0,0">
@@ -1795,6 +1804,94 @@
                                                    FontSize="11" Foreground="{DynamicResource Text2}" Margin="0,3,0,0" TextWrapping="Wrap"/>
                                     </StackPanel>
                                     <ToggleButton x:Name="DisableHardwareAccelToggle" Grid.Column="1" Style="{StaticResource AppToggle}" VerticalAlignment="Center" Click="DisableHardwareAccelToggle_Click"/>
+                                </Grid>
+                            </Border>
+                        </StackPanel>
+
+                        <!-- Collapsed by default, and kept after Experimental: these are
+                             one-way, irreversible actions (uninstalling Backtrack itself
+                             included), so they get their own gate instead of sitting loose
+                             at the bottom of Experimental where a stray click is cheaper. -->
+                        <Border x:Name="DestructiveHeader" Margin="0,24,0,0"
+                                Background="Transparent" Cursor="Hand" MouseLeftButtonUp="DestructiveHeader_Click">
+                            <TextBlock x:Name="DestructiveHeaderText" Text="▸ DESTRUCTIVE" FontSize="11" FontWeight="Bold" Foreground="{DynamicResource Rec}"/>
+                        </Border>
+                        <StackPanel x:Name="DestructiveContent" Visibility="Collapsed" Margin="0,10,0,0">
+                            <TextBlock Text="These can't be undone. Each one asks you to confirm first."
+                                       FontSize="11" Foreground="{DynamicResource Text2}" TextWrapping="Wrap" Margin="0,0,0,14"/>
+
+                            <Border Style="{StaticResource SettingsRow}" BorderThickness="0">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel VerticalAlignment="Center">
+                                        <TextBlock Text="Clear settings cache" FontSize="13" FontWeight="Bold" Foreground="{DynamicResource Text0}"/>
+                                        <TextBlock Text="Resets settings.json to defaults (hotkey, theme, clips folder path, OBS pairing/connection, everything) and clears cached clip thumbnails/durations. Your actual clips aren't touched. Restarts Backtrack right after."
+                                                   FontSize="11" Foreground="{DynamicResource Text2}" Margin="0,3,0,0" TextWrapping="Wrap"/>
+                                    </StackPanel>
+                                    <Button x:Name="ClearSettingsCacheButton" Grid.Column="1" Content="Reset" Style="{StaticResource FlatButton}" Foreground="{DynamicResource Rec}" VerticalAlignment="Center" Click="ClearSettingsCacheButton_Click"/>
+                                </Grid>
+                            </Border>
+
+                            <Border Style="{StaticResource SettingsRow}" BorderThickness="0" Margin="0,10,0,0">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel VerticalAlignment="Center">
+                                        <TextBlock Text="Clear clips directory" FontSize="13" FontWeight="Bold" Foreground="{DynamicResource Text0}"/>
+                                        <TextBlock Text="Deletes every clip (.mp4/.mkv/.flv/.mov) inside your clips folder, recursively. Folders and any other file type in there are left alone completely, even sitting right next to a deleted clip."
+                                                   FontSize="11" Foreground="{DynamicResource Text2}" Margin="0,3,0,0" TextWrapping="Wrap"/>
+                                    </StackPanel>
+                                    <Button x:Name="ClearClipsDirectoryButton" Grid.Column="1" Content="Clear" Style="{StaticResource FlatButton}" Foreground="{DynamicResource Rec}" VerticalAlignment="Center" Click="ClearClipsDirectoryButton_Click"/>
+                                </Grid>
+                            </Border>
+
+                            <Border Style="{StaticResource SettingsRow}" BorderThickness="0" Margin="0,10,0,0">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel VerticalAlignment="Center">
+                                        <TextBlock Text="Uninstall Backtrack" FontSize="13" FontWeight="Bold" Foreground="{DynamicResource Text0}"/>
+                                        <TextBlock Text="Removes Backtrack, its Start Menu shortcut, and its registry entry, then closes the app. Your clips and settings.json are left where they are."
+                                                   FontSize="11" Foreground="{DynamicResource Text2}" Margin="0,3,0,0" TextWrapping="Wrap"/>
+                                    </StackPanel>
+                                    <Button x:Name="UninstallBacktrackButton" Grid.Column="1" Content="Uninstall" Style="{StaticResource FlatButton}" Foreground="{DynamicResource Rec}" VerticalAlignment="Center" Click="UninstallBacktrackButton_Click"/>
+                                </Grid>
+                            </Border>
+
+                            <Border Style="{StaticResource SettingsRow}" BorderThickness="0" Margin="0,10,0,0">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel VerticalAlignment="Center">
+                                        <TextBlock Text="Uninstall Source Record" FontSize="13" FontWeight="Bold" Foreground="{DynamicResource Text0}"/>
+                                        <TextBlock Text="Runs the obs-source-record plugin's own uninstaller. Closes OBS first if it's running."
+                                                   FontSize="11" Foreground="{DynamicResource Text2}" Margin="0,3,0,0" TextWrapping="Wrap"/>
+                                    </StackPanel>
+                                    <Button x:Name="UninstallSourceRecordButton" Grid.Column="1" Content="Uninstall" Style="{StaticResource FlatButton}" Foreground="{DynamicResource Rec}" VerticalAlignment="Center" Click="UninstallSourceRecordButton_Click"/>
+                                </Grid>
+                            </Border>
+
+                            <Border Style="{StaticResource SettingsRow}" BorderThickness="0" Margin="0,10,0,0">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel VerticalAlignment="Center">
+                                        <TextBlock Text="Uninstall Replay Slider" FontSize="13" FontWeight="Bold" Foreground="{DynamicResource Text0}"/>
+                                        <TextBlock Text="Runs the obs-replay-slider plugin's own uninstaller. Closes OBS first if it's running."
+                                                   FontSize="11" Foreground="{DynamicResource Text2}" Margin="0,3,0,0" TextWrapping="Wrap"/>
+                                    </StackPanel>
+                                    <Button x:Name="UninstallReplaySliderButton" Grid.Column="1" Content="Uninstall" Style="{StaticResource FlatButton}" Foreground="{DynamicResource Rec}" VerticalAlignment="Center" Click="UninstallReplaySliderButton_Click"/>
                                 </Grid>
                             </Border>
                         </StackPanel>

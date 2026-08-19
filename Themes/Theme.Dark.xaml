@@ -1,5 +1,6 @@
 <ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                    xmlns:sys="clr-namespace:System;assembly=mscorlib">
     <!--
       The app's one and only dark palette; merged into Application.Resources
       at startup (see App.xaml.cs), and swapped for Theme.Light.xaml at
@@ -14,7 +15,24 @@
       (plus one real outlier: a distinctly blue-tinted #1E1E24 on the
       Player seek-bar tooltip, fixed to just use PanelBg like everything
       else already did).
+
+      Theme files are discovered from disk at runtime (ThemeManager.
+      DiscoverThemes), not a hardcoded list: this file's own name
+      ("Theme.Dark.xaml") IS its Id. ThemeDisplayName/ThemeSortOrder/
+      ThemeBuiltIn below are optional per-theme metadata a theme file can
+      set to control its own label/position in Settings, and to mark
+      itself as one of the themes this app actually ships; none of the
+      three is a DynamicResource lookup anywhere, so there's no risk of
+      colliding with a real color key. A theme that doesn't set
+      ThemeDisplayName/ThemeSortOrder just gets a prettified version of its
+      filename and sorts alphabetically after every theme that does;
+      ThemeBuiltIn absent (the normal case for anything not shipped with
+      the app) just means IsBuiltIn reads false: purely backend
+      bookkeeping right now, nothing in the UI shows or reads it.
     -->
+    <sys:String x:Key="ThemeDisplayName">Dark</sys:String>
+    <sys:Double x:Key="ThemeSortOrder">1</sys:Double>
+    <sys:Boolean x:Key="ThemeBuiltIn">true</sys:Boolean>
     <SolidColorBrush x:Key="PanelBg" Color="#101113"/>
     <SolidColorBrush x:Key="PanelBgOpaque" Color="#EC101113"/>
     <!-- Recessed card surface: folder icons (Gallery) and the neutral

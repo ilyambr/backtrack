@@ -1,5 +1,6 @@
 <ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                    xmlns:sys="clr-namespace:System;assembly=mscorlib">
     <!--
       True #000000 panel background, not just "very dark grey"; on an OLED
       panel those pixels are actually off (real power savings, deepest
@@ -11,7 +12,12 @@
       Otherwise the same structure/steps as Theme.Dark.xaml, just anchored
       to 0 instead of 8; Rec/RecDark/Stream/Green stay Backtrack's own brand
       colors, same as every other theme.
+
+      ThemeDisplayName/ThemeSortOrder/ThemeBuiltIn: see Theme.Dark.xaml's own comment.
     -->
+    <sys:String x:Key="ThemeDisplayName">AMOLED</sys:String>
+    <sys:Double x:Key="ThemeSortOrder">5</sys:Double>
+    <sys:Boolean x:Key="ThemeBuiltIn">true</sys:Boolean>
     <SolidColorBrush x:Key="PanelBg" Color="#000000"/>
     <SolidColorBrush x:Key="PanelBgOpaque" Color="#EC000000"/>
     <!-- Recessed card surface; see Theme.Dark.xaml's own comment on this key.

@@ -1,12 +1,18 @@
 <ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                    xmlns:sys="clr-namespace:System;assembly=mscorlib">
     <!--
       Light counterpart to Theme.Dark.xaml; same keys, same structure,
       mirrored values. See that file's own comment for how/why this gets
       merged in. Clean white/light-grey base with dark text; accent colors
       (Rec/RecDark/Stream/Green) stay identical to dark mode on purpose,
       see Theme.Dark.xaml's own comment on that.
+
+      ThemeDisplayName/ThemeSortOrder/ThemeBuiltIn: see Theme.Dark.xaml's own comment.
     -->
+    <sys:String x:Key="ThemeDisplayName">Light</sys:String>
+    <sys:Double x:Key="ThemeSortOrder">2</sys:Double>
+    <sys:Boolean x:Key="ThemeBuiltIn">true</sys:Boolean>
     <SolidColorBrush x:Key="PanelBg" Color="#F7F7F8"/>
     <SolidColorBrush x:Key="PanelBgOpaque" Color="#ECF7F7F8"/>
     <!-- Recessed card surface; see Theme.Dark.xaml's own comment on this key.

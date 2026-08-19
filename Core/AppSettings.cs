@@ -2,8 +2,42 @@
 using System.Collections.Generic;
 using System.IO;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace Backtrack;
+
+/// <summary>
+/// Theme is now a free-form string Id (a theme file's name, see
+/// ThemeManager), not the old fixed AppTheme enum -- an open-ended,
+/// drop-a-file set of themes can't be represented by a fixed enum. An
+/// existing settings.json from before this change stored the OLD enum's
+/// raw numeric ordinal instead of a string, which a plain string property
+/// would fail to deserialize entirely -- and AppSettings.Load's own
+/// catch-all around the WHOLE file would then silently reset EVERY other
+/// setting (hotkey, clips folder, OBS pairing, ...) back to defaults too,
+/// not just the theme. This converter accepts either shape: a JSON number
+/// is mapped through the old enum's own historical append order
+/// (Dark/Light/Yami/Amoled/YamiAcri -- never reordered, per that enum's
+/// own comment while it still existed) to the matching theme Id string; a
+/// JSON string (the new, ongoing format) passes through unchanged.
+/// </summary>
+public sealed class ThemeIdConverter : JsonConverter<string>
+{
+    private static readonly string[] LegacyEnumOrder = { "Dark", "Light", "Yami", "Amoled", "YamiAcri" };
+
+    public override string Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+    {
+        if (reader.TokenType == JsonTokenType.Number)
+        {
+            int ordinal = reader.GetInt32();
+            return ordinal >= 0 && ordinal < LegacyEnumOrder.Length ? LegacyEnumOrder[ordinal] : "Dark";
+        }
+        return reader.GetString() ?? "Dark";
+    }
+
+    public override void Write(Utf8JsonWriter writer, string value, JsonSerializerOptions options) =>
+        writer.WriteStringValue(value);
+}
 
 public sealed class AppSettings
 {
@@ -59,7 +93,11 @@ public sealed class AppSettings
     public bool DisableBacktrackAutoUpdate { get; set; }
     public bool DisablePluginAutoUpdate { get; set; }
 
-    public AppTheme Theme { get; set; } = AppTheme.Dark;
+    // See ThemeIdConverter's own comment for why this needs a custom
+    // converter: an existing settings.json's stored value predates this
+    // being a string at all.
+    [JsonConverter(typeof(ThemeIdConverter))]
+    public string Theme { get; set; } = "Dark";
 
     // Off by default -- see MainWindow's ShowScreen/ToggleVisible/CloseOverlay
     // for the AllowsTransparency="True" experiment these gate. That change
@@ -185,6 +223,17 @@ public sealed class AppSettings
     public string? LastAppliedReplaySliderDigest { get; set; }
     public string? LastAppliedSourceRecordDigest { get; set; }
 
+    // Settings > Clips > Storage limit / Auto-delete old clips. StorageLimitEnabled
+    // false means no limit at all, regardless of StorageLimitGb's stored value --
+    // a hard "stop letting you make new clips" gate once ClipsFolder's total size
+    // reaches the limit, not an auto-cleanup (that's the separate setting below).
+    // Neither one deletes anything by itself; see TryBlockForStorageLimit /
+    // RunAutoDeleteOldClips in MainWindow.xaml.cs.
+    public bool StorageLimitEnabled { get; set; }
+    public double StorageLimitGb { get; set; } = 10;
+    public bool AutoDeleteOldClipsEnabled { get; set; }
+    public int AutoDeleteOldClipsAfterDays { get; set; } = 30;
+
     // Bottom-right corner log window (see OverlayLogWindow). "Obs" mirrors
     // OBS's own status-bar-style warnings (encoding overload, saves) one line
     // at a time; "Backtrack" shows a scrollable window into AppLog instead.
@@ -284,5 +333,19 @@ public sealed class AppSettings
         string dir = Path.GetDirectoryName(FilePath)!;
         Directory.CreateDirectory(dir);
         File.WriteAllText(FilePath, JsonSerializer.Serialize(this));
+    }
+
+    /// <summary>
+    /// Settings > Destructive > Clear settings cache. Deletes settings.json
+    /// itself (not just an in-memory reset) so the NEXT Load() -- after the
+    /// caller restarts the app, since a live reset would mean manually
+    /// re-syncing dozens of already-bound Settings UI controls by hand -- has
+    /// nothing to read and falls through to a plain `new AppSettings()`,
+    /// same as a genuinely first-ever run.
+    /// </summary>
+    public static void ClearSavedFile()
+    {
+        try { if (File.Exists(FilePath)) File.Delete(FilePath); }
+        catch { /* best effort -- e.g. file briefly locked; caller still restarts either way */ }
     }
 }

@@ -14,7 +14,7 @@
          replacements for every Win32-only feature) doesn't exist yet, but
          when it does it versions independently, starting fresh, not from
          this number. -->
-    <Version>0.3.1</Version>
+    <Version>0.3.2</Version>
     <ApplicationIcon>Assets\app.ico</ApplicationIcon>
     <!-- The OBS link itself is still a hand-rolled obs-websocket v5 client over
          System.Net.WebSockets, no package needed. LibVLC below is the one
@@ -49,6 +49,22 @@
          official package tree is kept intact rather than cherry-picked, so
          install.cmd/imdisk.inf still find files exactly where they expect them. -->
     <None Update="ThirdParty\ImDisk\**">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Theme.*.xaml files are loose files at runtime (Themes\ next to the
+         .exe), not embedded Page/BAML resources: SDK-style projects
+         auto-include every .xaml as a compiled Page by default, which is
+         exactly what this Remove+None pair opts these specific files out
+         of. That's what makes ThemeManager.DiscoverThemes' whole point
+         possible: adding a new theme (or a user making their own) is
+         "drop a file named Theme.Whatever.xaml in that folder", no code
+         change and no rebuild required, since the app reads them off disk
+         at runtime instead of needing them baked into the binary. -->
+    <Page Remove="Themes\Theme.*.xaml" />
+    <None Include="Themes\Theme.*.xaml">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
   </ItemGroup>

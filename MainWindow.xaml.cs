@@ -245,6 +245,12 @@ public partial class MainWindow : Window
     public MainWindow(StatusOverlay statusOverlay, ToastOverlay toastOverlay, ScrimOverlay scrim, DisclaimerOverlay disclaimer, LogoOverlay logo, StreamingStatusOverlay streamingStatus, PairingRequestOverlay pairingRequestOverlay, RecentClipsOverlay recentClipsOverlay)
     {
         InitializeComponent();
+        // A safe initial default in case anything reads _themeSwatches before
+        // Settings is ever opened -- LoadSettingsUi rebuilds this properly
+        // every time Settings actually opens (see its own comment on why
+        // that's necessary now: unlike the old fixed 5-theme version, the
+        // discovered set of themes can genuinely change while running).
+        BuildThemeSwatches();
         _statusOverlay = statusOverlay;
         _pairingRequestOverlay = pairingRequestOverlay;
         _recentClipsOverlay = recentClipsOverlay;
@@ -690,6 +696,7 @@ public partial class MainWindow : Window
         if (!UpdateService.IsDevBuild)
             _ = CheckForUpdatesAsync();
 
+        RestartAutoDeleteOldClipsTimer();
         InitializeOverlayLog();
         InitializeRecentClipsOverlay();
     }
@@ -908,11 +915,30 @@ public partial class MainWindow : Window
         return sizeMb >= 1000 ? $"{sizeMb / 1024.0:0.#} GB" : $"{sizeMb:0.#} MB";
     }
 
-    /// <summary>The overlay is only ever visible while the HUD itself is (see ToggleVisible/CloseOverlay), so this is mostly defensive -- reveals the HUD first if it's somehow hidden anyway, then opens the clip. Same "only show if not already" check App.xaml.cs's own _showEvent handler uses.</summary>
+    /// <summary>The overlay is only ever visible while the HUD itself is (see ToggleVisible/CloseOverlay), so the visibility check here is mostly defensive -- reveals the HUD first if it's somehow hidden anyway, then opens the clip. Same "only show if not already" check App.xaml.cs's own _showEvent handler uses.</summary>
     private void ShowMainWindowAndOpenInPlayer(FileInfo file)
     {
         if (!IsVisible)
             ToggleVisible();
+
+        // Unconditional, not just inside the branch above -- the click that
+        // got here fired on _recentClipsOverlay, a genuinely separate
+        // top-level Window (ToolWindow.Enable only hides it from Alt+Tab/
+        // taskbar, WS_EX_TOOLWINDOW; it doesn't set WS_EX_NOACTIVATE, so
+        // that click still gave IT real Win32 activation), not on this
+        // window, regardless of whether ToggleVisible above actually ran.
+        // Nothing else in this call chain re-activates MainWindow itself --
+        // ShowScreen/OpenInPlayer only change visibility/content. Without
+        // this, PlayerOverlayPopup and the fullscreen transport popup (both
+        // owned by MainWindow) get set up while a DIFFERENT window still
+        // holds real activation, which can look fine initially but loses
+        // the title/back button on the next real Z-order event (VLC's own
+        // native right-click context menu stealing focus), and never shows
+        // them correctly in fullscreen at all -- confirmed live: both only
+        // happen opening a clip from the quick-gallery overlay, never from
+        // the normal Gallery screen, which never involves a second window.
+        Activate();
+
         OpenInPlayer(file);
         // See _playerBackTarget's own comment -- overridden AFTER OpenInPlayer
         // runs, since OpenInPlayer itself resets this to Gallery at its top.
@@ -1714,6 +1740,58 @@ public partial class MainWindow : Window
         RefreshOverlayLogVisibilityAndMode();
     }
 
+    /// <summary>Shows current usage against the configured limit, or just "Off" -- same idea as RefreshRamDiskStatusText.</summary>
+    private void RefreshStorageLimitStatusText()
+    {
+        if (!_settings.StorageLimitEnabled)
+        {
+            StorageLimitStatusText.Text = "Off - no limit";
+            return;
+        }
+        double usedGb = GetClipsFolderUsageBytes() / (double)BytesPerGb;
+        StorageLimitStatusText.Text = $"{usedGb:0.0} GB used of {_settings.StorageLimitGb:0.#} GB limit";
+    }
+
+    private void StorageLimitToggle_Click(object sender, RoutedEventArgs e)
+    {
+        _settings.StorageLimitEnabled = StorageLimitToggle.IsChecked == true;
+        _settings.Save();
+        StorageLimitFields.Visibility = _settings.StorageLimitEnabled ? Visibility.Visible : Visibility.Collapsed;
+        RefreshStorageLimitStatusText();
+    }
+
+    private void ApplyStorageLimit_Click(object sender, RoutedEventArgs e)
+    {
+        if (!double.TryParse(StorageLimitGbBox.Text.Trim(), out double gb) || gb <= 0)
+        {
+            MessageBox.Show(this, "Storage limit must be a number of gigabytes greater than 0.", "Backtrack");
+            return;
+        }
+        _settings.StorageLimitGb = gb;
+        _settings.Save();
+        RefreshStorageLimitStatusText();
+    }
+
+    private void AutoDeleteOldClipsToggle_Click(object sender, RoutedEventArgs e)
+    {
+        _settings.AutoDeleteOldClipsEnabled = AutoDeleteOldClipsToggle.IsChecked == true;
+        _settings.Save();
+        AutoDeleteOldClipsFields.Visibility = _settings.AutoDeleteOldClipsEnabled ? Visibility.Visible : Visibility.Collapsed;
+        RestartAutoDeleteOldClipsTimer();
+    }
+
+    private void ApplyAutoDeleteOldClips_Click(object sender, RoutedEventArgs e)
+    {
+        if (!int.TryParse(AutoDeleteOldClipsDaysBox.Text.Trim(), out int days) || days <= 0)
+        {
+            MessageBox.Show(this, "Age must be a whole number of days greater than 0.", "Backtrack");
+            return;
+        }
+        _settings.AutoDeleteOldClipsAfterDays = days;
+        _settings.Save();
+        RestartAutoDeleteOldClipsTimer();
+    }
+
     private async void ApplyRamDiskSettings_Click(object sender, RoutedEventArgs e)
     {
         string driveText = RamDiskDriveBox.Text.Trim().TrimEnd(':');
@@ -1810,9 +1888,9 @@ public partial class MainWindow : Window
             if (_settings.RamDiskInstructionShown)
             {
                 Dispatcher.Invoke(() => MessageBox.Show(this,
-                    "RAM disk turned off. The plugin's clip destination has been pointed back at your Clips folder automatically.\n\n" +
-                    $"One more manual step, same as when you turned it on: in OBS, go to Settings > Output > Replay Buffer and change its output path back from {oldDrive}:\\ to a real folder (e.g. your Clips folder) -- " +
-                    "OBS doesn't expose a way for Backtrack to do this part for you automatically, so replay saves will fail until you do.",
+                    "RAM disk turned off. Backtrack switched the plugin's clip destination back to your Clips folder.\n\n" +
+                    $"One last step in OBS: go to Settings > Output > Replay Buffer and change the output path from {oldDrive}:\\ to a real folder (like your Clips folder). " +
+                    "Backtrack can't change this setting automatically, so replay saves won't work until you do.",
                     "Backtrack"));
             }
         }
@@ -1826,6 +1904,165 @@ public partial class MainWindow : Window
         bool expand = ExperimentalContent.Visibility != Visibility.Visible;
         ExperimentalContent.Visibility = expand ? Visibility.Visible : Visibility.Collapsed;
         ExperimentalHeaderText.Text = expand ? "▾ EXPERIMENTAL" : "▸ EXPERIMENTAL";
+    }
+
+    /// <summary>Same collapsed-by-default header pattern as ExperimentalHeader_Click above.</summary>
+    private void DestructiveHeader_Click(object sender, MouseButtonEventArgs e)
+    {
+        bool expand = DestructiveContent.Visibility != Visibility.Visible;
+        DestructiveContent.Visibility = expand ? Visibility.Visible : Visibility.Collapsed;
+        DestructiveHeaderText.Text = expand ? "▾ DESTRUCTIVE" : "▸ DESTRUCTIVE";
+    }
+
+    /// <summary>
+    /// Resets settings.json AND clears the generated-thumbnail cache next to
+    /// it -- "settings cache" here means both things living under
+    /// %AppData%/%LocalAppData%\Backtrack, not just the thumbnails. Doesn't
+    /// touch clips. Restarts the app immediately after, since a live reset
+    /// would otherwise mean manually re-syncing every already-bound Settings
+    /// control (hotkey, theme, pairing, OBS connection, ...) by hand instead
+    /// of just letting a fresh launch's AppSettings.Load() do it correctly.
+    /// </summary>
+    private void ClearSettingsCacheButton_Click(object sender, RoutedEventArgs e)
+    {
+        string cacheDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Backtrack", "thumbnails");
+
+        ShowConfirmDialog(
+            "Reset Backtrack to its default settings and clear cached thumbnails? This resets your hotkey, theme, clips folder, OBS connection, and other settings. Your clips won't be deleted. Backtrack will restart afterward.",
+            "Reset",
+            confirmed =>
+            {
+                if (!confirmed) return;
+
+                if (Directory.Exists(cacheDir))
+                {
+                    foreach (string f in Directory.EnumerateFiles(cacheDir))
+                    {
+                        // Best-effort per file, not all-or-nothing -- a
+                        // thumbnail mid-generation right now can be briefly
+                        // locked; that's not a reason to leave the rest.
+                        try { File.Delete(f); } catch { /* best effort */ }
+                    }
+                }
+
+                AppSettings.ClearSavedFile();
+
+                string? exePath = Process.GetCurrentProcess().MainModule?.FileName;
+                if (!string.IsNullOrEmpty(exePath))
+                {
+                    try { Process.Start(new ProcessStartInfo(exePath) { UseShellExecute = true }); }
+                    catch { /* best effort -- worst case the user relaunches manually */ }
+                }
+                Application.Current.Shutdown();
+            });
+    }
+
+    private void ClearClipsDirectoryButton_Click(object sender, RoutedEventArgs e)
+    {
+        string clipsFolder = _settings.ClipsFolder;
+        if (string.IsNullOrWhiteSpace(clipsFolder) || !Directory.Exists(clipsFolder))
+        {
+            MessageBox.Show(this, "Your clips folder isn't set or doesn't exist.", "Backtrack");
+            return;
+        }
+
+        List<string> clipFiles;
+        try
+        {
+            // VideoExtensions (.mp4/.mkv/.flv/.mov -- see GalleryFormats), the
+            // exact same list the Gallery itself uses to decide what's a clip
+            // vs. anything else that happens to be sitting in this folder. A
+            // recursive scan filtered to just that list, not a folder delete,
+            // is what keeps this from touching subfolders or non-clip files
+            // someone might have stored in their clips folder for their own
+            // reasons -- deleting only what Backtrack itself put there.
+            clipFiles = Directory.EnumerateFiles(clipsFolder, "*", SearchOption.AllDirectories)
+                .Where(f => VideoExtensions.Contains(Path.GetExtension(f).ToLowerInvariant()))
+                .ToList();
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, $"Couldn't read the clips folder: {ex.Message}", "Backtrack");
+            return;
+        }
+
+        if (clipFiles.Count == 0)
+        {
+            MessageBox.Show(this, "No clips found in your clips folder.", "Backtrack");
+            return;
+        }
+
+        ShowConfirmDialog(
+            $"Permanently delete {clipFiles.Count} clip(s) from \"{clipsFolder}\"? " +
+            "Only the clip files will be deleted. Folders, other file types, and subfolders will not be affected.",
+            "Delete clips",
+            confirmed =>
+            {
+                if (!confirmed) return;
+                int failed = 0;
+                foreach (string f in clipFiles)
+                {
+                    try { File.Delete(f); }
+                    catch { failed++; }
+                }
+                LoadGallery();
+                if (failed > 0)
+                    MessageBox.Show(this, $"{failed} clip(s) couldn't be deleted (in use, or permissions). The rest were removed.", "Backtrack");
+            });
+    }
+
+    private void UninstallBacktrackButton_Click(object sender, RoutedEventArgs e)
+    {
+        ShowConfirmDialog(
+            "Uninstall Backtrack? This removes the app, its Start Menu shortcut, and its registry entry. Your clips aren't touched.",
+            "Uninstall",
+            confirmed =>
+            {
+                if (!confirmed) return;
+                (bool success, string? error) = Backtrack.Interop.SelfUninstall.BeginUninstall();
+                if (!success)
+                {
+                    MessageBox.Show(this, error ?? "Couldn't start the uninstall.", "Backtrack");
+                    return;
+                }
+                // The wrapper process is now waiting for THIS process to exit before it
+                // actually deletes anything -- Shutdown, not just closing the window, so
+                // that wait doesn't hang around forever if some other window/overlay is
+                // still keeping the app alive.
+                Application.Current.Shutdown();
+            });
+    }
+
+    private void UninstallSourceRecordButton_Click(object sender, RoutedEventArgs e)
+    {
+        ShowConfirmDialog(
+            "Uninstall Source Record? OBS will be closed first if it's running.",
+            "Uninstall",
+            async confirmed =>
+            {
+                if (!confirmed) return;
+                UninstallSourceRecordButton.IsEnabled = false;
+                (bool success, string? error) = await _updates.UninstallSourceRecordAsync();
+                UninstallSourceRecordButton.IsEnabled = true;
+                if (!success)
+                    MessageBox.Show(this, error ?? "Couldn't uninstall Source Record.", "Backtrack");
+            });
+    }
+
+    private void UninstallReplaySliderButton_Click(object sender, RoutedEventArgs e)
+    {
+        ShowConfirmDialog(
+            "Uninstall Replay Slider? OBS will be closed first if it's running.",
+            "Uninstall",
+            async confirmed =>
+            {
+                if (!confirmed) return;
+                UninstallReplaySliderButton.IsEnabled = false;
+                (bool success, string? error) = await _updates.UninstallReplaySliderAsync();
+                UninstallReplaySliderButton.IsEnabled = true;
+                if (!success)
+                    MessageBox.Show(this, error ?? "Couldn't uninstall Replay Slider.", "Backtrack");
+            });
     }
 
     private void SuggestRamDiskSize_Click(object sender, RoutedEventArgs e)
@@ -2078,6 +2315,12 @@ public partial class MainWindow : Window
 
     private void CloseOverlay(bool preserveScreen = false)
     {
+        // preserveScreen (and IsCriticalOperationActive below) can both skip
+        // the ShowScreen call that would otherwise stop this -- covered
+        // directly here too so closing the HUD mid-autoscroll can never
+        // leave CompositionTarget.Rendering ticking against a hidden window.
+        StopSettingsAutoscroll();
+
         if (!_settings.EnableAnimations)
         {
             // Instant path, matching how this worked before the
@@ -2510,6 +2753,14 @@ public partial class MainWindow : Window
 
     private void ShowScreen(Screen screen, bool skipEntranceAnimation = false)
     {
+        // Unconditional, not just when leaving Settings specifically -- cheap
+        // no-op via its own IsActive guard if autoscroll isn't running, but
+        // navigating away (or even just switching to a different screen and
+        // back) while it's active would otherwise leave CompositionTarget.
+        // Rendering subscribed forever, ticking a scroll loop against a
+        // ScrollViewer nobody's looking at anymore.
+        StopSettingsAutoscroll();
+
         FrameworkElement newPanel = PanelFor(screen);
         bool switchingPanel = newPanel.Visibility != Visibility.Visible;
         // No entrance animation at all for Player -- VLC's video keeps
@@ -4193,8 +4444,32 @@ public partial class MainWindow : Window
 
         string styleKey = row.Status == 1 ? "BufRowButton" : "BufRowButtonNoHover";
         var button = new Button { Style = (Style)FindResource(styleKey), Content = content, Tag = row.Key };
+
+        // Status 0 (the grey dot -- buffer never armed/running for this row
+        // at all, nothing an unbound "(unbound)" hotkey and no green dot
+        // don't already say) used to stay clickable anyway: Save Replay on
+        // a buffer that was never started sends a real save_row request
+        // that can never actually complete, since there's nothing buffered
+        // to flush -- ShowProcessingClip's toast below then just sits there
+        // forever, since the ReplaySaved event that would dismiss it never
+        // fires. Same "disable rather than let a click do nothing useful"
+        // treatment as BuildRecordRowButton's own Inactive/NoSignal rows;
+        // Error (2) stays clickable on purpose, same as there -- a real
+        // buffer that failed its last save is still worth letting the user
+        // retry, unlike one that was never running in the first place.
+        if (row.Status == 0)
+        {
+            button.IsEnabled = false;
+            return button;
+        }
+
         button.Click += async (_, _) =>
         {
+            if (TryBlockForStorageLimit(out string? blockMessage))
+            {
+                MessageBox.Show(this, blockMessage, "Backtrack");
+                return;
+            }
             button.IsEnabled = false;
             try
             {
@@ -4303,6 +4578,115 @@ public partial class MainWindow : Window
         }
     }
 
+    private const long BytesPerGb = 1024L * 1024L * 1024L;
+
+    /// <summary>Sum of every recognized clip file's size under ClipsFolder, recursive -- same VideoExtensions list the Gallery itself uses, so this matches what a user actually sees as "clips" there.</summary>
+    private long GetClipsFolderUsageBytes()
+    {
+        if (string.IsNullOrWhiteSpace(_settings.ClipsFolder) || !Directory.Exists(_settings.ClipsFolder))
+            return 0;
+        try
+        {
+            return Directory.EnumerateFiles(_settings.ClipsFolder, "*", SearchOption.AllDirectories)
+                .Where(f => VideoExtensions.Contains(Path.GetExtension(f).ToLowerInvariant()))
+                .Sum(f => new FileInfo(f).Length);
+        }
+        catch
+        {
+            return 0; // best effort -- a transient read error here shouldn't block recording on its own
+        }
+    }
+
+    /// <summary>
+    /// Settings > Clips > Storage limit. Checked right before anything that
+    /// would create a NEW clip (starting a recording row, saving a replay
+    /// row) -- a hard stop once ClipsFolder's total size reaches the limit,
+    /// not an auto-cleanup; nothing gets deleted on your behalf here, see
+    /// RunAutoDeleteOldClips for the separate opt-in that does.
+    /// </summary>
+    private bool TryBlockForStorageLimit(out string? blockedMessage)
+    {
+        blockedMessage = null;
+        if (!_settings.StorageLimitEnabled)
+            return false;
+
+        long usedBytes = GetClipsFolderUsageBytes();
+        long limitBytes = (long)(_settings.StorageLimitGb * BytesPerGb);
+        if (usedBytes < limitBytes)
+            return false;
+
+        double usedGb = usedBytes / (double)BytesPerGb;
+        blockedMessage = $"Your clips folder is at {usedGb:0.0} GB, at or over your {_settings.StorageLimitGb:0.#} GB storage limit. " +
+            "Free up space, delete some clips, or raise the limit in Settings before recording or saving more.";
+        return true;
+    }
+
+    /// <summary>
+    /// Settings > Clips > Auto-delete old clips. Runs once at startup (see
+    /// caller) and on a repeating timer -- unlike the storage limit above,
+    /// this one DOES delete: anything past the configured age, sent to the
+    /// Recycle Bin (RecycleBin.Delete, same as every other clip deletion in
+    /// this app -- see DeleteClip), never a permanent File.Delete.
+    /// </summary>
+    private void RunAutoDeleteOldClips()
+    {
+        if (!_settings.AutoDeleteOldClipsEnabled)
+            return;
+
+        string folder = _settings.ClipsFolder;
+        if (string.IsNullOrWhiteSpace(folder) || !Directory.Exists(folder))
+            return;
+
+        DateTime cutoff = DateTime.Now.AddDays(-_settings.AutoDeleteOldClipsAfterDays);
+        List<string> oldClips;
+        try
+        {
+            oldClips = Directory.EnumerateFiles(folder, "*", SearchOption.AllDirectories)
+                .Where(f => VideoExtensions.Contains(Path.GetExtension(f).ToLowerInvariant()) && File.GetLastWriteTime(f) < cutoff)
+                .ToList();
+        }
+        catch (Exception ex)
+        {
+            AppLog.Write($"Auto-delete old clips: couldn't scan clips folder: {ex.Message}");
+            return;
+        }
+
+        if (oldClips.Count == 0)
+            return;
+
+        int deleted = 0;
+        foreach (string f in oldClips)
+        {
+            if (RecycleBin.Delete(f))
+                deleted++;
+        }
+
+        AppLog.Write($"Auto-delete old clips: removed {deleted}/{oldClips.Count} clip(s) older than {_settings.AutoDeleteOldClipsAfterDays} day(s).");
+        if (deleted > 0)
+        {
+            _toastOverlay.ShowOldClipsAutoDeleted(deleted, _settings.AutoDeleteOldClipsAfterDays);
+            if (GalleryPanel.Visibility == Visibility.Visible)
+                LoadGallery();
+        }
+    }
+
+    private DispatcherTimer? _autoDeleteOldClipsTimer;
+
+    /// <summary>Called once from the constructor and again every time the setting's toggled/edited in Settings -- restarts the timer (or stops it) rather than assuming it was never running.</summary>
+    private void RestartAutoDeleteOldClipsTimer()
+    {
+        _autoDeleteOldClipsTimer?.Stop();
+        _autoDeleteOldClipsTimer = null;
+
+        if (!_settings.AutoDeleteOldClipsEnabled)
+            return;
+
+        RunAutoDeleteOldClips(); // also sweep once immediately, not just on the first tick 6 hours from now
+        _autoDeleteOldClipsTimer = new DispatcherTimer { Interval = TimeSpan.FromHours(6) };
+        _autoDeleteOldClipsTimer.Tick += (_, _) => RunAutoDeleteOldClips();
+        _autoDeleteOldClipsTimer.Start();
+    }
+
     private Button BuildRecordRowButton(string label, int status, Func<Task> start, Func<Task> stop, bool showToast = true,
         string? sourceName = null, string? filterName = null, string? rowPath = null, string? hotkey = null)
     {
@@ -4398,6 +4782,14 @@ public partial class MainWindow : Window
 
         button.Click += async (_, _) =>
         {
+            // Only starting a NEW recording is gated -- stopping one already in
+            // progress is always allowed regardless of the storage limit, same
+            // reasoning as never blocking a delete.
+            if (!recording && TryBlockForStorageLimit(out string? blockMessage))
+            {
+                MessageBox.Show(this, blockMessage, "Backtrack");
+                return;
+            }
             button.IsEnabled = false;
             try
             {
@@ -6992,7 +7384,7 @@ public partial class MainWindow : Window
 
         string message = remoteOrigin is null
             ? $"Are you sure you want to delete \"{file.Name}\"? This will send it to your recycle bin."
-            : $"Are you sure you want to delete \"{file.Name}\"? This deletes the real clip on {_settings.PairedPeerName}'s PC (sent to its recycle bin there), not just this cached copy.";
+            : $"Delete \"{file.Name}\"? This deletes both the cached copy and the original clip on {_settings.PairedPeerName}'s PC. The original is sent to its Recycle Bin.";
 
         ShowConfirmDialog(
             message,
@@ -7607,6 +7999,11 @@ public partial class MainWindow : Window
 
     private void LoadSettingsUi()
     {
+        // Rebuilt every time Settings actually opens, not just once at
+        // startup -- the whole point of themes being discovered from disk
+        // is that a file can change (or a new one appear) while Backtrack
+        // is running; this is what makes that show up without a restart.
+        BuildThemeSwatches();
         RefreshThemeSwatchSelection();
         EnableAnimationsToggle.IsChecked = _settings.EnableAnimations;
 
@@ -7697,6 +8094,15 @@ public partial class MainWindow : Window
         RamDiskSizeBox.Text = _settings.RamDiskSizeMb.ToString();
         RefreshRamDiskStatusText();
 
+        StorageLimitToggle.IsChecked = _settings.StorageLimitEnabled;
+        StorageLimitFields.Visibility = _settings.StorageLimitEnabled ? Visibility.Visible : Visibility.Collapsed;
+        StorageLimitGbBox.Text = _settings.StorageLimitGb.ToString("0.#");
+        RefreshStorageLimitStatusText();
+
+        AutoDeleteOldClipsToggle.IsChecked = _settings.AutoDeleteOldClipsEnabled;
+        AutoDeleteOldClipsFields.Visibility = _settings.AutoDeleteOldClipsEnabled ? Visibility.Visible : Visibility.Collapsed;
+        AutoDeleteOldClipsDaysBox.Text = _settings.AutoDeleteOldClipsAfterDays.ToString();
+
         OverlayLogToggle.IsChecked = _settings.OverlayLogEnabled;
         OverlayLogModeFields.Visibility = _settings.OverlayLogEnabled ? Visibility.Visible : Visibility.Collapsed;
         // Unsubscribed/resubscribed around setting SelectedIndex -- unlike
@@ -7726,7 +8132,7 @@ public partial class MainWindow : Window
         // expose it (some don't include a name descriptor in their EDID at all).
         var options = displays.Select((d, i) => new DisplayOption(
             d.DeviceName,
-            $"{d.FriendlyName ?? $"Display {i + 1}"}{(d.IsPrimary ? " (Primary)" : "")} — {(int)d.BoundsDiu.Width}x{(int)d.BoundsDiu.Height}")).ToList();
+            $"{d.FriendlyName ?? $"Display {i + 1}"}{(d.IsPrimary ? " (Primary)" : "")} - {(int)d.BoundsDiu.Width}x{(int)d.BoundsDiu.Height}")).ToList();
 
         // Unsubscribed/resubscribed around populating -- ItemsSource/SelectedValue
         // assignment below would otherwise fire SelectionChanged and immediately
@@ -8276,36 +8682,231 @@ public partial class MainWindow : Window
         }
     }
 
-    private void DarkThemeSwatch_Click(object sender, MouseButtonEventArgs e) => ApplyTheme(AppTheme.Dark);
+    private readonly Dictionary<string, Border> _themeSwatches = new(StringComparer.OrdinalIgnoreCase);
 
-    private void LightThemeSwatch_Click(object sender, MouseButtonEventArgs e) => ApplyTheme(AppTheme.Light);
-
-    private void YamiThemeSwatch_Click(object sender, MouseButtonEventArgs e) => ApplyTheme(AppTheme.Yami);
-
-    private void YamiAcriThemeSwatch_Click(object sender, MouseButtonEventArgs e) => ApplyTheme(AppTheme.YamiAcri);
-
-    private void AmoledThemeSwatch_Click(object sender, MouseButtonEventArgs e) => ApplyTheme(AppTheme.Amoled);
-
-    private void ApplyTheme(AppTheme theme)
+    /// <summary>
+    /// Builds Settings' theme-picker swatches from ThemeManager.DiscoverThemes
+    /// -- every color comes from actually reading each theme's own real
+    /// ResourceDictionary (PanelBg/Accent/Text0/Text2), not a hardcoded
+    /// per-theme literal that can drift out of sync with it (see
+    /// ThemeSwatchesPanel's own XAML comment for the bug that caused).
+    /// Called from the constructor AND every time Settings actually opens
+    /// (LoadSettingsUi) -- unlike the old fixed 5-theme version, the set of
+    /// themes here can genuinely change at runtime (a user drops in, edits,
+    /// or removes a Theme.*.xaml file while Backtrack is running), so this
+    /// can't just build once and assume it's still accurate later.
+    /// </summary>
+    private void BuildThemeSwatches()
     {
-        ThemeManager.Apply(theme);
-        _settings.Theme = theme;
+        ThemeSwatchesPanel.Children.Clear();
+        ThemeSwatchLabelsPanel.Children.Clear();
+        _themeSwatches.Clear();
+
+        foreach (ThemeInfo theme in ThemeManager.DiscoverThemes())
+        {
+            Brush panelBg = (Brush)theme.Dictionary["PanelBg"];
+            Brush accent = (Brush)theme.Dictionary["Accent"];
+            Brush text0 = (Brush)theme.Dictionary["Text0"];
+            Brush text2 = (Brush)theme.Dictionary["Text2"];
+
+            var dotRow = new StackPanel { Orientation = Orientation.Horizontal };
+            dotRow.Children.Add(new System.Windows.Shapes.Ellipse
+            {
+                Width = 8, Height = 8, Fill = accent, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 6, 0),
+            });
+            dotRow.Children.Add(new System.Windows.Shapes.Rectangle { Height = 6, Width = 46, Fill = text0, RadiusX = 3, RadiusY = 3 });
+
+            var content = new StackPanel { Margin = new Thickness(10) };
+            content.Children.Add(dotRow);
+            content.Children.Add(new System.Windows.Shapes.Rectangle { Height = 5, Width = 70, Fill = text2, RadiusX = 2, RadiusY = 2, Margin = new Thickness(0, 12, 0, 0) });
+            content.Children.Add(new System.Windows.Shapes.Rectangle { Height = 5, Width = 50, Fill = text2, RadiusX = 2, RadiusY = 2, Margin = new Thickness(0, 6, 0, 0) });
+
+            var swatch = new Border
+            {
+                Width = 122, Height = 78, CornerRadius = new CornerRadius(6),
+                Background = panelBg, BorderThickness = new Thickness(2), BorderBrush = Brushes.Transparent,
+                Cursor = Cursors.Hand, Margin = new Thickness(0, 0, 12, 0), Child = content,
+            };
+            string themeId = theme.Id;
+            swatch.MouseLeftButtonUp += (_, _) => ApplyTheme(themeId);
+            ThemeSwatchesPanel.Children.Add(swatch);
+            _themeSwatches[themeId] = swatch;
+
+            ThemeSwatchLabelsPanel.Children.Add(new TextBlock
+            {
+                Text = theme.DisplayName, Width = 134, FontSize = 11, FontWeight = FontWeights.Bold, Foreground = (Brush)FindResource("Text2"),
+            });
+        }
+    }
+
+    private void ApplyTheme(string themeId)
+    {
+        ThemeManager.Apply(themeId);
+        _settings.Theme = themeId;
         _settings.Save();
         RefreshThemeSwatchSelection();
     }
 
     // Highlight ring around whichever swatch matches the currently active
     // theme; Green isn't tied to "success" here, just the app's one
-    // consistent selection accent, and it reads fine over all five swatches
-    // since it's a fixed brand color, not a themed neutral.
+    // consistent selection accent, and it reads fine regardless of how many
+    // swatches there are since it's a fixed brand color, not a themed neutral.
     private void RefreshThemeSwatchSelection()
     {
         var selected = new SolidColorBrush(Color.FromRgb(0x3E, 0xCF, 0x8E));
-        DarkThemeSwatch.BorderBrush = ThemeManager.Current == AppTheme.Dark ? selected : Brushes.Transparent;
-        LightThemeSwatch.BorderBrush = ThemeManager.Current == AppTheme.Light ? selected : Brushes.Transparent;
-        YamiThemeSwatch.BorderBrush = ThemeManager.Current == AppTheme.Yami ? selected : Brushes.Transparent;
-        YamiAcriThemeSwatch.BorderBrush = ThemeManager.Current == AppTheme.YamiAcri ? selected : Brushes.Transparent;
-        AmoledThemeSwatch.BorderBrush = ThemeManager.Current == AppTheme.Amoled ? selected : Brushes.Transparent;
+        foreach ((string themeId, Border swatch) in _themeSwatches.Select(kv => (kv.Key, kv.Value)))
+            swatch.BorderBrush = string.Equals(ThemeManager.Current, themeId, StringComparison.OrdinalIgnoreCase) ? selected : Brushes.Transparent;
+    }
+
+    // ------------------------------------------------------ theme swatch drag-scroll
+
+    // Null while not dragging; set on mouse-down to the press point and the
+    // ScrollViewer's own HorizontalOffset at that moment, both needed to
+    // compute how far to scroll on each subsequent MouseMove.
+    private Point? _themeSwatchesDragStart;
+    private double _themeSwatchesDragStartOffset;
+    // Distinguishes an actual drag from a plain click that happened not to
+    // move the mouse at all -- past this many pixels of movement, treat it
+    // as a scroll gesture and swallow the eventual MouseLeftButtonUp (below)
+    // so it can't also land on whichever swatch happens to be under the
+    // cursor when the drag ends, misfiring that swatch's own theme-select
+    // click. Below the threshold, the click passes through normally.
+    private const double ThemeSwatchesDragThreshold = 4;
+    private bool _themeSwatchesDragged;
+
+    private void ThemeSwatchesScroll_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        _themeSwatchesDragStart = e.GetPosition(ThemeSwatchesScroll);
+        _themeSwatchesDragStartOffset = ThemeSwatchesScroll.HorizontalOffset;
+        _themeSwatchesDragged = false;
+        // Capture on the ScrollViewer itself, not a swatch -- this needs to
+        // keep receiving MouseMove even once the cursor drags off whichever
+        // swatch happened to be under the initial press.
+        ThemeSwatchesScroll.CaptureMouse();
+    }
+
+    private void ThemeSwatchesScroll_PreviewMouseMove(object sender, MouseEventArgs e)
+    {
+        if (_themeSwatchesDragStart is not Point start || e.LeftButton != MouseButtonState.Pressed)
+            return;
+
+        double deltaX = e.GetPosition(ThemeSwatchesScroll).X - start.X;
+        if (!_themeSwatchesDragged && Math.Abs(deltaX) < ThemeSwatchesDragThreshold)
+            return;
+
+        _themeSwatchesDragged = true;
+        ThemeSwatchesScroll.ScrollToHorizontalOffset(_themeSwatchesDragStartOffset - deltaX);
+    }
+
+    private void ThemeSwatchesScroll_PreviewMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+    {
+        if (_themeSwatchesDragStart is null)
+            return;
+        ThemeSwatchesScroll.ReleaseMouseCapture();
+        _themeSwatchesDragStart = null;
+        // A real drag happened -- this Preview (tunneling) handler firing
+        // first and marking Handled stops the swatch's own bubbling
+        // MouseLeftButtonUp click handler from also firing for the same
+        // physical click, same as WPF's Preview/bubble pairing always
+        // works. A plain click (never crossed the threshold) leaves this
+        // unhandled, so the swatch underneath still gets its normal click.
+        if (_themeSwatchesDragged)
+            e.Handled = true;
+    }
+
+    private void ThemeSwatchesScroll_PreviewMouseLeave(object sender, MouseEventArgs e)
+    {
+        // Mouse leaving the ScrollViewer entirely while a button is still
+        // down (dragged past its edge, or a capture loss from Alt-Tab etc.)
+        // -- release cleanly rather than leaving a stale capture/drag state
+        // that would otherwise only clear on the next unrelated click.
+        if (_themeSwatchesDragStart is null)
+            return;
+        ThemeSwatchesScroll.ReleaseMouseCapture();
+        _themeSwatchesDragStart = null;
+    }
+
+    // ------------------------------------------------------ settings autoscroll
+
+    // Real middle-click "autoscroll", not a hold-and-drag -- a single
+    // middle click sets a fixed reference point (does NOT track the press
+    // point going forward) and enters continuous-scroll mode; the mouse
+    // button does not need to stay held down. Scroll velocity each frame
+    // is proportional to how far the CURRENT cursor position has drifted
+    // from that fixed reference point -- a virtual joystick, center at the
+    // click, above it scrolls up, below it scrolls down, farther away is
+    // faster. A second middle click (anywhere, not just back at the
+    // reference point) exits it. This matches how middle-click autoscroll
+    // actually works in every browser, unlike the earlier hold-the-button
+    // drag version this replaced.
+    //
+    // CompositionTarget.Rendering (WPF's equivalent of
+    // requestAnimationFrame -- fires once per composed frame, not on a
+    // fixed timer) drives the loop so it's tied to the current mouse
+    // position at each frame, not to MouseMove events; the cursor can sit
+    // perfectly still below the reference point and scrolling still
+    // continues, exactly like real autoscroll.
+    private bool _settingsAutoscrollActive;
+    private double _settingsAutoscrollStartY;
+
+    // Pixels/frame per pixel of distance from the reference point --
+    // tuned by feel, not derived from anything. AutoscrollDeadZone stops a
+    // few pixels of natural hand jitter right at the reference point from
+    // reading as a real scroll intent.
+    private const double AutoscrollSensitivity = 0.06;
+    private const double AutoscrollDeadZone = 4;
+
+    private void SettingsScrollHost_PreviewMouseDown(object sender, MouseButtonEventArgs e)
+    {
+        if (e.ChangedButton != MouseButton.Middle || _settingsAutoscrollActive)
+            return;
+        // Stops the middle click from also reaching whatever's underneath
+        // (a settings row, a ComboBox, etc.) -- purely a scroll gesture.
+        e.Handled = true;
+
+        _settingsAutoscrollStartY = e.GetPosition(SettingsScrollHost).Y;
+        _settingsAutoscrollActive = true;
+        // Captured for the whole hold, not just at the click point -- the
+        // cursor is expected to roam anywhere on screen (including off
+        // SettingsScrollHost entirely) while the button's held down, and
+        // capture is what keeps Mouse.GetPosition below reporting real
+        // coordinates relative to it regardless of where the cursor
+        // physically is, AND what guarantees the eventual mouse-up still
+        // reaches SettingsScrollHost_PreviewMouseUp even if the cursor's
+        // no longer over this element when the button comes back up.
+        SettingsScrollHost.CaptureMouse();
+        SettingsScrollHost.Cursor = Cursors.SizeAll;
+        CompositionTarget.Rendering += SettingsAutoscroll_Tick;
+    }
+
+    /// <summary>Autoscroll runs only while the middle button is actually held down -- releasing it (anywhere; capture means this still fires even off SettingsScrollHost) stops it, same as the fixed-reference-point joystick behavior otherwise.</summary>
+    private void SettingsScrollHost_PreviewMouseUp(object sender, MouseButtonEventArgs e)
+    {
+        if (e.ChangedButton != MouseButton.Middle)
+            return;
+        e.Handled = true;
+        StopSettingsAutoscroll();
+    }
+
+    private void SettingsAutoscroll_Tick(object? sender, EventArgs e)
+    {
+        double dy = Mouse.GetPosition(SettingsScrollHost).Y - _settingsAutoscrollStartY;
+        if (Math.Abs(dy) < AutoscrollDeadZone)
+            return;
+        SettingsScrollHost.ScrollToVerticalOffset(SettingsScrollHost.VerticalOffset + dy * AutoscrollSensitivity);
+    }
+
+    private void StopSettingsAutoscroll()
+    {
+        if (!_settingsAutoscrollActive)
+            return;
+        _settingsAutoscrollActive = false;
+        CompositionTarget.Rendering -= SettingsAutoscroll_Tick;
+        SettingsScrollHost.ReleaseMouseCapture();
+        // null, not a forced Cursors.Arrow -- restores whatever cursor
+        // actually belongs under the mouse right now (a row's own Hand
+        // cursor, a ComboBox's, etc.) instead of overriding it.
+        SettingsScrollHost.Cursor = null;
     }
 
     private void ShowDisclaimerToggle_Click(object sender, RoutedEventArgs e)

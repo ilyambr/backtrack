@@ -36,6 +36,18 @@ not just at the end (MSBuild error MC3000). Any comment prose containing
 rewording (semicolon, or restructure the sentence). Check new comments for
 this before building, it will keep happening otherwise.
 
+**This stops being a build-time safety net for `Themes\Theme.*.xaml`
+specifically**, since those became loose runtime-loaded files (see
+`ThemeManager.DiscoverThemes`) instead of compiled Page/BAML resources —
+MSBuild no longer parses them at all, so a `--` there compiles clean and
+only fails when `ResourceDictionary` actually loads the file at runtime.
+`DiscoverThemes` catches that failure and just logs+skips the theme, so the
+visible symptom is "a theme silently vanished from Settings' picker," not a
+build error — genuinely happened once already (`Theme.Dark.xaml` lost its
+own comment edit to this). Grep new theme-file comments for `--` by hand
+before considering an edit done; the build succeeding proves nothing for
+these five files specifically.
+
 Git: nothing in this repo auto-commits. A long session can accumulate many
 uncommitted experimental changes; `git status`/`git diff --stat` before
 assuming "what I last wrote" is still what's on disk — the user edits
@@ -108,6 +120,28 @@ hard way this session:
   creation) — the resize race exists independent of whether animations are
   on.
 
+**A `Popup` owned by MainWindow can silently lose the Z-order fight to a
+DIFFERENT top-level `Window` if the click that triggered it fired on that
+other window, not on MainWindow.** `PlayerOverlayPopup` (the floating
+title/back-button pill) and the fullscreen transport popup are both owned
+by MainWindow. Opening a clip from `RecentClipsOverlay` — a genuinely
+separate `Window`, kept alive/visible the whole time the HUD is open —
+fires the click ON that overlay, not on MainWindow, and `ToolWindow.Enable`
+(sets `WS_EX_TOOLWINDOW`, hides it from Alt+Tab) does *not* set
+`WS_EX_NOACTIVATE` — so that click gives the overlay real Win32
+activation. Nothing in `ShowScreen`/`OpenInPlayer` re-activates MainWindow
+itself afterward; it only changes visibility/content. Result: the popup can
+render fine initially, then lose the title/back button on the next real
+Z-order event (right-click summoning VLC's native context menu), and never
+show correctly in fullscreen at all — both confirmed live, both only from
+this one entry path, never from the normal Gallery (which never involves a
+second window). Fix: `ShowMainWindowAndOpenInPlayer` now calls
+`Activate()` on MainWindow unconditionally before handing off to
+`OpenInPlayer`. The general lesson: any time a Popup/topmost surface owned
+by MainWindow gets set up in response to a click that originated on a
+*different* Window this app owns, activate MainWindow explicitly first —
+don't assume "visible" implies "the active window for Z-order purposes."
+
 ## Theming
 
 `Theme.Dark.xaml` / `Theme.Light.xaml` / `Theme.Yami.xaml` /
@@ -149,6 +183,22 @@ not fixable in code).
 New enum members (`AppTheme`, etc.) must be APPENDED, never inserted
 before an existing member — an existing settings file's stored `0`/`1`/`2`
 would silently start meaning something else.
+
+**A "preview mockup" of a theme (Settings' own theme-picker swatches) must
+be BUILT from that theme's real `ResourceDictionary`, never a second
+hand-copied set of hex values.** The swatches used to hardcode a literal
+color per theme in XAML; when `Theme.YamiAcri.xaml`'s real palette was
+fixed later (its own grey ramp is genuinely different from base Yami's,
+not just the accent — a real, confirmed bug the first port of that file
+missed), the hardcoded swatch silently kept showing the OLD, wrong colors
+with nothing to catch the drift. Now `BuildThemeSwatches()`
+(`MainWindow.xaml.cs`) loads each theme's own `.xaml` as a standalone
+`ResourceDictionary` (same load pattern `ThemeManager.Apply` itself uses)
+and reads `PanelBg`/`Accent`/`Text0`/`Text2` straight out of it, so a
+swatch can't go stale independently of the theme file it's supposed to
+represent ever again. Apply the same principle to any other "preview of
+theme X while some other theme is active" UI — never duplicate the
+literal values by hand.
 
 **No rounded corners as the default** — square edges throughout, no
 `CornerRadius` on new elements unless explicitly asked for. Learned via a
@@ -254,3 +304,23 @@ and let Backtrack's own auto-updater install it.
   dynamic content) differs per screen. Don't generalize a fix from one
   screen to all screens without checking which of those three factors
   actually applies there too.
+- **A named `Cursors.X` doesn't reliably render as what its name implies —
+  ask instead of guessing a second time.** Picked `Cursors.SizeAll` for a
+  drag-to-scroll gesture, got told it's the wrong shape; "fixed" it to
+  `Cursors.ScrollAll` (the name that actually matches the *semantic*
+  intent — a dedicated pan cursor, not a resize one) without checking how
+  it actually renders, and it turned out uglier still on this user's real
+  cursor scheme. Asked directly the second time instead of guessing again;
+  the answer was to go back to the first one. Same "no way to screenshot,
+  the user's own eyes are the loop" constraint as everything else visual in
+  this app — a cursor is exactly as unverifiable from here as a color or a
+  layout, don't treat picking one as a safe, obvious choice just because
+  it's "just a cursor."
+- **This file itself needs updating as part of the work, not just read.**
+  A long session can accumulate several genuinely durable, cross-cutting
+  lessons (the multi-window Popup-activation bug above, the
+  theme-swatch-must-not-hardcode-colors one, the cursor one right above
+  this) without any of them making it in here until asked directly whether
+  they had been. If a fix required real investigation and generalizes
+  beyond the one line it was applied to, add it here in the same turn,
+  don't wait to be asked.
