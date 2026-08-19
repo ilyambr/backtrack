@@ -43,7 +43,39 @@ dotnet build -c Release
 
 ---
 
-## 3. Usage
+## 3. What Backtrack installs on your system
+
+Backtrack is closed-source-adjacent enough (it talks to OBS, closes it, and
+can install other software) that this is worth stating plainly instead of
+leaving it for you to find out:
+
+- **It can auto-update the OBS plugins listed below.** If you have
+  obs-source-record and/or obs-replay-slider installed, Backtrack checks for
+  new versions of them alongside itself. Applying an update closes OBS (if
+  it's running), silently runs the plugin's own Windows installer, then
+  reopens OBS. This is **on by default** and only skipped if you're currently
+  live (Backtrack refuses to touch anything mid-stream) or have turned it off
+  in `Settings > Disable OBS plugin auto-updates`. Both plugins are built and
+  released from this same GitHub account, but "an app closes OBS and runs an
+  installer without asking each time" is worth knowing before you install it,
+  not after.
+- **It can install a RAM disk driver.** The optional RAM disk feature (faster
+  replay-buffer writes) is backed by [ImDisk](https://ltr-data.se/opencode.html#ImDisk),
+  a real open-source virtual disk driver, bundled unmodified under
+  `ThirdParty/ImDisk` per its own license. It's signed by a certificate
+  Windows already trusts (works fine under Secure Boot), and installing it
+  triggers a normal Windows UAC prompt every time - it never installs
+  silently. It's entirely optional; Backtrack works fine without ever
+  touching it, and the driver can be removed like any other Windows driver if
+  you decide against it.
+
+Neither of these touches your OBS scene collection, settings, or profiles -
+see the note above about obs-websocket being the only thing Backtrack
+actually talks to OBS through.
+
+---
+
+## 4. Usage
 
 Press **Ctrl+Alt+G** (configurable in Settings) to summon the HUD over
 whatever you're doing - game, browser, doesn't matter, it floats on top.
@@ -60,7 +92,7 @@ entirely.
 
 ---
 
-## 4. Features
+## 5. Features
 
 - **Fullscreen clip player** - VLC-backed playback with trim, rename, and a
   true edge-to-edge fullscreen mode (overlay transport bar, not a docked one).
@@ -73,10 +105,13 @@ entirely.
   same network (or over Tailscale) into your own Gallery.
 - **Per-source buffers** - if you're running obs-source-record and/or
   obs-replay-slider, Backtrack lists and saves each individually.
+- **Status indicators** - floating badges for Recording, Streaming, Replay
+  Buffer, Virtual Camera, and Mic, plus an encoder-overload warning, so you
+  can see what's active without tabbing into OBS.
 
 ---
 
-## 5. Known limitations
+## 6. Known limitations
 
 - **Per-source status needs obs-replay-slider installed too.** obs-source-record
   has no way to report "am I currently recording/buffering" on its own -- Backtrack
@@ -90,12 +125,21 @@ entirely.
 
 ---
 
-## 6. Related projects
+## 7. Related projects
 
 - [obs-source-record](https://github.com/ilyambr/obs-source-record) - OBS
   plugin, records/replays individual sources via a filter.
 - [obs-replay-slider](https://github.com/ilyambr/obs-replay-slider) - OBS
   plugin, a dock for per-source replay buffers.
+
+---
+
+## 8. AI disclosure
+
+Most of Backtrack's code was written with AI assistance (Claude). Every feature was
+specified, iterated on, tested, and verified by hand against a running build with alpha testers before being considered done, including catching and fixing AI-introduced bugs
+along the way. But the code itself is substantially AI-written, obs-source-record
+and obs-replay-slider were developed the same way.
 
 ---
 

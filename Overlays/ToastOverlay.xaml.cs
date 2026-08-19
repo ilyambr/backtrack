@@ -75,7 +75,7 @@ public partial class ToastOverlay : Window
             ? new Ellipse { Width = 10, Height = 10, Fill = Rec, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 10, 0) }
             : GlyphIcon("\u25a0", Text2);
         Show(icon, started ? Rec : Text2, started ? "Recording started" : "Recording saved",
-            resolvedPath is null ? null : $"Saved at '{resolvedPath}'");
+            resolvedPath is null ? null : $"Saved at '{resolvedPath}'", truncateSubMessage: true);
     }
 
     /// <summary>See ObsService.EncoderOverloadDetected -- summary is a plain-English list of what's actually dropping frames right now (already built by the caller, this just displays it).</summary>
@@ -120,7 +120,7 @@ public partial class ToastOverlay : Window
     }
 
     public void ShowReplaySaved(string label, string resolvedPath) =>
-        Show(GlyphIcon("\u21bb", Green), Green, $"{label} saved", $"Saved at '{resolvedPath}'");
+        Show(GlyphIcon("\u21bb", Green), Green, $"{label} saved", $"Saved at '{resolvedPath}'", truncateSubMessage: true);
 
     // Keyed by row key, not label -- CompleteProcessingClip needs to find the
     // right toast again once ReplaySaved fires for that same key, and two
@@ -156,14 +156,14 @@ public partial class ToastOverlay : Window
         if (hwnd != IntPtr.Zero)
             WindowZOrder.BringToFrontWithoutActivating(hwnd);
 
-        var msg = new TextBlock { Text = "Processing clip...", FontWeight = FontWeights.Bold, FontSize = 12.5, Foreground = Text0 };
+        var msg = new TextBlock { Text = "Processing clip...", FontWeight = FontWeights.Bold, FontSize = 12.5, Foreground = Text0, TextWrapping = TextWrapping.Wrap, MaxWidth = 210 };
         var sub = new TextBlock
         {
             Text = $"Processing {label}",
             FontSize = 10.5,
             Foreground = Text2,
             Margin = new Thickness(0, 2, 0, 0),
-            TextTrimming = TextTrimming.CharacterEllipsis,
+            TextWrapping = TextWrapping.Wrap,
             MaxWidth = 210,
         };
         var body = new StackPanel();
@@ -295,6 +295,11 @@ public partial class ToastOverlay : Window
     public void ShowAppStarted(string hotkeyText) =>
         Show(GlyphIcon("\u21bb", Accent), Accent, "Backtrack is running", $"Press {hotkeyText} to open the overlay");
 
+    /// <summary>Fired after RunAutoDeleteOldClips actually removes something -- Settings > Clips > Auto-delete old clips.</summary>
+    public void ShowOldClipsAutoDeleted(int count, int afterDays) =>
+        Show(GlyphIcon("\u2715", Warning), Warning, $"Removed {count} old clip{(count == 1 ? "" : "s")}",
+            $"Older than {afterDays} day{(afterDays == 1 ? "" : "s")}, per Settings > Clips");
+
     // Fired right before App.xaml.cs kicks off FirewallRules.AddRulesElevated
     // on a brand new install -- a UAC prompt appearing with zero warning,
     // moments after someone's very first launch, reads as suspicious with no
@@ -317,14 +322,14 @@ public partial class ToastOverlay : Window
     {
         ClearUpdateInProgress(component); // dedupe -- a second call for the same component replaces, doesn't stack
 
-        var msg = new TextBlock { Text = $"Updating {component}...", FontWeight = FontWeights.Bold, FontSize = 12.5, Foreground = Text0 };
+        var msg = new TextBlock { Text = $"Updating {component}...", FontWeight = FontWeights.Bold, FontSize = 12.5, Foreground = Text0, TextWrapping = TextWrapping.Wrap, MaxWidth = 210 };
         var sub = new TextBlock
         {
             Text = "Downloading and installing in the background",
             FontSize = 10.5,
             Foreground = Text2,
             Margin = new Thickness(0, 2, 0, 0),
-            TextTrimming = TextTrimming.CharacterEllipsis,
+            TextWrapping = TextWrapping.Wrap,
             MaxWidth = 210,
         };
         var body = new StackPanel();
@@ -398,8 +403,8 @@ public partial class ToastOverlay : Window
             VerticalAlignment = VerticalAlignment.Center
         };
 
-        var msg = new TextBlock { Text = title, FontWeight = FontWeights.Bold, FontSize = 12.5, Foreground = Text0, HorizontalAlignment = HorizontalAlignment.Left };
-        var sub = new TextBlock { Text = subtitle, FontSize = 10.5, Foreground = Text2, Margin = new Thickness(0, 2, 0, 0), TextTrimming = TextTrimming.CharacterEllipsis, MaxWidth = 140, HorizontalAlignment = HorizontalAlignment.Left };
+        var msg = new TextBlock { Text = title, FontWeight = FontWeights.Bold, FontSize = 12.5, Foreground = Text0, HorizontalAlignment = HorizontalAlignment.Left, TextWrapping = TextWrapping.Wrap, MaxWidth = 140 };
+        var sub = new TextBlock { Text = subtitle, FontSize = 10.5, Foreground = Text2, Margin = new Thickness(0, 2, 0, 0), TextWrapping = TextWrapping.Wrap, MaxWidth = 140, HorizontalAlignment = HorizontalAlignment.Left };
         var body = new StackPanel { HorizontalAlignment = HorizontalAlignment.Left, VerticalAlignment = VerticalAlignment.Center };
         body.Children.Add(msg);
         body.Children.Add(sub);
@@ -491,7 +496,16 @@ public partial class ToastOverlay : Window
         timer.Start();
     }
 
-    private void Show(UIElement icon, Brush accentColor, string message, string? subMessage, double durationSec = 4.0)
+    /// <summary>
+    /// truncateSubMessage: wrap is the general fix (long ordinary text stays
+    /// fully readable across 2 lines instead of getting cut off), but a full
+    /// file path (ShowRecording/ShowReplaySaved's "Saved at '...'") is
+    /// exactly the case wrapping doesn't help -- it's long by nature, wraps
+    /// mid-path with no natural break point, and just makes the toast
+    /// visually messy. Those two ask for the old single-line ellipsis
+    /// truncation back explicitly; everything else keeps wrapping.
+    /// </summary>
+    private void Show(UIElement icon, Brush accentColor, string message, string? subMessage, double durationSec = 4.0, bool truncateSubMessage = false)
     {
         IntPtr hwnd = new WindowInteropHelper(this).Handle;
         if (hwnd != IntPtr.Zero)
@@ -499,20 +513,24 @@ public partial class ToastOverlay : Window
             WindowZOrder.BringToFrontWithoutActivating(hwnd);
         }
 
-        var msg = new TextBlock { Text = message, FontWeight = FontWeights.Bold, FontSize = 12.5, Foreground = Text0 };
+        var msg = new TextBlock { Text = message, FontWeight = FontWeights.Bold, FontSize = 12.5, Foreground = Text0, TextWrapping = TextWrapping.Wrap, MaxWidth = 210 };
         var body = new StackPanel();
         body.Children.Add(msg);
         if (!string.IsNullOrEmpty(subMessage))
         {
-            body.Children.Add(new TextBlock
+            var sub = new TextBlock
             {
                 Text = subMessage,
                 FontSize = 10.5,
                 Foreground = Text2,
                 Margin = new Thickness(0, 2, 0, 0),
-                TextTrimming = TextTrimming.CharacterEllipsis,
                 MaxWidth = 210,
-            });
+            };
+            if (truncateSubMessage)
+                sub.TextTrimming = TextTrimming.CharacterEllipsis;
+            else
+                sub.TextWrapping = TextWrapping.Wrap;
+            body.Children.Add(sub);
         }
 
         var row = new StackPanel { Orientation = Orientation.Horizontal };

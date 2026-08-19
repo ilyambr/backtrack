@@ -307,6 +307,76 @@ public sealed class UpdateService
             Process.Start(new ProcessStartInfo(Obs64Path) { UseShellExecute = true, WorkingDirectory = Path.GetDirectoryName(Obs64Path) });
     }
 
+    // AppId GUIDs baked into each plugin's own Inno Setup installer.iss -- Inno
+    // registers its uninstall entry under "{AppId}_is1", not by display name,
+    // so this GUID is the only lookup key stable across every version either
+    // plugin has ever shipped.
+    private const string SourceRecordAppId = "E0B6FC31-8FD5-4921-95DA-066EBE79A2AE";
+    private const string ReplaySliderAppId = "CA1D94AF-4931-4719-9192-E307B75887E9";
+
+    public Task<(bool Success, string? Error)> UninstallSourceRecordAsync() => UninstallInnoPluginAsync(SourceRecordAppId, "Source Record");
+    public Task<(bool Success, string? Error)> UninstallReplaySliderAsync() => UninstallInnoPluginAsync(ReplaySliderAppId, "Replay Slider");
+
+    /// <summary>
+    /// Runs an Inno-Setup-installed plugin's own bundled uninstaller silently
+    /// (the same unins000.exe Windows' own "Apps &amp; features" would run),
+    /// closing OBS first since the uninstaller can't delete a plugin DLL OBS
+    /// still has loaded -- same reasoning as InstallPluginUpdateAsync above,
+    /// just never reopening OBS afterward (there's nothing to reopen it for).
+    /// </summary>
+    private async Task<(bool Success, string? Error)> UninstallInnoPluginAsync(string appId, string displayName)
+    {
+        string? uninstallString = FindInnoUninstallString(appId);
+        if (uninstallString is null)
+            return (false, $"Couldn't find {displayName}'s uninstall entry in the registry -- it may not be installed, or wasn't installed via its .exe installer.");
+
+        await CloseObsIfRunningAsync();
+
+        string exePath = uninstallString.Trim('"');
+        try
+        {
+            var psi = new ProcessStartInfo(exePath, InnoSetupSilentArgs) { UseShellExecute = true };
+            using Process? proc = Process.Start(psi);
+            if (proc is not null)
+                await proc.WaitForExitAsync();
+        }
+        catch (Exception ex)
+        {
+            return (false, ex.Message);
+        }
+
+        return (true, null);
+    }
+
+    /// <summary>
+    /// Inno Setup writes its uninstall registry key to whichever hive/view
+    /// matches how the installer itself was built (LocalMachine for a normal
+    /// system-wide install, the 32-bit view on a 32-bit build even on 64-bit
+    /// Windows) -- checking all three here instead of guessing one avoids a
+    /// false "not installed" for a real install that just landed somewhere
+    /// other than the one view checked.
+    /// </summary>
+    private static string? FindInnoUninstallString(string appId)
+    {
+        string subKeyPath = $@"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{{{appId}}}_is1";
+        (RegistryHive Hive, RegistryView View)[] locations =
+        {
+            (RegistryHive.LocalMachine, RegistryView.Registry64),
+            (RegistryHive.LocalMachine, RegistryView.Registry32),
+            (RegistryHive.CurrentUser, RegistryView.Registry64),
+        };
+
+        foreach ((RegistryHive hive, RegistryView view) in locations)
+        {
+            using RegistryKey baseKey = RegistryKey.OpenBaseKey(hive, view);
+            using RegistryKey? key = baseKey.OpenSubKey(subKeyPath);
+            if (key?.GetValue("UninstallString") is string s && !string.IsNullOrWhiteSpace(s))
+                return s;
+        }
+
+        return null;
+    }
+
     private static async Task<bool> CloseObsIfRunningAsync()
     {
         Process[] procs = Process.GetProcessesByName("obs64");
