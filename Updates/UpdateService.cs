@@ -505,7 +505,39 @@ public sealed class UpdateService
     /// a caller that doesn't have one) just skips the check entirely rather
     /// than blocking on something that was never verifiable to begin with.
     /// </summary>
+    // A self-update download is a real ~140MB+ transfer with zero retry
+    // logic before this -- one dropped connection partway through (or even
+    // right at the start, confirmed live: failed in well under a second,
+    // nowhere near long enough to have actually transferred that much
+    // regardless of connection speed -- a genuine network hiccup, not a
+    // corrupted release) killed the whole update with a bare red status and
+    // no automatic recovery. Same bounded-retry reasoning as the apply
+    // script's own robocopy step (see ApplySelfUpdateAsync) -- a few quick
+    // attempts covers a transient blip without hanging forever on something
+    // genuinely broken.
+    private const int DownloadRetryAttempts = 3;
+
     private static async Task DownloadFileAsync(string url, string destPath, string? expectedDigest = null)
+    {
+        for (int attempt = 1; attempt <= DownloadRetryAttempts; attempt++)
+        {
+            try
+            {
+                await DownloadFileOnceAsync(url, destPath, expectedDigest);
+                return;
+            }
+            catch when (attempt < DownloadRetryAttempts)
+            {
+                // Best-effort cleanup of whatever partial/mismatched bytes this
+                // attempt left behind, so the next attempt starts clean rather
+                // than potentially appending to or half-overwriting a stale file.
+                try { File.Delete(destPath); } catch { /* best effort */ }
+                await Task.Delay(TimeSpan.FromSeconds(2));
+            }
+        }
+    }
+
+    private static async Task DownloadFileOnceAsync(string url, string destPath, string? expectedDigest)
     {
         using HttpResponseMessage response = await Http.GetAsync(url);
         response.EnsureSuccessStatusCode();
