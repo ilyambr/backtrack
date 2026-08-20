@@ -18,6 +18,7 @@ using System.Windows.Threading;
 using Backtrack.Interop;
 using Backtrack.Obs;
 using Backtrack.Pairing;
+using Backtrack.Streaming;
 using Backtrack.Updates;
 using Microsoft.Win32;
 using LibVlc = LibVLCSharp.Shared;
@@ -149,6 +150,7 @@ public partial class MainWindow : Window
     private DateTime _lastEncoderOverloadEventUtc = DateTime.MinValue;
     private bool _encoderOverloadedShown;
     private readonly PairingService _pairing;
+    private readonly RemoteClipStreamServer _remoteStreamServer;
     private readonly Dictionary<string, string> _rowLabels = new();
     private List<ReplayRow> _lastReplayRows = new();
     private GlobalHotkey? _hotkey;
@@ -291,6 +293,7 @@ public partial class MainWindow : Window
         LocationChanged += (_, _) => UpdateStreamingBoxVisibility();
 
         _pairing = new PairingService(_settings);
+        _remoteStreamServer = new RemoteClipStreamServer(_pairing);
         _pairing.PairingRequested += (deviceName, code, requestId) => Dispatcher.BeginInvoke(() =>
         {
             _pairingRequestOverlay.ShowRequest(deviceName, code,
@@ -1017,7 +1020,7 @@ public partial class MainWindow : Window
         var thumb = new Border { Background = (Brush)FindResource("ThumbnailBg"), Width = 96, Height = 64, Cursor = Cursors.Hand, ClipToBounds = true };
         var thumbImage = new Image { Stretch = Stretch.UniformToFill };
         thumb.Child = thumbImage;
-        thumb.MouseLeftButtonUp += (_, _) => _ = OpenRemoteClipAsync(relativePath, file);
+        thumb.MouseLeftButtonUp += (_, _) => OpenRemoteClipStreaming(relativePath, file);
 
         var title = new TextBlock
         {
@@ -5543,8 +5546,9 @@ public partial class MainWindow : Window
     /// fetched from the transmitter PC's own local cache (see
     /// LoadRemoteThumbnailAsync/HandleGetThumbnailAsync), not generated here.
     /// No selection/mass-actions/trim, though -- those operate on local files
-    /// by design; a remote clip has to be downloaded (see OpenRemoteClipAsync)
-    /// before any of that could apply to it.
+    /// by design; a remote clip plays by streaming now (see
+    /// OpenRemoteClipStreaming), and none of that can apply to it unless it
+    /// also happens to already be sitting in RemoteCache (SyncRemoteClipsAsync).
     /// </summary>
     private async Task LoadRemoteGalleryAsync()
     {
@@ -5806,7 +5810,7 @@ public partial class MainWindow : Window
         // alone, not `card`: title needs its OWN double-click (rename) below
         // without that also bubbling up into opening the clip.
         _ = LoadRemoteThumbnailAsync(relativePath, file, thumbImage);
-        iconHost.MouseLeftButtonUp += (_, _) => _ = OpenRemoteClipAsync(relativePath, file);
+        iconHost.MouseLeftButtonUp += (_, _) => OpenRemoteClipStreaming(relativePath, file);
 
         title.MouseLeftButtonDown += (_, e) =>
         {
@@ -6087,25 +6091,32 @@ public partial class MainWindow : Window
     private long _clipOpenToken;
 
     /// <summary>
-    /// Downloads a remote clip into a per-peer local cache (so re-opening the
-    /// same clip later doesn't re-download it) and opens it in the existing
-    /// Player -- once it's actually on disk here, it plays exactly like any
-    /// local clip, no separate remote playback path needed. Switches to
-    /// Player immediately, before the download even starts (see
-    /// ShowPlayerLoadingUi) -- staying on Gallery for however long the
-    /// transfer took (up to several seconds on a real clip over the network)
-    /// was the actual "switching clips is slow" complaint; the transfer time
-    /// itself doesn't change, but it no longer reads as Backtrack doing
-    /// nothing while it happens.
+    /// Opens a remote clip in the Player WITHOUT downloading it first --
+    /// libvlc plays straight off RemoteClipStreamServer's own local HTTP
+    /// relay, which pulls bytes from the paired PC over the network as
+    /// playback needs them (see its own class comment). Requested directly:
+    /// clips should stream, not require a manual full download before you
+    /// can watch anything. Deliberately never writes the clip to disk here
+    /// at all -- no local copy survives after playback, unlike
+    /// DownloadRemoteClipAsync's own RemoteCache.
+    ///
+    /// The one exception: if SyncRemoteClipsAsync's own periodic background
+    /// mirror (a separate, independently-requested feature) already grabbed
+    /// this exact clip, playing the real local copy it already has is
+    /// strictly better than streaming a redundant second copy over the
+    /// network for no reason -- and it's the only way Trim/Rename/Delete
+    /// ever become available for a remote clip at all (see OpenInPlayer's
+    /// own Player actions), all of which need a genuine local file and
+    /// stay unavailable during pure streaming, same as the remote Gallery's
+    /// own long-documented "no mass-actions/trim on an undownloaded remote
+    /// clip" limitation.
     /// </summary>
-    private async Task OpenRemoteClipAsync(string relativePath, RemoteGalleryFile file)
+    private void OpenRemoteClipStreaming(string relativePath, RemoteGalleryFile file)
     {
         if (string.IsNullOrEmpty(_settings.PairedPeerDeviceId))
             return;
 
-        long myToken = ++_clipOpenToken;
         string destPath = GetRemoteClipCachePath(relativePath, file.Name);
-
         if (File.Exists(destPath))
         {
             OpenInPlayer(new FileInfo(destPath));
@@ -6113,32 +6124,19 @@ public partial class MainWindow : Window
             return;
         }
 
-        ShowPlayerLoadingUi(file.Name, GetRemoteThumbnailCachePath(relativePath, file.Modified, file.Size));
+        long myToken = ++_clipOpenToken;
+        string? thumbnailCachePath = GetRemoteThumbnailCachePath(relativePath, file.Modified, file.Size);
+        ShowPlayerLoadingUi(file.Name, thumbnailCachePath);
 
-        string previousStatus = GalleryStatus.Text;
-        var progress = new Progress<double>(p =>
-        {
-            if (myToken == _clipOpenToken)
-                GalleryStatus.Text = $"Downloading... {p:P0}";
-        });
-        (bool success, string? error) = await _pairing.DownloadRemoteClipAsync(relativePath, destPath, progress);
-        GalleryStatus.Text = previousStatus;
+        // No FileInfo at all for a streamed clip -- these come straight from
+        // the metadata list_gallery already gave us (RemoteGalleryFile),
+        // same info a real download's FileInfo would've reported anyway.
+        StatSize.Text = $"{file.Size / 1024.0 / 1024.0:0.#} MB";
+        StatDate.Text = $"{file.Modified.ToLocalTime():MMM d, yyyy h:mm tt}";
 
-        // A different clip was opened while this download was still running
-        // -- DownloadStreamedFileAsync's own de-dupe already handles two
-        // requests racing for the exact same file; this is the "opened a
-        // DIFFERENT clip in the meantime" case that dedupe can't cover.
-        if (myToken != _clipOpenToken)
-            return;
-
-        if (!success)
-        {
-            MessageBox.Show(this, $"Couldn't download that clip: {error}", "Backtrack");
-            return;
-        }
-
-        OpenInPlayer(new FileInfo(destPath));
-        _currentPlayerRemoteOrigin = (relativePath, _settings.PairedPeerDeviceId);
+        string streamUrl = _remoteStreamServer.PrepareStream(relativePath, file.Size);
+        var mediaUri = new Uri(streamUrl);
+        Dispatcher.BeginInvoke(new Action(() => StartPlayerPlayback(mediaUri, myToken, hideFreezeFrameOnFirstPlay: true)), DispatcherPriority.Loaded);
     }
 
     /// <summary>
@@ -7070,7 +7068,8 @@ public partial class MainWindow : Window
         // one scheduled before it touches VideoView.MediaPlayer at all --
         // see that method's own comment for what happens without this.
         long myToken = _clipOpenToken;
-        Dispatcher.BeginInvoke(new Action(() => StartPlayerPlayback(file, myToken)), DispatcherPriority.Loaded);
+        var mediaUri = new Uri(ResolveLocalClipPath(file));
+        Dispatcher.BeginInvoke(new Action(() => StartPlayerPlayback(mediaUri, myToken)), DispatcherPriority.Loaded);
     }
 
     /// <summary>
@@ -7099,7 +7098,18 @@ public partial class MainWindow : Window
     /// creating anything, so at most one MediaPlayer ever gets created per
     /// burst of clicks.
     /// </summary>
-    private async void StartPlayerPlayback(FileInfo file, long myToken)
+    /// <summary>
+    /// hideFreezeFrameOnFirstPlay: OpenInPlayer's own local-file path already
+    /// starts the freeze-frame-hide timer itself, before this method even
+    /// runs (see ShowPlayerFreezeFrame) -- it knows the moment playback is
+    /// about to begin, since a local file has no real "not ready yet" delay.
+    /// OpenRemoteClipStreaming has no such moment to hand off from (network
+    /// buffering time is unknown up front, unlike a local decode), so it
+    /// leaves the cover up via ShowPlayerLoadingUi and asks THIS method to
+    /// start that same timer instead, but only once real playback has
+    /// actually begun (the Playing event below), not immediately.
+    /// </summary>
+    private async void StartPlayerPlayback(Uri mediaUri, long myToken, bool hideFreezeFrameOnFirstPlay = false)
     {
         // Re-checked here, not just trusted from OpenInPlayer's own earlier
         // check -- this runs from a deferred callback across an await, no
@@ -7130,7 +7140,7 @@ public partial class MainWindow : Window
         PlayerVideoView.MediaPlayer = _vlcPlayer;
         _playerHasEnded = false;
 
-        using var media = new LibVlc.Media(_libVlc, new Uri(ResolveLocalClipPath(file)));
+        using var media = new LibVlc.Media(_libVlc, mediaUri);
         _vlcPlayer.Play(media);
 
         // Explicit, not just "set the slider to 100 and let ValueChanged
@@ -7162,10 +7172,19 @@ public partial class MainWindow : Window
 
         bool tracksLoaded = false;
         bool volumeConfirmed = false;
+        bool freezeFrameHidden = false;
         _vlcPlayer.Playing += (_, _) => Dispatcher.BeginInvoke(() =>
         {
             PlayIcon.Visibility = Visibility.Collapsed;
             PauseIcon.Visibility = Visibility.Visible;
+
+            if (hideFreezeFrameOnFirstPlay && !freezeFrameHidden)
+            {
+                freezeFrameHidden = true;
+                _freezeFrameTimer.Stop();
+                _freezeFrameTimer.Start();
+            }
+
             if (_vlcPlayer.Media is not null)
             {
                 var videoTrack = _vlcPlayer.Media.Tracks.FirstOrDefault(t => t.TrackType == LibVlc.TrackType.Video).Data.Video;
