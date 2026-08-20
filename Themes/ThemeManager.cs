@@ -68,7 +68,8 @@ public static class ThemeManager
     // drift out of sync with which files actually ship.
     private const string BuiltInKey = "ThemeBuiltIn";
 
-    private static string ThemesFolder => Path.Combine(AppContext.BaseDirectory, "Themes");
+    /// <summary>Public so Settings' "Open themes folder" button can point at the exact same path this class discovers themes from, rather than a second hardcoded copy that could drift.</summary>
+    public static string ThemesFolder => Path.Combine(AppContext.BaseDirectory, "Themes");
 
     public static string Current { get; private set; } = "Dark";
 

@@ -80,6 +80,21 @@ public sealed class ObsService
     /// <summary>Fires when a Replay Slider row's buffer actually finishes saving: (rowKey, path). This is the real "yes, the clip exists now" confirmation.</summary>
     public event Action<string, string>? ReplaySaved;
 
+    /// <summary>
+    /// Fires the instant a row's save genuinely starts -- OBS itself just
+    /// reported the raw (untrimmed) file landed, right before obs-replay-
+    /// slider's own trim thread starts. Needs obs-replay-slider 0.2.20+;
+    /// older builds simply never emit this, so a Processing toast still
+    /// silently never shows on those the same way it always didn't (not a
+    /// regression, no version check needed here -- ReplaySaved alone still
+    /// covers the eventual "done" toast regardless of this event existing).
+    /// Unlike ReplaySaved, fires for EVERY trigger (this dock's own Save
+    /// button, a hotkey bound directly in OBS, or a save_row request) --
+    /// previously the only "processing" signal Backtrack had was its own UI
+    /// click handler, which obviously never fired for the other two.
+    /// </summary>
+    public event Action<string>? ReplaySaving;
+
     /// <summary>Fires roughly every ~2s while obs-source-record detects a real recent dropped-frame rate somewhere (this filter, main recording, main stream, or main replay buffer) -- see EncoderOverloadInfo.</summary>
     public event Action<EncoderOverloadInfo>? EncoderOverloadDetected;
 
@@ -157,6 +172,14 @@ public sealed class ObsService
             string key = ed.TryGetProperty("key", out JsonElement k) ? k.GetString() ?? "" : "";
             string path = ed.TryGetProperty("path", out JsonElement p) ? p.GetString() ?? "" : "";
             ReplaySaved?.Invoke(key, path);
+        }
+        else if (eventType == "VendorEvent" &&
+                 data.TryGetProperty("vendorName", out JsonElement savingVn) && savingVn.GetString() == "replay-buffer-slider" &&
+                 data.TryGetProperty("eventType", out JsonElement savingEt) && savingEt.GetString() == "row_saving" &&
+                 data.TryGetProperty("eventData", out JsonElement savingEd))
+        {
+            string key = savingEd.TryGetProperty("key", out JsonElement k) ? k.GetString() ?? "" : "";
+            ReplaySaving?.Invoke(key);
         }
         else if (_micInputName is not null && eventType == "InputMuteStateChanged" &&
                  data.TryGetProperty("inputName", out JsonElement muteName) && muteName.GetString() == _micInputName &&

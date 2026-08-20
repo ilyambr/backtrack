@@ -276,6 +276,7 @@ public sealed class PairingService : IDisposable
                     "set_ramdisk_settings" => await HandleSetRamDiskSettingsAsync(doc.RootElement),
                     "check_plugin_updates" => await HandleCheckPluginUpdatesAsync(doc.RootElement),
                     "list_gallery" => HandleListGallery(doc.RootElement),
+                    "newest_clip" => HandleNewestClip(doc.RootElement),
                     "delete_clip" => HandleDeleteClip(doc.RootElement),
                     "rename_clip" => HandleRenameClip(doc.RootElement),
                     _ => JsonSerializer.Serialize(new { error = "unknown request type" }),
@@ -453,6 +454,45 @@ public sealed class PairingService : IDisposable
     /// rather than hiding it on a guess, same as MainWindow.LoadGallery).
     /// </summary>
     public Func<string, long?>? GetCachedDurationMsForRemote { get; set; }
+
+    /// <summary>
+    /// The relative path (forward-slash separated, matching MainWindow's own
+    /// RemoteClipRelativePath convention client-side) of the single most-
+    /// recently-written clip anywhere in this PC's whole clips tree -- the
+    /// remote-gallery equivalent of MainWindow.GetNewestClipPath, which only
+    /// ever scans _settings.ClipsFolder on THIS instance and so never had any
+    /// way to answer that question for a paired PC's tree. Without this,
+    /// list_gallery's own per-folder listing has no way to know whether
+    /// anything in it is the newest clip system-wide, so a remote Gallery
+    /// could never show the same "newest" dot the local one does.
+    /// </summary>
+    private string HandleNewestClip(JsonElement request)
+    {
+        if (!IsAuthorizedClient(request))
+            return JsonSerializer.Serialize(new { error = "Not authorized -- pair with this PC first." });
+
+        try
+        {
+            string root = Path.GetFullPath(_settings.ClipsFolder).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            if (!Directory.Exists(root))
+                return JsonSerializer.Serialize(new { path = (string?)null });
+
+            string? newest = Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories)
+                .Where(f => GalleryFormats.VideoExtensions.Contains(Path.GetExtension(f).ToLowerInvariant()))
+                .Select(f => new FileInfo(f))
+                .OrderByDescending(f => f.LastWriteTimeUtc)
+                .FirstOrDefault()
+                ?.FullName;
+
+            string? relativePath = newest is null ? null
+                : Path.GetRelativePath(root, newest).Replace(Path.DirectorySeparatorChar, '/');
+            return JsonSerializer.Serialize(new { path = relativePath });
+        }
+        catch (Exception ex)
+        {
+            return JsonSerializer.Serialize(new { error = ex.Message });
+        }
+    }
 
     private string HandleListGallery(JsonElement request)
     {
@@ -835,6 +875,40 @@ public sealed class PairingService : IDisposable
 
     // ---------------------------------------------------- client: remote gallery
 
+    /// <summary>
+    /// Forward-slash relative path of the paired transmitter PC's own newest
+    /// clip, anywhere in its whole clips tree -- the remote counterpart to
+    /// MainWindow.GetNewestClipPath, used to drive the same "newest" dot in
+    /// the remote Gallery that the local one already has. Null if not
+    /// paired, unreachable, denied, or the transmitter genuinely has no
+    /// clips yet.
+    /// </summary>
+    public async Task<string?> GetRemoteNewestClipPathAsync()
+    {
+        if (string.IsNullOrEmpty(_settings.PairedPeerHost) || string.IsNullOrEmpty(_settings.PairedPeerSecret))
+            return null;
+
+        try
+        {
+            using var client = new TcpClient();
+            await client.ConnectAsync(_settings.PairedPeerHost, _settings.PairedPeerPort);
+            string request = JsonSerializer.Serialize(new { type = "newest_clip", secret = _settings.PairedPeerSecret });
+            await WriteLineAsync(client.GetStream(), request);
+            string? responseLine = await ReadLineAsync(client.GetStream());
+            if (responseLine is null)
+                return null;
+
+            using JsonDocument doc = JsonDocument.Parse(responseLine);
+            if (doc.RootElement.TryGetProperty("error", out _))
+                return null;
+            return doc.RootElement.TryGetProperty("path", out JsonElement p) ? p.GetString() : null;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
     /// <summary>Lists one folder (relative to the paired transmitter PC's own ClipsFolder root; empty = root) of its clips. Null if not paired, unreachable, or denied.</summary>
     public async Task<RemoteGalleryListing?> ListRemoteGalleryAsync(string relativePath)
     {
@@ -1046,6 +1120,16 @@ public sealed class PairingService : IDisposable
             // implementation), so the stream is positioned exactly at the start
             // of the raw file bytes that follow -- safe to read directly here.
             string tempPath = destPath + ".partial";
+            // Missing on the RemoteCache side until now -- HandlePutClipAsync
+            // (the upload/server direction, right above) already does this
+            // before its own File.Create, but this download direction never
+            // did. RemoteCache mirrors the transmitter's own folder structure
+            // per device (see MainWindow.xaml.cs's GetRemoteCacheDir), so the
+            // first-ever download of a clip from a given subfolder (e.g.
+            // "Elgato") hits a directory that genuinely doesn't exist yet --
+            // confirmed live as "Could not find a part of the path
+            // '...\RemoteCache\<guid>\Elgato\....partial'".
+            Directory.CreateDirectory(Path.GetDirectoryName(destPath)!);
             long received = 0;
             var buffer = new byte[81920];
             await using (var file = System.IO.File.Create(tempPath))

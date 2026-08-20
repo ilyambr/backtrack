@@ -37,8 +37,9 @@ I'd rather you know this going in than find it out later:
 
 - **If you have obs-source-record and/or obs-replay-slider installed, Backtrack can auto-update them.** Applying an update closes OBS (if it's running), silently runs the plugin's own installer, then reopens OBS. This is on by default - it's off automatically while you're live, and you can disable it entirely in `Settings > Disable OBS plugin auto-updates`. Both plugins are mine, built and released from this same account, but "an app closes OBS and installs things without asking each time" is exactly the kind of behavior you should know about up front, not discover later.
 - **The optional RAM disk feature installs a driver.** It's backed by [ImDisk](https://ltr-data.se/opencode.html#ImDisk), a well-known open-source virtual disk driver - not anything custom. It's bundled unmodified, signed by a certificate Windows already trusts (works fine under Secure Boot), and every install goes through a normal Windows UAC prompt - never silent. It's entirely optional and removable like any other driver.
+- **It adds a Windows Firewall exemption for itself, once, on first launch.** A real UAC prompt (not silent) to add four rules scoped specifically to `Backtrack.exe` - not a blanket port opening. These are for the peer-to-peer clip-sharing feature; happens once ever, whether or not you ever turn that on.
 
-Neither of these touches your scene collection, OBS settings, or profiles. Full detail is in the [README](https://github.com/ilyambr/backtrack#3-what-backtrack-installs-on-your-system).
+None of these touch your scene collection, OBS settings, or profiles. Full detail is in the [README](https://github.com/ilyambr/backtrack#3-what-backtrack-installs-on-your-system).
 
 ## Known limitations
 

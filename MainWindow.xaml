@@ -1146,6 +1146,11 @@
                                 <StackPanel x:Name="ThemeSwatchLabelsPanel" Orientation="Horizontal" Margin="0,8,0,0"/>
                                 </StackPanel>
                                 </ScrollViewer>
+                                <!-- Drop a Theme.*.xaml file in here and it shows up above on next
+                                     Settings open: see ThemeManager.DiscoverThemes. Opens the exact
+                                     folder that reads from (ThemeManager.ThemesFolder), not a second
+                                     hardcoded path that could drift from it. -->
+                                <Button Content="Open themes folder" Style="{StaticResource FlatButton}" HorizontalAlignment="Left" Margin="0,10,0,0" Click="OpenThemesFolderButton_Click"/>
                             </StackPanel>
                         </Border>
 

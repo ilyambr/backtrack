@@ -77,8 +77,24 @@ public partial class MainWindow : Window
     // SOMETHING became active" value that can't tell them apart.
     private readonly Dictionary<string, DateTime> _recordRowActiveSinceUtc = new();
 
+    // Cached alongside _recordRowActiveSinceUtc so a toast fired for a row
+    // that just STOPPED (see RefreshStatusAsync) can still say its real
+    // label and look up a destination folder -- by the time a row drops out
+    // of ListRecordRowsAsync's result, its own RecordRow object is already
+    // gone from that tick's list.
+    private readonly Dictionary<string, (string Label, string SourceName, string FilterName)> _recordRowInfoByKey = new();
+
+    // False until the first RefreshStatusAsync poll completes -- without
+    // this, every row already recording when Backtrack starts (or
+    // reconnects) would look "newly started" on that first tick and toast
+    // for something that's been going for a while already, not something
+    // that just happened.
+    private bool _recordRowPollSeeded;
+
     private readonly DispatcherTimer _pollTimer;
     private readonly DispatcherTimer _micTimer;
+    private readonly DispatcherTimer _remoteSyncTimer;
+    private bool _remoteSyncRunning;
     private readonly StatusOverlay _statusOverlay;
     private readonly ToastOverlay _toastOverlay;
     private readonly UpdatePromptOverlay _updatePrompt = new();
@@ -397,7 +413,10 @@ public partial class MainWindow : Window
             _toastOverlay.ShowEncoderOverload(summary);
             AppLog.Write($"Encoder overload detected: {summary}");
         });
-        _obs.ReplaySaved += (key, path) => Dispatcher.BeginInvoke(async () =>
+        // Shared by ReplaySaving and ReplaySaved below -- both need the same
+        // real display label for the same row key, and both need the same
+        // self-healing retry (see its own comment).
+        async Task<string> ResolveRowLabelAsync(string key)
         {
             if (!_rowLabels.TryGetValue(key, out string? label))
             {
@@ -418,13 +437,27 @@ public partial class MainWindow : Window
                 _rowLabels.TryGetValue(key, out label);
             }
             label ??= key;
-            label = DisplayLabel(label); // local rename override, if any -- see its own comment
+            return DisplayLabel(label); // local rename override, if any -- see its own comment
+        }
+
+        // Needs obs-replay-slider 0.2.20+ (ReplaySaving's own doc comment) --
+        // an older paired build simply never fires this, and a save just
+        // goes straight to ReplaySaved below with no lead-in toast, same as
+        // it always used to for every trigger, not just a hotkey one.
+        _obs.ReplaySaving += key => Dispatcher.BeginInvoke(async () =>
+        {
+            string label = await ResolveRowLabelAsync(key);
+            _toastOverlay.ShowProcessingClip(key, label);
+        });
+        _obs.ReplaySaved += (key, path) => Dispatcher.BeginInvoke(async () =>
+        {
+            string label = await ResolveRowLabelAsync(key);
 
             // Quick-finishes the processing toast's bar then swaps to the
             // saved toast -- or, if this key never had a processing toast
-            // showing (e.g. an OBS-hotkey-triggered save, no lead-time signal
-            // for that -- see ShowProcessingClip's own comment), just shows
-            // the saved toast directly.
+            // showing (an older paired obs-replay-slider build with no
+            // ReplaySaving event -- see its own comment), just shows the
+            // saved toast directly.
             _toastOverlay.CompleteProcessingClip(key, label, path);
             AppLog.Write($"{label} saved to '{path}'");
             ShowObsModeMessage($"Replay saved to '{path}'");
@@ -513,6 +546,30 @@ public partial class MainWindow : Window
 
         _micTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
         _micTimer.Tick += (_, _) => _statusOverlay.SetMicStatus(_obs.GetMicStatus());
+
+        // 20 min, not tighter -- this walks the paired PC's ENTIRE clips
+        // tree every tick (see SyncRemoteClipsAsync), so it needs to be
+        // infrequent enough not to be a constant background network/disk
+        // drag on a large library, while still catching up reasonably soon
+        // after a clip was made while this PC was asleep/closed/unpaired.
+        // An on-demand remote Gallery browse or clip open already covers the
+        // "I want this specific clip right now" case instantly; this is
+        // purely the "make sure nothing's silently missing" background net.
+        _remoteSyncTimer = new DispatcherTimer { Interval = TimeSpan.FromMinutes(20) };
+        _remoteSyncTimer.Tick += async (_, _) =>
+        {
+            if (_remoteSyncRunning || string.IsNullOrEmpty(_settings.PairedPeerSecret))
+                return;
+            _remoteSyncRunning = true;
+            try
+            {
+                await SyncRemoteClipsAsync();
+            }
+            finally
+            {
+                _remoteSyncRunning = false;
+            }
+        };
 
         _seekTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(100) };
         _seekTimer.Tick += (_, _) => UpdatePlayerSeekUi();
@@ -659,6 +716,19 @@ public partial class MainWindow : Window
         _obs.Start();
         _pollTimer.Start();
         _micTimer.Start();
+        _remoteSyncTimer.Start();
+        // Also run once right away on startup, not just 20 minutes from now
+        // -- otherwise a clip made on the transmitter PC while this PC was
+        // off wouldn't get caught up until the FIRST tick, not immediately
+        // once this PC is back and paired. Goes through the same
+        // _remoteSyncRunning guard as the timer itself, in case the first
+        // real tick fires before this startup pass (a huge library, a slow
+        // network) is even done.
+        if (!string.IsNullOrEmpty(_settings.PairedPeerSecret))
+        {
+            _remoteSyncRunning = true;
+            _ = SyncRemoteClipsAsync().ContinueWith(_ => _remoteSyncRunning = false, TaskScheduler.FromCurrentSynchronizationContext());
+        }
         _ = RefreshStatusAsync();
         ShowScreen(Screen.Idle);
         _ = RefreshGalleryCountAsync();
@@ -1137,7 +1207,7 @@ public partial class MainWindow : Window
                 return (false, installed.ToString(3));
 
             bool versionBumped = UpdateService.IsNewer(release.Version, installed);
-            return (ShouldApplyUpdate(release, versionBumped, getLastApplied, setLastApplied, getLastDigest, setLastDigest), installed.ToString(3));
+            return (ShouldApplyUpdate(release, versionBumped, installed == UpdateService.MissingPluginVersion, getLastApplied, setLastApplied, getLastDigest, setLastDigest), installed.ToString(3));
         }
         catch
         {
@@ -1157,7 +1227,11 @@ public partial class MainWindow : Window
                 return (false, installed.ToString(3));
 
             bool versionBumped = UpdateService.IsNewer(release.Version, installed);
-            bool available = ShouldApplyUpdate(release, versionBumped,
+            // Backtrack checking on itself -- if this is running at all, it's
+            // obviously installed; "genuinely missing" only ever applies to
+            // a plugin DLL that might not be there, never to the app asking
+            // about its own already-running self.
+            bool available = ShouldApplyUpdate(release, versionBumped, installedFileMissing: false,
                 () => _settings.LastAppliedBacktrackReleaseAt, v => _settings.LastAppliedBacktrackReleaseAt = v,
                 () => _settings.LastAppliedBacktrackDigest, v => _settings.LastAppliedBacktrackDigest = v);
             return (available, installed.ToString(3));
@@ -1291,10 +1365,28 @@ public partial class MainWindow : Window
     /// the setters and reports "no update needed" rather than reinstalling
     /// something that's already correct.
     /// </summary>
-    private bool ShouldApplyUpdate(ReleaseInfo release, bool versionBumped,
+    private bool ShouldApplyUpdate(ReleaseInfo release, bool versionBumped, bool installedFileMissing,
         Func<DateTimeOffset?> getLastApplied, Action<DateTimeOffset?> setLastApplied,
         Func<string?> getLastDigest, Action<string?> setLastDigest)
     {
+        // A completely missing plugin (uninstalled, or wiped by something
+        // like an OBS reinstall that doesn't preserve third-party plugin
+        // files) must always reinstall, full stop -- regardless of what
+        // settings.json remembers about a previously-applied digest.
+        // settings.json survives independently of the plugin file itself
+        // (confirmed live: it survives Backtrack's own uninstall/reinstall
+        // by design, and has no way to know when something ELSE, like an
+        // OBS reinstall, deletes the plugin out from under it), so a
+        // matching stored digest can otherwise mask a genuinely absent
+        // plugin as "up to date" forever. The digest-trust shortcut just
+        // below exists for a different problem entirely -- an INSTALLED
+        // binary's own self-reported version STRING lagging its real
+        // content, not the binary being absent -- and was never meant to
+        // cover this case; check for absence first, before it gets a
+        // chance to.
+        if (installedFileMissing)
+            return true;
+
         DateTimeOffset? lastApplied = getLastApplied();
         string? lastDigest = getLastDigest();
 
@@ -1384,7 +1476,7 @@ public partial class MainWindow : Window
             }
 
             bool versionBumped = UpdateService.IsNewer(release.Version, installed);
-            if (!ShouldApplyUpdate(release, versionBumped, getLastApplied, setLastApplied, getLastDigest, setLastDigest))
+            if (!ShouldApplyUpdate(release, versionBumped, installed == UpdateService.MissingPluginVersion, getLastApplied, setLastApplied, getLastDigest, setLastDigest))
             {
                 SetUpdateStatus(dot, versionText, installed.ToString(3), ok: true);
                 ClearPendingUpdateIfMatches(displayName);
@@ -1527,7 +1619,9 @@ public partial class MainWindow : Window
             }
 
             bool versionBumped = UpdateService.IsNewer(release.Version, installed);
-            if (!ShouldApplyUpdate(release, versionBumped,
+            // Same reasoning as CheckSelfAvailabilityAsync's own call --
+            // Backtrack checking on itself is never "genuinely missing".
+            if (!ShouldApplyUpdate(release, versionBumped, installedFileMissing: false,
                     () => _settings.LastAppliedBacktrackReleaseAt, v => _settings.LastAppliedBacktrackReleaseAt = v,
                     () => _settings.LastAppliedBacktrackDigest, v => _settings.LastAppliedBacktrackDigest = v))
             {
@@ -3346,15 +3440,46 @@ public partial class MainWindow : Window
                 // again later it gets a genuinely fresh "since", not a stale
                 // reused one from its earlier run.
                 var activeKeys = new HashSet<string>();
+                var newlyStartedKeys = new List<string>();
                 foreach (RecordRow row in recordRows)
                 {
                     if (row.Status != RecordStatusRecording)
                         continue;
                     activeKeys.Add(row.Key);
-                    _recordRowActiveSinceUtc.TryAdd(row.Key, DateTime.UtcNow);
+                    _recordRowInfoByKey[row.Key] = (row.Label, row.SourceName, row.FilterName);
+                    if (_recordRowActiveSinceUtc.TryAdd(row.Key, DateTime.UtcNow))
+                        newlyStartedKeys.Add(row.Key);
                 }
-                foreach (string staleKey in _recordRowActiveSinceUtc.Keys.Where(k => !activeKeys.Contains(k)).ToList())
+                List<string> newlyStoppedKeys = _recordRowActiveSinceUtc.Keys.Where(k => !activeKeys.Contains(k)).ToList();
+                foreach (string staleKey in newlyStoppedKeys)
                     _recordRowActiveSinceUtc.Remove(staleKey);
+
+                // No RecordStateChanged-style event exists for a filter's own
+                // recording (that's specific to OBS's own main output), so
+                // this poll is the only place a per-row "started"/"stopped"
+                // toast can come from at all -- including a row started or
+                // stopped via its own hotkey bound directly in OBS, entirely
+                // outside Backtrack's own UI, which previously never toasted
+                // anything (see BuildRecordRowButton's own click handler,
+                // which used to be the ONLY place this toast fired, and so
+                // only ever covered a click made inside Backtrack's HUD).
+                // Skipped entirely on the first poll after startup/reconnect
+                // (_recordRowPollSeeded) so a row already recording when
+                // Backtrack attaches doesn't look like it "just started".
+                if (_recordRowPollSeeded)
+                {
+                    foreach (string key in newlyStartedKeys)
+                        _toastOverlay.ShowRecording(started: true, resolvedPath: null);
+                    foreach (string key in newlyStoppedKeys)
+                    {
+                        string? path = _recordRowInfoByKey.TryGetValue(key, out var info) && !string.IsNullOrEmpty(info.SourceName) && !string.IsNullOrEmpty(info.FilterName)
+                            ? await _obs.GetRecordRowDestinationFolderAsync(info.SourceName, info.FilterName)
+                            : null;
+                        _toastOverlay.ShowRecording(started: false, resolvedPath: path);
+                        _recordRowInfoByKey.Remove(key);
+                    }
+                }
+                _recordRowPollSeeded = true;
 
                 activeRecordRowCount = activeKeys.Count;
                 _lastKnownActiveRecordRowCount = activeRecordRowCount;
@@ -3536,14 +3661,10 @@ public partial class MainWindow : Window
             {
                 RecordRow row = activeRows[0];
                 await _obs.StopRecordRowAsync(row.Key);
-                // No RecordStateChanged-style event exists for a filter's own
-                // recording (that's specific to OBS's own main output), so this
-                // is the only place a stop notification for it can come from.
-                string? path = !string.IsNullOrEmpty(row.Path) ? row.Path
-                    : (!string.IsNullOrEmpty(row.SourceName) && !string.IsNullOrEmpty(row.FilterName)
-                        ? await _obs.GetRecordRowDestinationFolderAsync(row.SourceName, row.FilterName)
-                        : null);
-                _toastOverlay.ShowRecording(started: false, path);
+                // No direct toast here -- RefreshStatusAsync (called right
+                // below) now detects this same stop itself via polling and
+                // toasts for it, same as it would for a hotkey-triggered
+                // stop. A toast here too would double up.
                 await RefreshStatusAsync();
             }
             else
@@ -4540,7 +4661,7 @@ public partial class MainWindow : Window
         {
             RecordStatus mainStatus = await _obs.GetRecordStatusAsync();
             RecRowsPanel.Children.Add(BuildRecordRowButton("Full Scene", mainStatus.Active ? RecordStatusRecording : RecordStatusStopped,
-                start: _obs.StartMainRecordAsync, stop: _obs.StopMainRecordAsync, showToast: false));
+                start: _obs.StartMainRecordAsync, stop: _obs.StopMainRecordAsync));
         }
         catch (Exception ex)
         {
@@ -4573,8 +4694,7 @@ public partial class MainWindow : Window
         {
             string key = row.Key;
             RecRowsPanel.Children.Add(BuildRecordRowButton(DisplayLabel(row.Label), row.Status,
-                start: () => _obs.StartRecordRowAsync(key), stop: () => _obs.StopRecordRowAsync(key),
-                sourceName: row.SourceName, filterName: row.FilterName, rowPath: row.Path, hotkey: row.Hotkey));
+                start: () => _obs.StartRecordRowAsync(key), stop: () => _obs.StopRecordRowAsync(key), hotkey: row.Hotkey));
         }
     }
 
@@ -4687,8 +4807,7 @@ public partial class MainWindow : Window
         _autoDeleteOldClipsTimer.Start();
     }
 
-    private Button BuildRecordRowButton(string label, int status, Func<Task> start, Func<Task> stop, bool showToast = true,
-        string? sourceName = null, string? filterName = null, string? rowPath = null, string? hotkey = null)
+    private Button BuildRecordRowButton(string label, int status, Func<Task> start, Func<Task> stop, string? hotkey = null)
     {
         bool recording = status == RecordStatusRecording;
 
@@ -4816,27 +4935,11 @@ public partial class MainWindow : Window
                 stateText.Text = recording ? "Stopped" : "Recording";
                 button.Style = (Style)FindResource(recording ? "BufRowButtonNoHover" : "BufRowButton");
 
-                // No RecordStateChanged-style event exists for a filter's own
-                // recording (that's specific to OBS's own main output), so this
-                // is the only place a "started"/"stopped" notification for this
-                // row can come from at all. The Full Scene row skips this --
-                // RecordingStateChanged already toasts for it, and would double
-                // up with this if it toasted here too.
-                if (showToast)
-                {
-                    // Only fetch/show a folder when STOPPING (recording == true
-                    // means this click just stopped it) -- matches the native
-                    // toast's own behavior exactly: "Saved at" only ever makes
-                    // sense once something has actually been saved, never on
-                    // start. Passing a folder unconditionally here before was
-                    // the bug: it showed "Saved at" on the START toast too,
-                    // before anything had been written.
-                    string? path = recording ? (!string.IsNullOrEmpty(rowPath) ? rowPath
-                        : (!string.IsNullOrEmpty(sourceName) && !string.IsNullOrEmpty(filterName)
-                            ? await _obs.GetRecordRowDestinationFolderAsync(sourceName, filterName)
-                            : null)) : null;
-                    _toastOverlay.ShowRecording(started: !recording, path);
-                }
+                // No direct toast here -- RefreshStatusAsync's own ~1s poll
+                // now detects this same start/stop itself and toasts for it,
+                // the same way it would for a hotkey-triggered change made
+                // entirely outside Backtrack's UI. A toast here too would
+                // double up once that poll tick catches up (within ~1s).
                 // Keep this row disabled for a couple seconds before it can be
                 // toggled again -- rapid-fire start/stop (e.g. an accidental
                 // double click) can starve GPU encoder sessions across cycles
@@ -5330,6 +5433,11 @@ public partial class MainWindow : Window
         }
         _remotePcWasConnected = true;
 
+        // Remote counterpart to GetNewestClipPath() -- best effort: a failed
+        // fetch just means no "newest" dot shows this refresh, not a broken
+        // gallery load.
+        string? newestRemotePath = await _pairing.GetRemoteNewestClipPathAsync();
+
         // Same filtering as the local LoadGallery -- current folder only, by name.
         string filter = GalleryFilterBox.Text.Trim();
 
@@ -5358,10 +5466,21 @@ public partial class MainWindow : Window
         }
 
         foreach (string name in folders)
-            GalleryGrid.Children.Add(BuildFolderCard(name, () => OpenRemoteGalleryFolder(name)));
+        {
+            string folderRelPath = RemoteClipRelativePath(name);
+            // Ancestor check via a trailing separator, same reasoning as the
+            // local Gallery's own leadsToNewest just above -- otherwise a
+            // folder named e.g. "Clips" would false-positive match a sibling
+            // "Clips2" that happens to share the prefix.
+            bool leadsToNewest = newestRemotePath is not null
+                && (string.Equals(newestRemotePath, folderRelPath, StringComparison.OrdinalIgnoreCase)
+                    || newestRemotePath.StartsWith(folderRelPath + "/", StringComparison.OrdinalIgnoreCase));
+            GalleryGrid.Children.Add(BuildFolderCard(name, () => OpenRemoteGalleryFolder(name), leadsToNewest));
+        }
 
         foreach (RemoteGalleryFile file in files)
-            GalleryGrid.Children.Add(BuildRemoteClipCard(file));
+            GalleryGrid.Children.Add(BuildRemoteClipCard(file,
+                isNewest: newestRemotePath is not null && string.Equals(RemoteClipRelativePath(file.Name), newestRemotePath, StringComparison.OrdinalIgnoreCase)));
 
         GalleryStatus.Text = files.Count == 1 ? "1 clip" : $"{files.Count} clips";
     }
@@ -5369,7 +5488,60 @@ public partial class MainWindow : Window
     private string RemoteClipRelativePath(string fileName) =>
         _currentRemoteGalleryFolder is null ? fileName : $"{_currentRemoteGalleryFolder}/{fileName}";
 
-    private Border BuildRemoteClipCard(RemoteGalleryFile file)
+    /// <summary>
+    /// Background counterpart to OpenRemoteClipAsync's on-demand, one-clip-
+    /// at-a-time download: walks the WHOLE paired PC's clips tree (every
+    /// subfolder, not just whichever one the remote Gallery happens to be
+    /// showing right now) and pulls down anything genuinely missing from
+    /// this PC's own RemoteCache. Pure add-only mirror by design -- never
+    /// deletes a local RemoteCache file just because it's since vanished
+    /// remotely (that's a real, separate, deliberately-untouched case: an
+    /// already-downloaded copy staying put even after the transmitter's own
+    /// original is gone is the whole point of it being a local CACHE, not a
+    /// live view). Skips anything in _pendingRemoteDeletePaths -- a clip the
+    /// user just deleted from the remote Gallery here is still sitting on
+    /// the transmitter for a few seconds until that request lands, and this
+    /// walk running mid-flight shouldn't re-download something about to be
+    /// gone anyway.
+    /// </summary>
+    private async Task SyncRemoteClipsAsync()
+    {
+        var foldersToWalk = new Queue<string?>();
+        foldersToWalk.Enqueue(null); // null == root, same convention as _currentRemoteGalleryFolder
+
+        while (foldersToWalk.Count > 0)
+        {
+            string? folder = foldersToWalk.Dequeue();
+            RemoteGalleryListing? listing = await _pairing.ListRemoteGalleryAsync(folder ?? "");
+            // Unreachable (transmitter offline, wrong password, etc.) -- give
+            // up the whole walk quietly for this tick rather than erroring;
+            // the next tick tries again from scratch.
+            if (listing is null)
+                return;
+
+            foreach (string subfolder in listing.Folders)
+                foldersToWalk.Enqueue(folder is null ? subfolder : $"{folder}/{subfolder}");
+
+            foreach (RemoteGalleryFile file in listing.Files)
+            {
+                string relativePath = folder is null ? file.Name : $"{folder}/{file.Name}";
+                if (_pendingRemoteDeletePaths.Contains(relativePath))
+                    continue;
+
+                string destPath = GetRemoteClipCachePath(relativePath, file.Name);
+                if (File.Exists(destPath))
+                    continue;
+
+                // Failure (locked, disappeared mid-walk, a transient network
+                // hiccup) isn't fatal to the rest of the tree -- DownloadRemoteClipAsync
+                // already reports it as (false, error) rather than throwing;
+                // just move on, this file gets picked up again next tick.
+                await _pairing.DownloadRemoteClipAsync(relativePath, destPath);
+            }
+        }
+    }
+
+    private Border BuildRemoteClipCard(RemoteGalleryFile file, bool isNewest = false)
     {
         var iconHost = new Border
         {
@@ -5424,9 +5596,10 @@ public partial class MainWindow : Window
             Foreground = (Brush)FindResource("Text2"),
         };
 
+        UIElement titleRow = isNewest ? WithNewestDot(title, "Newest clip") : title;
         var content = new StackPanel();
         content.Children.Add(iconHost);
-        content.Children.Add(title);
+        content.Children.Add(titleRow);
         content.Children.Add(sub);
 
         var card = new Border { Width = 210, Child = content };
@@ -6851,8 +7024,10 @@ public partial class MainWindow : Window
             return;
         }
 
+        var options = tracks.Select((t, i) => new AudioTrackOption(t.Id, string.IsNullOrEmpty(t.Description) ? $"Track {i + 1}" : t.Description)).ToList();
+
         AudioTrackCombo.Visibility = Visibility.Visible;
-        AudioTrackCombo.ItemsSource = tracks.Select((t, i) => new AudioTrackOption(t.Id, string.IsNullOrEmpty(t.Description) ? $"Track {i + 1}" : t.Description)).ToList();
+        AudioTrackCombo.ItemsSource = options;
         AudioTrackCombo.SelectedIndex = 0;
     }
 
@@ -6860,8 +7035,10 @@ public partial class MainWindow : Window
 
     private void AudioTrackCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (_vlcPlayer is not null && AudioTrackCombo.SelectedItem is AudioTrackOption opt)
-            _vlcPlayer.SetAudioTrack(opt.Id);
+        if (_vlcPlayer is null || AudioTrackCombo.SelectedItem is not AudioTrackOption opt)
+            return;
+
+        _vlcPlayer.SetAudioTrack(opt.Id);
     }
 
     private void PlayPauseButton_Click(object sender, RoutedEventArgs e)
@@ -9021,6 +9198,20 @@ public partial class MainWindow : Window
         _settings.DisableHardwareAcceleration = DisableHardwareAccelToggle.IsChecked == true;
         _settings.Save();
         MessageBox.Show(this, "This takes effect the next time Backtrack starts.", "Backtrack");
+    }
+
+    /// <summary>Settings > Appearance > Theme > "Open themes folder" -- drop a Theme.*.xaml file in here and it shows up in the swatch picker next time Settings opens, no rebuild (see ThemeManager.DiscoverThemes).</summary>
+    private void OpenThemesFolderButton_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            Directory.CreateDirectory(ThemeManager.ThemesFolder); // shouldn't be missing (theme files ship there), but a fresh/broken install is still openable rather than erroring
+            Process.Start(new ProcessStartInfo("explorer.exe", $"\"{ThemeManager.ThemesFolder}\"") { UseShellExecute = true });
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, $"Couldn't open the themes folder: {ex.Message}", "Backtrack");
+        }
     }
 
     private void OpenDiagnosticLogButton_Click(object sender, RoutedEventArgs e)
