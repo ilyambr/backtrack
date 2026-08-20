@@ -268,6 +268,21 @@ public sealed class AppSettings
     // across both lists instead of needing separate tracking for each.
     public Dictionary<string, string> LocalRowNameOverrides { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 
+    // Settings > Player > "Default audio track". 0 = automatic (whichever
+    // track LibVLC/the clip lists first, the old unconditional behavior).
+    // 1-6 = OBS's own fixed Track 1-6 output numbering -- a clip's audio
+    // tracks don't come back from LibVLC pre-labeled with which OBS track
+    // number they actually are, only in whatever order the file lists them
+    // (usually the same order, but not something to rely on), so this is
+    // matched positionally (Nth audio track in the file = Track N) the same
+    // way LoadAudioTracks' own "Track {i+1}" fallback naming already
+    // assumes. Exists because which OBS track actually carries real audio
+    // depends entirely on this user's own Advanced Audio Properties routing
+    // (e.g. desktop audio on Track 2, mic on Track 1) -- defaulting to
+    // "whichever came first" can default to a genuinely silent track for a
+    // routing where that isn't Track 1.
+    public int DefaultPlayerAudioTrackIndex { get; set; }
+
     private static string FilePath => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Backtrack", "settings.json");
 

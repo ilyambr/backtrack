@@ -18,6 +18,7 @@ using System.Windows.Threading;
 using Backtrack.Interop;
 using Backtrack.Obs;
 using Backtrack.Pairing;
+using Backtrack.Streaming;
 using Backtrack.Updates;
 using Microsoft.Win32;
 using LibVlc = LibVLCSharp.Shared;
@@ -149,6 +150,7 @@ public partial class MainWindow : Window
     private DateTime _lastEncoderOverloadEventUtc = DateTime.MinValue;
     private bool _encoderOverloadedShown;
     private readonly PairingService _pairing;
+    private readonly RemoteClipStreamServer _remoteStreamServer;
     private readonly Dictionary<string, string> _rowLabels = new();
     private List<ReplayRow> _lastReplayRows = new();
     private GlobalHotkey? _hotkey;
@@ -291,6 +293,7 @@ public partial class MainWindow : Window
         LocationChanged += (_, _) => UpdateStreamingBoxVisibility();
 
         _pairing = new PairingService(_settings);
+        _remoteStreamServer = new RemoteClipStreamServer(_pairing);
         _pairing.PairingRequested += (deviceName, code, requestId) => Dispatcher.BeginInvoke(() =>
         {
             _pairingRequestOverlay.ShowRequest(deviceName, code,
@@ -865,10 +868,27 @@ public partial class MainWindow : Window
     /// after every save regardless of that, cheaper to check the flag here
     /// than at every call site.
     /// </summary>
+    /// <summary>
+    /// Paired-as-receiver PCs care about the OTHER PC's clips, not whatever
+    /// (usually empty, or just irrelevant old local test clips) happens to
+    /// be in this PC's own ClipsFolder -- same "which source matters here"
+    /// rule GalleryTile_Click already uses to decide local vs. remote.
+    /// Previously this always scanned local disk regardless, which is
+    /// exactly why the overlay showed nothing at all on a receiver PC: there
+    /// was nothing local to find, and the remote side of this was simply
+    /// never built.
+    /// </summary>
     private void RefreshRecentClipsOverlay()
     {
         if (!_settings.ShowRecentClipsOverlay)
             return;
+
+        if (!string.IsNullOrEmpty(_settings.PairedPeerSecret))
+        {
+            _ = RefreshRecentClipsOverlayRemoteAsync();
+            return;
+        }
+
         try
         {
             if (!Directory.Exists(_settings.ClipsFolder))
@@ -890,6 +910,30 @@ public partial class MainWindow : Window
             // Best effort -- a floating convenience overlay isn't worth
             // surfacing an error over; it just stays showing whatever it had.
         }
+    }
+
+    /// <summary>
+    /// Remote counterpart of RefreshRecentClipsOverlay's local scan --
+    /// reuses the same whole-tree walk SyncRemoteClipsAsync uses (metadata
+    /// only, no downloads here), just takes the 4 most recent instead of
+    /// filtering down to what's missing. Best effort, same as the local
+    /// path: an unreachable transmitter just leaves the overlay showing
+    /// whatever it last had, no error surfaced over a floating convenience
+    /// overlay.
+    /// </summary>
+    private async Task RefreshRecentClipsOverlayRemoteAsync()
+    {
+        List<(string RelativePath, RemoteGalleryFile File)>? all = await ListAllRemoteClipsAsync();
+        if (all is null)
+            return;
+
+        List<(string RelativePath, RemoteGalleryFile File)> recent = all
+            .Where(t => !_pendingRemoteDeletePaths.Contains(t.RelativePath))
+            .OrderByDescending(t => t.File.Modified)
+            .Take(4)
+            .ToList();
+
+        _recentClipsOverlay.SetTiles(recent.Select(t => BuildRecentRemoteClipTile(t.RelativePath, t.File)));
     }
 
     private Border BuildRecentClipTile(FileInfo file)
@@ -954,6 +998,65 @@ public partial class MainWindow : Window
             DeleteClip(file, new Border());
         };
         contextMenu.Items.Add(openFolderItem);
+        contextMenu.Items.Add(copyPathItem);
+        contextMenu.Items.Add(deleteItem);
+        thumb.ContextMenu = contextMenu;
+
+        return tile;
+    }
+
+    /// <summary>
+    /// Remote counterpart of BuildRecentClipTile above -- same compact
+    /// layout, but built from a RemoteGalleryFile/relative path instead of a
+    /// local FileInfo, since a receiver PC's own quick-gallery overlay has
+    /// no local file to work from until one actually gets clicked (see
+    /// OpenRemoteClipAsync). No "Open file location" in the context menu --
+    /// nothing to reveal in Explorer for a clip that isn't necessarily
+    /// downloaded yet -- and "Copy path" copies the remote-relative path
+    /// (informational) rather than a local one that might not exist.
+    /// </summary>
+    private Border BuildRecentRemoteClipTile(string relativePath, RemoteGalleryFile file)
+    {
+        var thumb = new Border { Background = (Brush)FindResource("ThumbnailBg"), Width = 96, Height = 64, Cursor = Cursors.Hand, ClipToBounds = true };
+        var thumbImage = new Image { Stretch = Stretch.UniformToFill };
+        thumb.Child = thumbImage;
+        thumb.MouseLeftButtonUp += (_, _) => OpenRemoteClipStreaming(relativePath, file);
+
+        var title = new TextBlock
+        {
+            Text = Path.GetFileNameWithoutExtension(file.Name),
+            FontWeight = FontWeights.Bold,
+            FontSize = 10.5,
+            Foreground = (Brush)FindResource("Text0"),
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            Width = 96,
+            Margin = new Thickness(0, 4, 0, 0),
+        };
+
+        DateTime modified = file.Modified.ToLocalTime();
+        string dateText = modified.Date == DateTime.Today ? modified.ToString("h:mm tt") : modified.ToString("MMM d, h:mm tt");
+        var sub = new TextBlock
+        {
+            Text = $"{dateText} · {FormatFileSize(file.Size)}",
+            FontSize = 9.5,
+            Foreground = (Brush)FindResource("Text2"),
+            Width = 96,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+        };
+
+        var content = new StackPanel { Margin = new Thickness(0, 0, 10, 0) };
+        content.Children.Add(thumb);
+        content.Children.Add(title);
+        content.Children.Add(sub);
+
+        var tile = new Border { Child = content };
+        _ = LoadRemoteThumbnailAsync(relativePath, file, thumbImage);
+
+        var contextMenu = new ContextMenu { Style = (Style)FindResource("DarkContextMenu") };
+        var copyPathItem = new MenuItem { Header = "Copy path", Style = (Style)FindResource("DarkMenuItem") };
+        copyPathItem.Click += (_, _) => Clipboard.SetText(relativePath);
+        var deleteItem = new MenuItem { Header = "Delete", Style = (Style)FindResource("DarkMenuItem"), Foreground = (Brush)FindResource("Rec") };
+        deleteItem.Click += (_, _) => DeleteRemoteClip(relativePath, file);
         contextMenu.Items.Add(copyPathItem);
         contextMenu.Items.Add(deleteItem);
         thumb.ContextMenu = contextMenu;
@@ -3195,6 +3298,14 @@ public partial class MainWindow : Window
         _trayManager?.UpdateStatus(_obs.IsConnected, _statusOverlay.IsVisible);
     }
 
+    private void DefaultAudioTrackSelector_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (DefaultAudioTrackSelector.SelectedItem is not ComboBoxItem { Tag: string tag } || !int.TryParse(tag, out int index))
+            return;
+        _settings.DefaultPlayerAudioTrackIndex = index;
+        _settings.Save();
+    }
+
     private void StatusIndicatorOrientationSelector_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         _settings.StatusIndicatorOrientation = StatusIndicatorOrientationSelector.SelectedItem is ComboBoxItem { Tag: "Vertical" }
@@ -3685,7 +3796,7 @@ public partial class MainWindow : Window
         _ = LoadReplayRowsAsync();
     }
 
-    private void GalleryTile_Click(object sender, RoutedEventArgs e)
+    private async void GalleryTile_Click(object sender, RoutedEventArgs e)
     {
         ShowScreen(Screen.Gallery);
         _currentGalleryFolder = null;
@@ -3697,7 +3808,40 @@ public partial class MainWindow : Window
         // hidden unconditionally now.
         _galleryIsRemote = !string.IsNullOrEmpty(_settings.PairedPeerSecret);
         RefreshGallerySourceTabsVisibility();
-        LoadGallery();
+        if (_galleryIsRemote)
+            await EnterRemoteGalleryAsync();
+        else
+            LoadGallery();
+    }
+
+    /// <summary>
+    /// Entering the remote Gallery specifically (not every subsequent folder
+    /// click or filter keystroke within it -- those still go through the
+    /// plain LoadRemoteGalleryAsync, one folder at a time, same as before)
+    /// runs a full SyncRemoteClipsAsync pass first, with the same
+    /// "Downloading... X%" progress readout OpenRemoteClipAsync already
+    /// shows for a single clip -- requested directly: clips should be synced
+    /// BEFORE you're looking at the gallery, not silently sometime in the
+    /// next 20 minutes. The periodic background timer still exists
+    /// independently of this for whenever the Gallery just isn't open at all.
+    /// </summary>
+    private async Task EnterRemoteGalleryAsync()
+    {
+        GalleryGrid.Children.Clear();
+        _galleryCardSelection.Clear();
+        _selectedClipPaths.Clear();
+        RefreshGallerySelectionUi();
+        UpdateGalleryPathBar();
+        GalleryStatus.Text = "Syncing clips...";
+
+        var progress = new Progress<double>(p => GalleryStatus.Text = $"Syncing clips... {p:P0}");
+        await SyncRemoteClipsAsync(progress);
+
+        // Unreachable partway through, unpaired mid-sync, etc. -- falls
+        // through to LoadRemoteGalleryAsync's own connectivity check below
+        // regardless, so its existing "Couldn't reach..." messaging still
+        // applies rather than this method needing a second copy of it.
+        await LoadRemoteGalleryAsync();
     }
 
     /// <summary>
@@ -3732,7 +3876,7 @@ public partial class MainWindow : Window
         LoadGallery();
     }
 
-    private void GalleryRemoteTab_Click(object sender, RoutedEventArgs e)
+    private async void GalleryRemoteTab_Click(object sender, RoutedEventArgs e)
     {
         if (_galleryIsRemote || string.IsNullOrEmpty(_settings.PairedPeerSecret))
             return;
@@ -3740,7 +3884,7 @@ public partial class MainWindow : Window
         _galleryIsRemote = true;
         _currentRemoteGalleryFolder = null;
         RefreshGallerySourceTabsVisibility();
-        LoadGallery();
+        await EnterRemoteGalleryAsync();
     }
 
     private void SettingsButton_Click(object sender, RoutedEventArgs e)
@@ -5167,6 +5311,11 @@ public partial class MainWindow : Window
                 ? Directory.EnumerateFiles(_settings.ClipsFolder, "*", SearchOption.AllDirectories)
                     .Where(f => VideoExtensions.Contains(Path.GetExtension(f).ToLowerInvariant()))
                     .Select(f => new FileInfo(f))
+                    // Same glitched-clip filter LoadGallery/RefreshRecentClipsOverlay
+                    // already apply -- without it, this could point the "newest"
+                    // dot at a sub-2s glitched clip that's hidden from the Gallery
+                    // list entirely, leading nowhere a user could actually find it.
+                    .Where(f => TryGetCachedDurationMs(f) is not < 2000)
                     .OrderByDescending(f => f.LastWriteTime)
                     .FirstOrDefault()
                     ?.FullName
@@ -5397,8 +5546,9 @@ public partial class MainWindow : Window
     /// fetched from the transmitter PC's own local cache (see
     /// LoadRemoteThumbnailAsync/HandleGetThumbnailAsync), not generated here.
     /// No selection/mass-actions/trim, though -- those operate on local files
-    /// by design; a remote clip has to be downloaded (see OpenRemoteClipAsync)
-    /// before any of that could apply to it.
+    /// by design; a remote clip plays by streaming now (see
+    /// OpenRemoteClipStreaming), and none of that can apply to it unless it
+    /// also happens to already be sitting in RemoteCache (SyncRemoteClipsAsync).
     /// </summary>
     private async Task LoadRemoteGalleryAsync()
     {
@@ -5489,55 +5639,105 @@ public partial class MainWindow : Window
         _currentRemoteGalleryFolder is null ? fileName : $"{_currentRemoteGalleryFolder}/{fileName}";
 
     /// <summary>
-    /// Background counterpart to OpenRemoteClipAsync's on-demand, one-clip-
-    /// at-a-time download: walks the WHOLE paired PC's clips tree (every
-    /// subfolder, not just whichever one the remote Gallery happens to be
-    /// showing right now) and pulls down anything genuinely missing from
-    /// this PC's own RemoteCache. Pure add-only mirror by design -- never
-    /// deletes a local RemoteCache file just because it's since vanished
-    /// remotely (that's a real, separate, deliberately-untouched case: an
-    /// already-downloaded copy staying put even after the transmitter's own
-    /// original is gone is the whole point of it being a local CACHE, not a
-    /// live view). Skips anything in _pendingRemoteDeletePaths -- a clip the
-    /// user just deleted from the remote Gallery here is still sitting on
-    /// the transmitter for a few seconds until that request lands, and this
-    /// walk running mid-flight shouldn't re-download something about to be
-    /// gone anyway.
+    /// Walks the WHOLE paired PC's clips tree (every subfolder, not just one
+    /// folder at a time like ListRemoteGalleryAsync itself) and returns every
+    /// clip found, each with its own relative path already computed. Shared
+    /// by SyncRemoteClipsAsync (which then filters this down to what's
+    /// actually missing locally) and RefreshRecentClipsOverlayRemoteAsync
+    /// (which just needs the most-recently-modified few, same idea as the
+    /// local quick-gallery overlay's own recursive scan). Null return means
+    /// unreachable (transmitter offline, wrong password, etc.) -- both
+    /// callers already have their own "just try again later" fallback for
+    /// that, so this doesn't need one of its own.
     /// </summary>
-    private async Task SyncRemoteClipsAsync()
+    private async Task<List<(string RelativePath, RemoteGalleryFile File)>?> ListAllRemoteClipsAsync()
     {
         var foldersToWalk = new Queue<string?>();
         foldersToWalk.Enqueue(null); // null == root, same convention as _currentRemoteGalleryFolder
+        var all = new List<(string RelativePath, RemoteGalleryFile File)>();
 
         while (foldersToWalk.Count > 0)
         {
             string? folder = foldersToWalk.Dequeue();
             RemoteGalleryListing? listing = await _pairing.ListRemoteGalleryAsync(folder ?? "");
-            // Unreachable (transmitter offline, wrong password, etc.) -- give
-            // up the whole walk quietly for this tick rather than erroring;
-            // the next tick tries again from scratch.
             if (listing is null)
-                return;
+                return null;
 
             foreach (string subfolder in listing.Folders)
                 foldersToWalk.Enqueue(folder is null ? subfolder : $"{folder}/{subfolder}");
 
             foreach (RemoteGalleryFile file in listing.Files)
-            {
-                string relativePath = folder is null ? file.Name : $"{folder}/{file.Name}";
-                if (_pendingRemoteDeletePaths.Contains(relativePath))
-                    continue;
+                all.Add((folder is null ? file.Name : $"{folder}/{file.Name}", file));
+        }
 
-                string destPath = GetRemoteClipCachePath(relativePath, file.Name);
-                if (File.Exists(destPath))
-                    continue;
+        return all;
+    }
 
-                // Failure (locked, disappeared mid-walk, a transient network
-                // hiccup) isn't fatal to the rest of the tree -- DownloadRemoteClipAsync
-                // already reports it as (false, error) rather than throwing;
-                // just move on, this file gets picked up again next tick.
-                await _pairing.DownloadRemoteClipAsync(relativePath, destPath);
-            }
+    /// <summary>
+    /// Background counterpart to OpenRemoteClipAsync's on-demand, one-clip-
+    /// at-a-time download: pulls down anything genuinely missing from this
+    /// PC's own RemoteCache, across the WHOLE tree. Pure add-only mirror by
+    /// design -- never deletes a local RemoteCache file just because it's
+    /// since vanished remotely (that's a real, separate, deliberately-
+    /// untouched case: an already-downloaded copy staying put even after the
+    /// transmitter's own original is gone is the whole point of it being a
+    /// local CACHE, not a live view). Skips anything in
+    /// _pendingRemoteDeletePaths -- a clip the user just deleted from the
+    /// remote Gallery here is still sitting on the transmitter for a few
+    /// seconds until that request lands, and this walk running mid-flight
+    /// shouldn't re-download something about to be gone anyway.
+    ///
+    /// Two phases, not one combined walk-and-download pass -- listing every
+    /// folder (ListAllRemoteClipsAsync) is cheap, metadata only, and needs to
+    /// happen in full BEFORE the first download starts, so `progress` can
+    /// report a real "X of Y" fraction across the WHOLE tree from the very
+    /// first file, instead of a number that keeps moving the goalposts as
+    /// later folders are still being discovered.
+    /// </summary>
+    private async Task SyncRemoteClipsAsync(IProgress<double>? progress = null)
+    {
+        List<(string RelativePath, RemoteGalleryFile File)>? all = await ListAllRemoteClipsAsync();
+        // Unreachable -- give up quietly rather than erroring; the periodic
+        // timer (or the next Gallery visit) tries again from scratch.
+        if (all is null)
+            return;
+
+        var toDownload = new List<(string RelativePath, RemoteGalleryFile File, string DestPath)>();
+        foreach ((string relativePath, RemoteGalleryFile file) in all)
+        {
+            if (_pendingRemoteDeletePaths.Contains(relativePath))
+                continue;
+
+            string destPath = GetRemoteClipCachePath(relativePath, file.Name);
+            if (File.Exists(destPath))
+                continue;
+
+            toDownload.Add((relativePath, file, destPath));
+        }
+
+        if (toDownload.Count == 0)
+        {
+            progress?.Report(1.0);
+            return;
+        }
+
+        for (int i = 0; i < toDownload.Count; i++)
+        {
+            (string relativePath, RemoteGalleryFile file, string destPath) = toDownload[i];
+            int completed = i; // captured per-iteration for the sub-progress closure below
+            // Sub-progress WITHIN this one file (same IProgress<double> shape
+            // DownloadRemoteClipAsync already reports for a single clip in
+            // OpenRemoteClipAsync) folded into the overall fraction, so the
+            // number moves smoothly through one big clip instead of jumping
+            // only once it's fully landed.
+            var fileProgress = progress is null ? null : new Progress<double>(p => progress.Report((completed + p) / toDownload.Count));
+
+            // Failure (locked, disappeared mid-walk, a transient network
+            // hiccup) isn't fatal to the rest of the tree -- DownloadRemoteClipAsync
+            // already reports it as (false, error) rather than throwing;
+            // just move on, this file gets picked up again next pass.
+            await _pairing.DownloadRemoteClipAsync(relativePath, destPath, fileProgress);
+            progress?.Report((double)(i + 1) / toDownload.Count);
         }
     }
 
@@ -5610,7 +5810,7 @@ public partial class MainWindow : Window
         // alone, not `card`: title needs its OWN double-click (rename) below
         // without that also bubbling up into opening the clip.
         _ = LoadRemoteThumbnailAsync(relativePath, file, thumbImage);
-        iconHost.MouseLeftButtonUp += (_, _) => _ = OpenRemoteClipAsync(relativePath, file);
+        iconHost.MouseLeftButtonUp += (_, _) => OpenRemoteClipStreaming(relativePath, file);
 
         title.MouseLeftButtonDown += (_, e) =>
         {
@@ -5708,6 +5908,11 @@ public partial class MainWindow : Window
         _pendingRemoteDeletePaths.Add(relativePath);
         if (GalleryPanel.Visibility == Visibility.Visible)
             LoadGallery();
+        // Same "instantly gone, not just after the undo window expires" shape
+        // as QueueDeleteWithUndo's own local version -- RefreshRecentClipsOverlay's
+        // _pendingRemoteDeletePaths filter is what makes this take effect
+        // immediately regardless of which screen the delete was triggered from.
+        RefreshRecentClipsOverlay();
 
         _toastOverlay.ShowDeleteUndo(displayName,
             onExpire: () =>
@@ -5718,7 +5923,11 @@ public partial class MainWindow : Window
             onUndo: () =>
             {
                 _pendingRemoteDeletePaths.Remove(relativePath);
-                Dispatcher.BeginInvoke(() => LoadGallery());
+                Dispatcher.BeginInvoke(() =>
+                {
+                    LoadGallery();
+                    RefreshRecentClipsOverlay();
+                });
             });
     }
 
@@ -5882,25 +6091,32 @@ public partial class MainWindow : Window
     private long _clipOpenToken;
 
     /// <summary>
-    /// Downloads a remote clip into a per-peer local cache (so re-opening the
-    /// same clip later doesn't re-download it) and opens it in the existing
-    /// Player -- once it's actually on disk here, it plays exactly like any
-    /// local clip, no separate remote playback path needed. Switches to
-    /// Player immediately, before the download even starts (see
-    /// ShowPlayerLoadingUi) -- staying on Gallery for however long the
-    /// transfer took (up to several seconds on a real clip over the network)
-    /// was the actual "switching clips is slow" complaint; the transfer time
-    /// itself doesn't change, but it no longer reads as Backtrack doing
-    /// nothing while it happens.
+    /// Opens a remote clip in the Player WITHOUT downloading it first --
+    /// libvlc plays straight off RemoteClipStreamServer's own local HTTP
+    /// relay, which pulls bytes from the paired PC over the network as
+    /// playback needs them (see its own class comment). Requested directly:
+    /// clips should stream, not require a manual full download before you
+    /// can watch anything. Deliberately never writes the clip to disk here
+    /// at all -- no local copy survives after playback, unlike
+    /// DownloadRemoteClipAsync's own RemoteCache.
+    ///
+    /// The one exception: if SyncRemoteClipsAsync's own periodic background
+    /// mirror (a separate, independently-requested feature) already grabbed
+    /// this exact clip, playing the real local copy it already has is
+    /// strictly better than streaming a redundant second copy over the
+    /// network for no reason -- and it's the only way Trim/Rename/Delete
+    /// ever become available for a remote clip at all (see OpenInPlayer's
+    /// own Player actions), all of which need a genuine local file and
+    /// stay unavailable during pure streaming, same as the remote Gallery's
+    /// own long-documented "no mass-actions/trim on an undownloaded remote
+    /// clip" limitation.
     /// </summary>
-    private async Task OpenRemoteClipAsync(string relativePath, RemoteGalleryFile file)
+    private void OpenRemoteClipStreaming(string relativePath, RemoteGalleryFile file)
     {
         if (string.IsNullOrEmpty(_settings.PairedPeerDeviceId))
             return;
 
-        long myToken = ++_clipOpenToken;
         string destPath = GetRemoteClipCachePath(relativePath, file.Name);
-
         if (File.Exists(destPath))
         {
             OpenInPlayer(new FileInfo(destPath));
@@ -5908,32 +6124,19 @@ public partial class MainWindow : Window
             return;
         }
 
-        ShowPlayerLoadingUi(file.Name, GetRemoteThumbnailCachePath(relativePath, file.Modified, file.Size));
+        long myToken = ++_clipOpenToken;
+        string? thumbnailCachePath = GetRemoteThumbnailCachePath(relativePath, file.Modified, file.Size);
+        ShowPlayerLoadingUi(file.Name, thumbnailCachePath);
 
-        string previousStatus = GalleryStatus.Text;
-        var progress = new Progress<double>(p =>
-        {
-            if (myToken == _clipOpenToken)
-                GalleryStatus.Text = $"Downloading... {p:P0}";
-        });
-        (bool success, string? error) = await _pairing.DownloadRemoteClipAsync(relativePath, destPath, progress);
-        GalleryStatus.Text = previousStatus;
+        // No FileInfo at all for a streamed clip -- these come straight from
+        // the metadata list_gallery already gave us (RemoteGalleryFile),
+        // same info a real download's FileInfo would've reported anyway.
+        StatSize.Text = $"{file.Size / 1024.0 / 1024.0:0.#} MB";
+        StatDate.Text = $"{file.Modified.ToLocalTime():MMM d, yyyy h:mm tt}";
 
-        // A different clip was opened while this download was still running
-        // -- DownloadStreamedFileAsync's own de-dupe already handles two
-        // requests racing for the exact same file; this is the "opened a
-        // DIFFERENT clip in the meantime" case that dedupe can't cover.
-        if (myToken != _clipOpenToken)
-            return;
-
-        if (!success)
-        {
-            MessageBox.Show(this, $"Couldn't download that clip: {error}", "Backtrack");
-            return;
-        }
-
-        OpenInPlayer(new FileInfo(destPath));
-        _currentPlayerRemoteOrigin = (relativePath, _settings.PairedPeerDeviceId);
+        string streamUrl = _remoteStreamServer.PrepareStream(relativePath, file.Size);
+        var mediaUri = new Uri(streamUrl);
+        Dispatcher.BeginInvoke(new Action(() => StartPlayerPlayback(mediaUri, myToken, hideFreezeFrameOnFirstPlay: true)), DispatcherPriority.Loaded);
     }
 
     /// <summary>
@@ -6865,7 +7068,8 @@ public partial class MainWindow : Window
         // one scheduled before it touches VideoView.MediaPlayer at all --
         // see that method's own comment for what happens without this.
         long myToken = _clipOpenToken;
-        Dispatcher.BeginInvoke(new Action(() => StartPlayerPlayback(file, myToken)), DispatcherPriority.Loaded);
+        var mediaUri = new Uri(ResolveLocalClipPath(file));
+        Dispatcher.BeginInvoke(new Action(() => StartPlayerPlayback(mediaUri, myToken)), DispatcherPriority.Loaded);
     }
 
     /// <summary>
@@ -6894,7 +7098,18 @@ public partial class MainWindow : Window
     /// creating anything, so at most one MediaPlayer ever gets created per
     /// burst of clicks.
     /// </summary>
-    private async void StartPlayerPlayback(FileInfo file, long myToken)
+    /// <summary>
+    /// hideFreezeFrameOnFirstPlay: OpenInPlayer's own local-file path already
+    /// starts the freeze-frame-hide timer itself, before this method even
+    /// runs (see ShowPlayerFreezeFrame) -- it knows the moment playback is
+    /// about to begin, since a local file has no real "not ready yet" delay.
+    /// OpenRemoteClipStreaming has no such moment to hand off from (network
+    /// buffering time is unknown up front, unlike a local decode), so it
+    /// leaves the cover up via ShowPlayerLoadingUi and asks THIS method to
+    /// start that same timer instead, but only once real playback has
+    /// actually begun (the Playing event below), not immediately.
+    /// </summary>
+    private async void StartPlayerPlayback(Uri mediaUri, long myToken, bool hideFreezeFrameOnFirstPlay = false)
     {
         // Re-checked here, not just trusted from OpenInPlayer's own earlier
         // check -- this runs from a deferred callback across an await, no
@@ -6925,7 +7140,7 @@ public partial class MainWindow : Window
         PlayerVideoView.MediaPlayer = _vlcPlayer;
         _playerHasEnded = false;
 
-        using var media = new LibVlc.Media(_libVlc, new Uri(ResolveLocalClipPath(file)));
+        using var media = new LibVlc.Media(_libVlc, mediaUri);
         _vlcPlayer.Play(media);
 
         // Explicit, not just "set the slider to 100 and let ValueChanged
@@ -6956,10 +7171,20 @@ public partial class MainWindow : Window
         // anything on screen to cover with.
 
         bool tracksLoaded = false;
+        bool volumeConfirmed = false;
+        bool freezeFrameHidden = false;
         _vlcPlayer.Playing += (_, _) => Dispatcher.BeginInvoke(() =>
         {
             PlayIcon.Visibility = Visibility.Collapsed;
             PauseIcon.Visibility = Visibility.Visible;
+
+            if (hideFreezeFrameOnFirstPlay && !freezeFrameHidden)
+            {
+                freezeFrameHidden = true;
+                _freezeFrameTimer.Stop();
+                _freezeFrameTimer.Start();
+            }
+
             if (_vlcPlayer.Media is not null)
             {
                 var videoTrack = _vlcPlayer.Media.Tracks.FirstOrDefault(t => t.TrackType == LibVlc.TrackType.Video).Data.Video;
@@ -6978,6 +7203,25 @@ public partial class MainWindow : Window
             {
                 tracksLoaded = true;
                 LoadAudioTracks();
+            }
+
+            // Same class of bug as tracksLoaded above, just for volume: the
+            // Volume=100/Mute=false write right after Play() (below, this
+            // method) is already known unreliable before playback has really
+            // started (see that write's own comment) -- it can silently fail
+            // to stick, or UpdateVolumeIcon can read Volume back as 0 before
+            // libvlc's real audio output is actually up, showing "Muted"
+            // despite Mute genuinely being false (reported live: "shows
+            // muted even though you can kinda hear audio"). Re-affirm and
+            // re-display once Playing fires, when both are finally reliable
+            // -- the earlier write stays too, for the common case where it
+            // already worked and this is just belt-and-suspenders.
+            if (!volumeConfirmed)
+            {
+                volumeConfirmed = true;
+                _vlcPlayer.Volume = (int)PlayerVolumeSlider.Value;
+                _vlcPlayer.Mute = false;
+                UpdateVolumeIcon();
             }
         });
         _vlcPlayer.Paused += (_, _) => Dispatcher.BeginInvoke(() =>
@@ -7028,7 +7272,40 @@ public partial class MainWindow : Window
 
         AudioTrackCombo.Visibility = Visibility.Visible;
         AudioTrackCombo.ItemsSource = options;
-        AudioTrackCombo.SelectedIndex = 0;
+        // Settings > Player's own default track (1-6, matched positionally --
+        // see DefaultPlayerAudioTrackIndex's own comment), falling back to
+        // whichever one this clip lists first (index 0, the old unconditional
+        // behavior) if it's unset (0) or this clip doesn't even have that
+        // many tracks.
+        int preferredIndex = _settings.DefaultPlayerAudioTrackIndex - 1;
+        AudioTrackCombo.SelectedIndex = preferredIndex >= 0 && preferredIndex < options.Count ? preferredIndex : 0;
+
+        // The very first SetAudioTrack call on a freshly-started clip
+        // (fired by the SelectedIndex assignment above, via
+        // AudioTrackCombo_SelectionChanged) doesn't always actually engage
+        // libvlc's audio output -- confirmed live: a clip opened with no
+        // audio at all on the correct/default track, until manually
+        // switching the dropdown to a different track and back, at which
+        // point it started working. That's a known LibVLC quirk (the audio
+        // output isn't necessarily fully attached the very first time a
+        // track gets selected), not anything specific to which track was
+        // picked. -1 is libvlc's own "no audio track" id -- bouncing
+        // through it and back reproduces the same "switch away, switch
+        // back" re-negotiation that fixed it by hand, without depending on
+        // a second real track existing (a single-track clip hits this too)
+        // and without an audible blip of different content (silence isn't
+        // audibly different from silence). A bare repeat of the SAME real
+        // id wouldn't reliably reproduce this -- some LibVLC builds no-op a
+        // SetAudioTrack call that just repeats the id already considered
+        // active, which is exactly the state this needs to break out of.
+        int desiredId = options[AudioTrackCombo.SelectedIndex].Id;
+        Dispatcher.BeginInvoke(() =>
+        {
+            if (_vlcPlayer is null)
+                return;
+            _vlcPlayer.SetAudioTrack(-1);
+            _vlcPlayer.SetAudioTrack(desiredId);
+        }, DispatcherPriority.Background);
     }
 
     private sealed record AudioTrackOption(int Id, string Name);
@@ -8220,6 +8497,13 @@ public partial class MainWindow : Window
 
         ShowDisclaimerToggle.IsChecked = _settings.ShowDisclaimer;
         ShowStatusIndicatorToggle.IsChecked = _settings.ShowStatusIndicator;
+        // Same unsubscribe/resubscribe reasoning as StatusIndicatorOrientationSelector
+        // just below -- a programmatic SelectedIndex assignment fires
+        // SelectionChanged too, which would otherwise re-save from just opening Settings.
+        DefaultAudioTrackSelector.SelectionChanged -= DefaultAudioTrackSelector_SelectionChanged;
+        DefaultAudioTrackSelector.SelectedIndex = Math.Clamp(_settings.DefaultPlayerAudioTrackIndex, 0, 6);
+        DefaultAudioTrackSelector.SelectionChanged += DefaultAudioTrackSelector_SelectionChanged;
+
         // Unsubscribed/resubscribed around SelectedIndex -- see
         // OverlayLogModeSelector's identical comment just below; a
         // programmatic assignment fires SelectionChanged too, which would

@@ -14,7 +14,7 @@
          replacements for every Win32-only feature) doesn't exist yet, but
          when it does it versions independently, starting fresh, not from
          this number. -->
-    <Version>0.3.3</Version>
+    <Version>0.3.4</Version>
     <ApplicationIcon>Assets\app.ico</ApplicationIcon>
     <!-- The OBS link itself is still a hand-rolled obs-websocket v5 client over
          System.Net.WebSockets, no package needed. LibVLC below is the one

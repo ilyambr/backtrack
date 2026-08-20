@@ -1394,6 +1394,25 @@
                             <Button Content="Save &amp; apply" Style="{StaticResource FlatButton}" HorizontalAlignment="Left" Margin="0,10,0,0" Click="ApplyBufferDuration_Click"/>
                         </StackPanel>
 
+                        <TextBlock Text="PLAYER" Style="{StaticResource SettingsSectionHeader}"/>
+                        <Border Style="{StaticResource SettingsRow}" BorderThickness="0">
+                            <StackPanel>
+                                <TextBlock Text="Default audio track" FontSize="13" FontWeight="Bold" Foreground="{DynamicResource Text0}"/>
+                                <TextBlock Text="Which track the Player opens a clip on by default. Only matters if your real audio (mic, desktop, etc.) doesn't land on Track 1 in your own OBS audio routing."
+                                           FontSize="11" Foreground="{DynamicResource Text2}" Margin="0,3,0,10" TextWrapping="Wrap"/>
+                                <ComboBox x:Name="DefaultAudioTrackSelector" Width="140" HorizontalAlignment="Left" Style="{StaticResource ModernComboBox}"
+                                          SelectionChanged="DefaultAudioTrackSelector_SelectionChanged">
+                                    <ComboBoxItem Content="Automatic" Tag="0"/>
+                                    <ComboBoxItem Content="Track 1" Tag="1"/>
+                                    <ComboBoxItem Content="Track 2" Tag="2"/>
+                                    <ComboBoxItem Content="Track 3" Tag="3"/>
+                                    <ComboBoxItem Content="Track 4" Tag="4"/>
+                                    <ComboBoxItem Content="Track 5" Tag="5"/>
+                                    <ComboBoxItem Content="Track 6" Tag="6"/>
+                                </ComboBox>
+                            </StackPanel>
+                        </Border>
+
                         <TextBlock Text="BUFFERS" Style="{StaticResource SettingsSectionHeader}"/>
                         <StackPanel Margin="0,0,0,10">
                             <TextBlock Text="Enable or disable a buffer, and set its destination folder."

@@ -480,6 +480,11 @@ public sealed class PairingService : IDisposable
             string? newest = Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories)
                 .Where(f => GalleryFormats.VideoExtensions.Contains(Path.GetExtension(f).ToLowerInvariant()))
                 .Select(f => new FileInfo(f))
+                // Same glitched-clip filter HandleListGallery already applies --
+                // without it, this could point a paired PC's "newest" dot at a
+                // sub-2s glitched clip that list_gallery itself hides, leading
+                // nowhere a receiver could actually find it.
+                .Where(f => GetCachedDurationMsForRemote?.Invoke(f.FullName) is not < 2000)
                 .OrderByDescending(f => f.LastWriteTimeUtc)
                 .FirstOrDefault()
                 ?.FullName;
@@ -732,7 +737,12 @@ public sealed class PairingService : IDisposable
             return;
         }
 
-        await StreamFileResponseAsync(stream, fullPath);
+        // Optional -- absent/0 means "from the start", same as before this
+        // existed. Lets a receiver PC's local HTTP relay (RemoteClipStreamServer)
+        // honor a seek into a clip it's streaming, not just play straight
+        // through from byte 0 -- see StreamRemoteClipToAsync's own comment.
+        long offset = request.TryGetProperty("offset", out JsonElement o) ? o.GetInt64() : 0;
+        await StreamFileResponseAsync(stream, fullPath, offset);
     }
 
     /// <summary>
@@ -791,12 +801,18 @@ public sealed class PairingService : IDisposable
         await StreamFileResponseAsync(stream, thumbnailPath);
     }
 
-    private static async Task StreamFileResponseAsync(NetworkStream stream, string localPath)
+    private static async Task StreamFileResponseAsync(NetworkStream stream, string localPath, long offset = 0)
     {
         try
         {
             using FileStream fileStream = File.OpenRead(localPath);
-            await WriteLineAsync(stream, JsonSerializer.Serialize(new { success = true, size = fileStream.Length }));
+            if (offset > 0 && offset < fileStream.Length)
+                fileStream.Seek(offset, SeekOrigin.Begin);
+            // size is what's left from `offset` onward, not the whole file --
+            // the client already knows the clip's real total size (from
+            // list_gallery), this is specifically "how many more bytes is
+            // THIS response", matching ordinary HTTP range-response semantics.
+            await WriteLineAsync(stream, JsonSerializer.Serialize(new { success = true, size = fileStream.Length - fileStream.Position }));
             await fileStream.CopyToAsync(stream);
             await stream.FlushAsync();
         }
@@ -953,6 +969,56 @@ public sealed class PairingService : IDisposable
     /// </summary>
     public Task<(bool Success, string? Error)> DownloadRemoteClipAsync(string relativePath, string destPath, IProgress<double>? progress = null) =>
         DownloadStreamedFileAsync("get_clip", relativePath, destPath, progress);
+
+    /// <summary>
+    /// Streams one clip's bytes, from `offset` onward, straight into
+    /// `destination` -- never touches disk on this end at all, unlike
+    /// DownloadRemoteClipAsync. Built for RemoteClipStreamServer's own local
+    /// HTTP relay: `destination` there is the HTTP response's own output
+    /// stream, so bytes flow through to whatever's actually requesting them
+    /// (libvlc, via that local HTTP connection) as they arrive over the
+    /// network, instead of waiting for the whole clip first. Copies until
+    /// either the connection closes naturally (offset reached the real end)
+    /// or `cancellationToken` fires (the HTTP client gave up / seeked
+    /// elsewhere, see RemoteClipStreamServer's own request handling).
+    /// </summary>
+    public async Task<(bool Success, string? Error)> StreamRemoteClipToAsync(string relativePath, long offset, Stream destination, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrEmpty(_settings.PairedPeerHost) || string.IsNullOrEmpty(_settings.PairedPeerSecret))
+            return (false, "Not paired with a transmitter PC.");
+
+        try
+        {
+            using var client = new TcpClient();
+            await client.ConnectAsync(_settings.PairedPeerHost, _settings.PairedPeerPort, cancellationToken);
+            string request = JsonSerializer.Serialize(new { type = "get_clip", secret = _settings.PairedPeerSecret, path = relativePath, offset });
+            NetworkStream stream = client.GetStream();
+            await WriteLineAsync(stream, request);
+
+            string? headerLine = await ReadLineAsync(stream);
+            if (headerLine is null)
+                return (false, "No response from the transmitter PC.");
+
+            using JsonDocument doc = JsonDocument.Parse(headerLine);
+            bool success = doc.RootElement.TryGetProperty("success", out JsonElement s) && s.GetBoolean();
+            if (!success)
+                return (false, doc.RootElement.TryGetProperty("error", out JsonElement er) ? er.GetString() : "Streaming failed.");
+
+            await stream.CopyToAsync(destination, cancellationToken);
+            return (true, null);
+        }
+        catch (OperationCanceledException)
+        {
+            // Not a real failure -- the caller (RemoteClipStreamServer) cancels
+            // this deliberately whenever the HTTP client disconnects or seeks
+            // to a different offset mid-stream, superseding this exact request.
+            return (false, "Cancelled.");
+        }
+        catch (Exception ex)
+        {
+            return (false, ex.Message);
+        }
+    }
 
     /// <summary>Same idea as DownloadRemoteClipAsync, but for one clip's thumbnail -- see HandleGetThumbnailAsync on the host side.</summary>
     public Task<(bool Success, string? Error)> DownloadRemoteThumbnailAsync(string relativePath, string destPath) =>
