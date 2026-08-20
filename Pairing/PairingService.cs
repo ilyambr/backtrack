@@ -480,6 +480,11 @@ public sealed class PairingService : IDisposable
             string? newest = Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories)
                 .Where(f => GalleryFormats.VideoExtensions.Contains(Path.GetExtension(f).ToLowerInvariant()))
                 .Select(f => new FileInfo(f))
+                // Same glitched-clip filter HandleListGallery already applies --
+                // without it, this could point a paired PC's "newest" dot at a
+                // sub-2s glitched clip that list_gallery itself hides, leading
+                // nowhere a receiver could actually find it.
+                .Where(f => GetCachedDurationMsForRemote?.Invoke(f.FullName) is not < 2000)
                 .OrderByDescending(f => f.LastWriteTimeUtc)
                 .FirstOrDefault()
                 ?.FullName;
