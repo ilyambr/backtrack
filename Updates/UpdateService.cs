@@ -254,11 +254,14 @@ public sealed class UpdateService
 
     // ------------------------------------------------------------- plugins
 
+    /// <summary>The exact sentinel GetInstalledPluginVersion returns when the DLL genuinely isn't there -- a shared named constant so callers checking for "actually missing" (not just "an old version") compare against the one real source of truth instead of a second `new Version(0, 0, 0)` literal that could drift from it.</summary>
+    public static readonly Version MissingPluginVersion = new(0, 0, 0);
+
     public Version GetInstalledPluginVersion(string dllFileName)
     {
         string path = Path.Combine(ObsPluginsDir, dllFileName);
         if (!File.Exists(path))
-            return new Version(0, 0, 0);
+            return MissingPluginVersion;
         var info = FileVersionInfo.GetVersionInfo(path);
         return new Version(Math.Max(info.FileMajorPart, 0), Math.Max(info.FileMinorPart, 0), Math.Max(info.FileBuildPart, 0));
     }

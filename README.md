@@ -32,8 +32,10 @@ you're running those too).
 ## 2. Installation
 
 Download the latest installer from [Releases](https://github.com/ilyambr/backtrack/releases)
-and run it. Backtrack checks for updates automatically once an hour and can
-install them itself.
+and run it. Backtrack checks for updates once, at startup, and can install
+one right then if it finds one - that's the only unattended check/install;
+every other update check (the Settings "Check now" button, or the deferred
+install prompt) is a manual click.
 
 To build from source instead:
 
@@ -43,11 +45,18 @@ dotnet build -c Release
 
 ---
 
+## `MainWindow.xaml.cs` is not as big as it looks
+
+That file has a lot of lines, but a large share of it is AI-written
+explanatory comments (see the AI disclosure below), not logic - don't judge
+its size at face value.
+
+---
+
 ## 3. What Backtrack installs on your system
 
-Backtrack is closed-source-adjacent enough (it talks to OBS, closes it, and
-can install other software) that this is worth stating plainly instead of
-leaving it for you to find out:
+Backtrack talks to OBS, closes it, and can install other software - that's
+worth stating plainly instead of leaving it for you to find out:
 
 - **It can auto-update the OBS plugins listed below.** If you have
   obs-source-record and/or obs-replay-slider installed, Backtrack checks for
@@ -68,10 +77,18 @@ leaving it for you to find out:
   silently. It's entirely optional; Backtrack works fine without ever
   touching it, and the driver can be removed like any other Windows driver if
   you decide against it.
+- **It adds a Windows Firewall exemption for itself.** The first time you
+  ever launch Backtrack, it asks for admin permission once (a real UAC
+  prompt, not silent) to add four rules scoped specifically to
+  `Backtrack.exe`'s own path - not a blanket port opening for anything else
+  on your PC. These are for the peer-to-peer clip-sharing feature
+  (discovering and pairing with another PC's Backtrack instance on your
+  network). This happens once ever, whether or not you ever turn clip
+  sharing on.
 
-Neither of these touches your OBS scene collection, settings, or profiles -
-see the note above about obs-websocket being the only thing Backtrack
-actually talks to OBS through.
+None of these touch your OBS scene collection, settings, or profiles - see
+the note above about obs-websocket being the only thing Backtrack actually
+talks to OBS through.
 
 ---
 
