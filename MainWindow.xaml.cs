@@ -4574,6 +4574,21 @@ public partial class MainWindow : Window
             ToolTip = "Choose destination folder"
         };
 
+        // This browses (and constrains picks to) THIS PC's own ClipsFolder
+        // tree -- see IsWithinClipsFolder's own comment -- which has nothing
+        // to do with the transmitter's filesystem when OBS is remote. There's
+        // no way to browse a REMOTE folder tree through a local dialog, so
+        // rather than let it silently produce a path that's meaningless once
+        // pushed to the filter on the other PC, disable the picker entirely
+        // when OBS is on a different PC -- same "this control genuinely can't
+        // do anything useful right now" reasoning as RefreshRamDiskRemoteGating's
+        // own local-section disabling.
+        if (_settings.ObsIsRemote)
+        {
+            button.IsEnabled = false;
+            button.ToolTip = "OBS is on a different PC -- destination folders can't be browsed from here.";
+        }
+
         button.MouseEnter += (_, _) => iconPath.Fill = (Brush)FindResource("Text0");
         button.MouseLeave += (_, _) => iconPath.Fill = (Brush)FindResource("Text1");
 
@@ -4709,10 +4724,19 @@ public partial class MainWindow : Window
                 // buffer to disk. The actual trim down to this row's clip length
                 // happens afterward, async, on the OBS side (see
                 // ShowProcessingClip's own comment), so this button
-                // re-enabling is NOT the clip being ready; _obs.ReplaySaved
-                // (elsewhere in this file) is what fires once it actually is,
-                // and dismisses this same toast via CompleteProcessingClip.
-                _toastOverlay.ShowProcessingClip(row.Key, DisplayLabel(row.Label));
+                // re-enabling is NOT the clip being ready.
+                //
+                // No direct ShowProcessingClip call here anymore -- _obs.ReplaySaving
+                // (elsewhere in this file) now fires for this exact same click too,
+                // since it's driven by the real OBS-side event, not just a click
+                // handler. Calling it here AS WELL used to fire it twice for one
+                // save: once instantly on click, then again moments later once
+                // ReplaySaving actually arrived, which wipes the still-filling
+                // first toast and restarts a fresh one from 0% -- reported live
+                // as "the toast plays once then starts over from the beginning",
+                // worse (more visible) over a real network round-trip to a remote
+                // OBS than a local one. _obs.ReplaySaved is what dismisses it,
+                // via CompleteProcessingClip.
                 await _obs.SaveReplayRowAsync(row.Key);
             }
             catch (Exception ex)
