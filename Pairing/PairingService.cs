@@ -1024,25 +1024,41 @@ public sealed class PairingService : IDisposable
         DownloadStreamedFileAsync("get_clip", relativePath, destPath, progress);
 
     /// <summary>
-    /// Streams one clip's bytes, from `offset` onward, straight into
-    /// `destination` -- never touches disk on this end at all, unlike
-    /// DownloadRemoteClipAsync. Built for RemoteClipStreamServer's own local
-    /// HTTP relay: `destination` there is the HTTP response's own output
-    /// stream, so bytes flow through to whatever's actually requesting them
-    /// (libvlc, via that local HTTP connection) as they arrive over the
-    /// network, instead of waiting for the whole clip first. Copies until
-    /// either the connection closes naturally (offset reached the real end)
-    /// or `cancellationToken` fires (the HTTP client gave up / seeked
-    /// elsewhere, see RemoteClipStreamServer's own request handling).
+    /// Connects to the transmitter and opens a get_clip request from `offset`
+    /// onward, but stops right after reading its response header -- doesn't
+    /// copy any body bytes yet. Split out from a single do-everything method
+    /// specifically so the caller (RemoteClipStreamServer) can see the
+    /// REAL, current `RemainingSize` this response actually reports (always
+    /// freshly read from disk on the transmitter's side, see
+    /// StreamFileResponseAsync) BEFORE it has to commit to an HTTP
+    /// Content-Length for libvlc -- an HTTP response's headers have to be
+    /// sent before its body, so there's no way to correct them after the
+    /// fact once bytes start flowing.
+    ///
+    /// This is what actually fixes a real bug: PrepareStream used to bake in
+    /// whatever size the RECEIVER already happened to know about a clip
+    /// (from whatever Gallery card was clicked) at the moment playback
+    /// started, once, for the whole session -- reported live as a clip
+    /// opening to a black screen, stuck showing its OLD pre-trim duration,
+    /// right after being trimmed. A stale size anywhere upstream (a Gallery
+    /// card that hadn't refreshed yet, the quick-gallery overlay, etc.) is
+    /// now structurally impossible to matter, since nothing here ever
+    /// trusts a size that didn't come from THIS exact request's own fresh
+    /// response.
+    ///
+    /// Caller owns disposing the returned TcpClient once done with Stream
+    /// (which is a view into that same connection, not independently
+    /// disposable) -- null Client/Stream means Success is false and there's
+    /// nothing to dispose.
     /// </summary>
-    public async Task<(bool Success, string? Error)> StreamRemoteClipToAsync(string relativePath, long offset, Stream destination, CancellationToken cancellationToken)
+    public async Task<(bool Success, string? Error, TcpClient? Client, NetworkStream? Stream, long RemainingSize)> OpenRemoteClipStreamAsync(string relativePath, long offset, CancellationToken cancellationToken)
     {
         if (string.IsNullOrEmpty(_settings.PairedPeerHost) || string.IsNullOrEmpty(_settings.PairedPeerSecret))
-            return (false, "Not paired with a transmitter PC.");
+            return (false, "Not paired with a transmitter PC.", null, null, 0);
 
+        var client = new TcpClient();
         try
         {
-            using var client = new TcpClient();
             await client.ConnectAsync(_settings.PairedPeerHost, _settings.PairedPeerPort, cancellationToken);
             string request = JsonSerializer.Serialize(new { type = "get_clip", secret = _settings.PairedPeerSecret, path = relativePath, offset });
             NetworkStream stream = client.GetStream();
@@ -1050,26 +1066,26 @@ public sealed class PairingService : IDisposable
 
             string? headerLine = await ReadLineAsync(stream);
             if (headerLine is null)
-                return (false, "No response from the transmitter PC.");
+            {
+                client.Dispose();
+                return (false, "No response from the transmitter PC.", null, null, 0);
+            }
 
             using JsonDocument doc = JsonDocument.Parse(headerLine);
             bool success = doc.RootElement.TryGetProperty("success", out JsonElement s) && s.GetBoolean();
             if (!success)
-                return (false, doc.RootElement.TryGetProperty("error", out JsonElement er) ? er.GetString() : "Streaming failed.");
+            {
+                client.Dispose();
+                return (false, doc.RootElement.TryGetProperty("error", out JsonElement er) ? er.GetString() : "Streaming failed.", null, null, 0);
+            }
 
-            await stream.CopyToAsync(destination, cancellationToken);
-            return (true, null);
-        }
-        catch (OperationCanceledException)
-        {
-            // Not a real failure -- the caller (RemoteClipStreamServer) cancels
-            // this deliberately whenever the HTTP client disconnects or seeks
-            // to a different offset mid-stream, superseding this exact request.
-            return (false, "Cancelled.");
+            long size = doc.RootElement.GetProperty("size").GetInt64();
+            return (true, null, client, stream, size);
         }
         catch (Exception ex)
         {
-            return (false, ex.Message);
+            client.Dispose();
+            return (false, ex.Message, null, null, 0);
         }
     }
 

@@ -6138,7 +6138,7 @@ public partial class MainWindow : Window
         StatSize.Text = $"{file.Size / 1024.0 / 1024.0:0.#} MB";
         StatDate.Text = $"{file.Modified.ToLocalTime():MMM d, yyyy h:mm tt}";
 
-        string streamUrl = _remoteStreamServer.PrepareStream(relativePath, file.Size);
+        string streamUrl = _remoteStreamServer.PrepareStream(relativePath);
         _currentStreamToken = streamUrl[(streamUrl.LastIndexOf('/') + 1)..];
         var mediaUri = new Uri(streamUrl);
         Dispatcher.BeginInvoke(new Action(() => StartPlayerPlayback(mediaUri, myToken, hideFreezeFrameOnFirstPlay: true)), DispatcherPriority.Loaded);
@@ -8558,6 +8558,7 @@ public partial class MainWindow : Window
                 StopPlayerPlayback();
                 ShowScreen(Screen.Gallery);
                 LoadGallery();
+                RefreshRecentClipsOverlay();
             }
             else
             {

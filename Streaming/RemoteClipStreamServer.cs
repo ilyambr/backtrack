@@ -41,7 +41,13 @@ public sealed class RemoteClipStreamServer
     // currently-open streamed clip; in practice just ever the most recent
     // one, but keyed rather than a single field in case a stale request from
     // a clip that was just switched away from is still in flight.
-    private readonly ConcurrentDictionary<string, (string RelativePath, long TotalSize)> _sessions = new();
+    //
+    // Just the relative path -- no size tracked here at all anymore. Each
+    // request asks the transmitter fresh (see OpenRemoteClipStreamAsync) and
+    // trusts THAT answer for Content-Length, never a value cached from
+    // whenever this session was first prepared -- see HandleRequestAsync's
+    // own comment for the real bug that fixed.
+    private readonly ConcurrentDictionary<string, string> _sessions = new();
 
     public RemoteClipStreamServer(PairingService pairing)
     {
@@ -84,17 +90,16 @@ public sealed class RemoteClipStreamServer
 
     /// <summary>
     /// Registers a new streaming session for one clip and returns the local
-    /// URL to hand libvlc. totalSize comes from the caller's already-known
-    /// RemoteGalleryFile.Size (from list_gallery), not a fresh network round
-    /// trip -- libvlc needs a real Content-Length up front to know the clip
-    /// has an end at all (otherwise it can render as a live/unseekable
-    /// stream instead of a normal seekable video).
+    /// URL to hand libvlc. No size passed in at all -- every request against
+    /// this token asks the transmitter for the clip's real, current size
+    /// fresh (see HandleRequestAsync), so there's nothing here that can ever
+    /// go stale.
     /// </summary>
-    public string PrepareStream(string relativePath, long totalSize)
+    public string PrepareStream(string relativePath)
     {
         EnsureStarted();
         string token = Guid.NewGuid().ToString("N");
-        _sessions[token] = (relativePath, totalSize);
+        _sessions[token] = relativePath;
         return $"http://127.0.0.1:{_port}/stream/{token}";
     }
 
@@ -111,8 +116,8 @@ public sealed class RemoteClipStreamServer
     /// </summary>
     public void UpdateSessionPath(string token, string newRelativePath)
     {
-        if (_sessions.TryGetValue(token, out var session))
-            _sessions[token] = (newRelativePath, session.TotalSize);
+        if (_sessions.ContainsKey(token))
+            _sessions[token] = newRelativePath;
     }
 
     private async Task AcceptLoopAsync(HttpListener listener)
@@ -142,22 +147,24 @@ public sealed class RemoteClipStreamServer
 
     private async Task HandleRequestAsync(HttpListenerContext context)
     {
+        System.Net.Sockets.TcpClient? upstreamClient = null;
         try
         {
             Match match = TokenPattern.Match(context.Request.Url?.AbsolutePath ?? "");
-            if (!match.Success || !_sessions.TryGetValue(match.Groups[1].Value, out var session))
+            if (!match.Success || !_sessions.TryGetValue(match.Groups[1].Value, out string? relativePath))
             {
                 context.Response.StatusCode = 404;
                 context.Response.Close();
                 return;
             }
 
-            (string relativePath, long totalSize) = session;
-
             // libvlc sends "bytes=N-" when it seeks (never a bounded "N-M"
             // range in practice for this kind of open-ended media playback,
             // but only the start offset is actually needed here regardless --
             // this server always streams from that point to the real end).
+            // Clamped to a floor of 0 only -- the real ceiling isn't known
+            // yet at this point (see below), unlike the old version of this
+            // method which had a cached total to clamp against.
             long offset = 0;
             string? rangeHeader = context.Request.Headers["Range"];
             if (rangeHeader is not null)
@@ -166,9 +173,24 @@ public sealed class RemoteClipStreamServer
                 if (rangeMatch.Success)
                     offset = long.Parse(rangeMatch.Groups[1].Value);
             }
-            offset = Math.Clamp(offset, 0, totalSize);
+            offset = Math.Max(offset, 0);
 
-            long remaining = totalSize - offset;
+            // Connects and reads the transmitter's response header (which
+            // always reflects the file's real, current size -- freshly read
+            // off disk on that end, see StreamFileResponseAsync) BEFORE this
+            // commits to any HTTP headers of its own -- see
+            // OpenRemoteClipStreamAsync's own comment for the stale-size bug
+            // this replaced.
+            (bool opened, string? openError, upstreamClient, System.Net.Sockets.NetworkStream? sourceStream, long remaining) =
+                await _pairing.OpenRemoteClipStreamAsync(relativePath, offset, CancellationToken.None);
+            if (!opened || sourceStream is null)
+            {
+                Debug.WriteLine($"RemoteClipStreamServer: couldn't open '{relativePath}' from offset {offset}: {openError}");
+                context.Response.StatusCode = 502;
+                return;
+            }
+
+            long total = offset + remaining;
             context.Response.Headers["Accept-Ranges"] = "bytes";
             context.Response.ContentType = "video/mp4";
             context.Response.ContentLength64 = remaining;
@@ -179,7 +201,7 @@ public sealed class RemoteClipStreamServer
                 // seeking keeps working instead of it giving up after the
                 // first one and re-downloading from the start every time.
                 context.Response.StatusCode = 206;
-                context.Response.Headers["Content-Range"] = $"bytes {offset}-{totalSize - 1}/{totalSize}";
+                context.Response.Headers["Content-Range"] = $"bytes {offset}-{total - 1}/{total}";
             }
             else
             {
@@ -189,14 +211,9 @@ public sealed class RemoteClipStreamServer
             // No WriteTimeout override here -- HttpListenerResponse.OutputStream
             // doesn't reliably support setting one (CanTimeout is false on its
             // real implementation), and setting it anyway throws immediately,
-            // before a single byte goes out. Confirmed live as the actual cause
-            // of a total playback failure (0:00 duration, no frame ever
-            // rendered, no audio track list -- libvlc never got anything back
-            // from this server at all, not a slow-stream/buffering symptom).
-            using var cts = new CancellationTokenSource();
-            (bool success, string? error) = await _pairing.StreamRemoteClipToAsync(relativePath, offset, context.Response.OutputStream, cts.Token);
-            if (!success)
-                Debug.WriteLine($"RemoteClipStreamServer: relay for '{relativePath}' from offset {offset} ended early: {error}");
+            // before a single byte goes out. Confirmed live as an earlier
+            // cause of a total playback failure.
+            await sourceStream.CopyToAsync(context.Response.OutputStream);
         }
         catch (Exception ex)
         {
@@ -208,6 +225,7 @@ public sealed class RemoteClipStreamServer
         }
         finally
         {
+            upstreamClient?.Dispose();
             try { context.Response.Close(); } catch { /* best effort -- may already be closed/broken */ }
         }
     }
