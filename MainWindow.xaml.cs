@@ -3800,9 +3800,8 @@ public partial class MainWindow : Window
         _ = LoadReplayRowsAsync();
     }
 
-    private void GalleryTile_Click(object sender, RoutedEventArgs e)
+    private async void GalleryTile_Click(object sender, RoutedEventArgs e)
     {
-        ShowScreen(Screen.Gallery);
         _currentGalleryFolder = null;
         _currentRemoteGalleryFolder = null;
         // Paired-for-sharing devices care about the OTHER PC's clips, not
@@ -3812,7 +3811,18 @@ public partial class MainWindow : Window
         // hidden unconditionally now.
         _galleryIsRemote = !string.IsNullOrEmpty(_settings.PairedPeerSecret);
         RefreshGallerySourceTabsVisibility();
-        LoadGallery();
+
+        if (_galleryIsRemote)
+        {
+            // Populate remote cards before revealing Gallery screen so it never renders a blank frame
+            await LoadRemoteGalleryAsync();
+            ShowScreen(Screen.Gallery);
+        }
+        else
+        {
+            ShowScreen(Screen.Gallery);
+            LoadGallery();
+        }
     }
 
     /// <summary>
@@ -5553,7 +5563,6 @@ public partial class MainWindow : Window
     /// </summary>
     private async Task LoadRemoteGalleryAsync()
     {
-        GalleryGrid.Children.Clear();
         _galleryCardSelection.Clear();
         _selectedClipPaths.Clear();
         RefreshGallerySelectionUi();
@@ -5571,6 +5580,7 @@ public partial class MainWindow : Window
                 _remotePcWasConnected = false;
                 _toastOverlay.ShowRemotePcDisconnected(_settings.PairedPeerHost ?? _settings.PairedPeerName ?? "The remote PC");
             }
+            GalleryGrid.Children.Clear();
             GalleryGrid.Children.Add(new TextBlock
             {
                 Text = $"Couldn't reach {_settings.PairedPeerName}'s Backtrack -- make sure it's running and paired.",
@@ -5606,6 +5616,7 @@ public partial class MainWindow : Window
 
         if (folders.Count == 0 && files.Count == 0)
         {
+            GalleryGrid.Children.Clear();
             GalleryGrid.Children.Add(new TextBlock
             {
                 Text = filter.Length == 0 ? "No clips in this folder yet." : $"Nothing here matches \"{filter}\".",
@@ -5616,6 +5627,7 @@ public partial class MainWindow : Window
             return;
         }
 
+        var newCards = new List<UIElement>();
         foreach (string name in folders)
         {
             string folderRelPath = RemoteClipRelativePath(name);
@@ -5626,12 +5638,16 @@ public partial class MainWindow : Window
             bool leadsToNewest = newestRemotePath is not null
                 && (string.Equals(newestRemotePath, folderRelPath, StringComparison.OrdinalIgnoreCase)
                     || newestRemotePath.StartsWith(folderRelPath + "/", StringComparison.OrdinalIgnoreCase));
-            GalleryGrid.Children.Add(BuildFolderCard(name, () => OpenRemoteGalleryFolder(name), leadsToNewest));
+            newCards.Add(BuildFolderCard(name, () => OpenRemoteGalleryFolder(name), leadsToNewest));
         }
 
         foreach (RemoteGalleryFile file in files)
-            GalleryGrid.Children.Add(BuildRemoteClipCard(file,
+            newCards.Add(BuildRemoteClipCard(file,
                 isNewest: newestRemotePath is not null && string.Equals(RemoteClipRelativePath(file.Name), newestRemotePath, StringComparison.OrdinalIgnoreCase)));
+
+        GalleryGrid.Children.Clear();
+        foreach (UIElement card in newCards)
+            GalleryGrid.Children.Add(card);
 
         GalleryStatus.Text = files.Count == 1 ? "1 clip" : $"{files.Count} clips";
     }
