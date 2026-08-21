@@ -8510,6 +8510,29 @@ public partial class MainWindow : Window
                 await Task.Delay(50);
             if (userConfirmed != true)
                 return;
+
+            // The clip currently STREAMING right now holds a real open read
+            // handle on the transmitter's own copy of this file (see
+            // StreamFileResponseAsync) for as long as playback keeps going --
+            // trim_clip's own final overwrite on that PC needs to WRITE to
+            // that exact file, which a still-open reader blocks outright,
+            // not just briefly. Stopping playback here (same idea as
+            // RunTrimAsync's local path already does before its own export)
+            // is what actually lets that read handle go on the transmitter's
+            // side. Not needed for "save as new" -- that writes a brand new
+            // file, and a second concurrent READ of the original doesn't
+            // conflict with the stream's own read.
+            //
+            // DetachPlayerVideo()+DisposeVlcPlayerAsync(), NOT the plain
+            // StopPlayerPlayback() the local path uses -- that one blocks the
+            // UI thread on _vlcPlayer.Dispose() (see DisposeVlcPlayerSync's
+            // own comment on exactly this), which is fine for a local file
+            // but confirmed live to hang the WHOLE APP ("not responding")
+            // here specifically: disposing a MediaPlayer mid network-stream
+            // took long enough to be a real, visible freeze, not the near-
+            // instant local-file teardown that call was written for.
+            DetachPlayerVideo();
+            DisposeVlcPlayerAsync();
         }
 
         _isTrimming = true;
