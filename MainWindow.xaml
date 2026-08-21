@@ -1413,17 +1413,21 @@
                             </StackPanel>
                         </Border>
 
-                        <TextBlock Text="BUFFERS" Style="{StaticResource SettingsSectionHeader}"/>
-                        <StackPanel Margin="0,0,0,10">
-                            <TextBlock Text="Enable or disable a buffer, and set its destination folder."
-                                       FontSize="11" Foreground="{DynamicResource Text2}" TextWrapping="Wrap" Margin="0,0,0,10"/>
-                            <StackPanel x:Name="BufferVisibilityPanel"/>
+                        <StackPanel x:Name="BuffersSection">
+                            <TextBlock Text="BUFFERS" Style="{StaticResource SettingsSectionHeader}"/>
+                            <StackPanel Margin="0,0,0,10">
+                                <TextBlock Text="Enable or disable a buffer, and set its destination folder."
+                                           FontSize="11" Foreground="{DynamicResource Text2}" TextWrapping="Wrap" Margin="0,0,0,10"/>
+                                <StackPanel x:Name="BufferVisibilityPanel"/>
+                            </StackPanel>
                         </StackPanel>
-                        <TextBlock Text="RECORDINGS" Style="{StaticResource SettingsSectionHeader}"/>
-                        <StackPanel Margin="0,0,0,10">
-                            <TextBlock Text="Enable or disable a recording source, and set its destination folder."
-                                       FontSize="11" Foreground="{DynamicResource Text2}" TextWrapping="Wrap" Margin="0,0,0,10"/>
-                            <StackPanel x:Name="RecordFolderPanel"/>
+                        <StackPanel x:Name="RecordingsSection">
+                            <TextBlock Text="RECORDINGS" Style="{StaticResource SettingsSectionHeader}"/>
+                            <StackPanel Margin="0,0,0,10">
+                                <TextBlock Text="Enable or disable a recording source, and set its destination folder."
+                                           FontSize="11" Foreground="{DynamicResource Text2}" TextWrapping="Wrap" Margin="0,0,0,10"/>
+                                <StackPanel x:Name="RecordFolderPanel"/>
+                            </StackPanel>
                         </StackPanel>
 
                         <TextBlock Text="OBS" Style="{StaticResource SettingsSectionHeader}"/>
@@ -1665,11 +1669,8 @@
                             <TextBlock x:Name="ExperimentalHeaderText" Text="▸ EXPERIMENTAL" FontSize="11" FontWeight="Bold" Foreground="{DynamicResource Rec}"/>
                         </Border>
                         <StackPanel x:Name="ExperimentalContent" Visibility="Collapsed" Margin="0,10,0,0">
-                            <TextBlock Text="RAM DISK" FontSize="11" FontWeight="Bold" Foreground="{DynamicResource Text1}" Margin="0,0,0,10"/>
-                            <TextBlock x:Name="RamDiskRemoteNotice" Visibility="Collapsed"
-                                       Text="OBS is on a different PC right now, so a RAM disk mounted here wouldn't be the one OBS actually writes to. This section is disabled; use &quot;Transmitter's RAM disk&quot; below instead, which controls it on the PC that's actually running OBS."
-                                       FontSize="11" Foreground="{DynamicResource Rec}" TextWrapping="Wrap" Margin="0,0,0,10"/>
                             <StackPanel x:Name="LocalRamDiskSection">
+                                <TextBlock Text="RAM DISK" FontSize="11" FontWeight="Bold" Foreground="{DynamicResource Text1}" Margin="0,0,0,10"/>
                                 <Border Style="{StaticResource SettingsRow}" BorderThickness="0">
                                     <Grid>
                                         <Grid.ColumnDefinitions>
@@ -1712,7 +1713,7 @@
                             </StackPanel>
 
                             <StackPanel x:Name="RemoteRamDiskSection" Visibility="Collapsed" Margin="0,0,0,10">
-                                <TextBlock Text="TRANSMITTER'S RAM DISK" FontSize="11" FontWeight="Bold" Foreground="{DynamicResource Text1}" Margin="0,24,0,10"/>
+                                <TextBlock Text="TRANSMITTER'S RAM DISK" FontSize="11" FontWeight="Bold" Foreground="{DynamicResource Text1}" Margin="0,0,0,10"/>
                                 <TextBlock x:Name="RemoteRamDiskStatusText" Text="Not paired with a transmitter PC yet." FontSize="11" Foreground="{DynamicResource Text2}" TextWrapping="Wrap" Margin="0,0,0,10"/>
                                 <StackPanel x:Name="RemoteRamDiskFields" Visibility="Collapsed">
                                     <Grid Margin="0,0,0,6">

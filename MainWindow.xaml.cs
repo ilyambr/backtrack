@@ -4184,6 +4184,9 @@ public partial class MainWindow : Window
     /// </summary>
     private async Task LoadBufferVisibilityUi()
     {
+        if (_settings.ObsIsRemote)
+            return;
+
         BufferVisibilityPanel.Children.Clear();
 
         if (!_obs.IsConnected)
@@ -4215,6 +4218,9 @@ public partial class MainWindow : Window
 
     private async Task LoadRecordFolderUi()
     {
+        if (_settings.ObsIsRemote)
+            return;
+
         RecordFolderPanel.Children.Clear();
 
         if (!_obs.IsConnected)
@@ -8768,6 +8774,9 @@ public partial class MainWindow : Window
         BufferDurationSlider.Value = _settings.ReplayBufferMinutes;
         RefreshBufferDurationUi();
 
+        BuffersSection.Visibility = _settings.ObsIsRemote ? Visibility.Collapsed : Visibility.Visible;
+        RecordingsSection.Visibility = _settings.ObsIsRemote ? Visibility.Collapsed : Visibility.Visible;
+
         ObsRemoteToggle.IsChecked = _settings.ObsIsRemote;
         ObsRemoteFields.Visibility = _settings.ObsIsRemote ? Visibility.Visible : Visibility.Collapsed;
         ObsHostBox.Text = _settings.ObsHost;
@@ -9287,6 +9296,14 @@ public partial class MainWindow : Window
             _settings.ObsRemotePassword = ObsPasswordBox.Password;
             _settings.Save();
 
+            BuffersSection.Visibility = remote ? Visibility.Collapsed : Visibility.Visible;
+            RecordingsSection.Visibility = remote ? Visibility.Collapsed : Visibility.Visible;
+            if (!remote)
+            {
+                _ = LoadBufferVisibilityUi();
+                _ = LoadRecordFolderUi();
+            }
+
             (string url, string? password, _serverEnabledAtStartup) = ResolveObsConnection();
             _obs.Reconfigure(url, password);
             _ = RefreshStatusAsync();
@@ -9301,16 +9318,13 @@ public partial class MainWindow : Window
 
     /// <summary>
     /// RAM disk is the one setting that's genuinely local to whichever PC runs
-    /// OBS -- unlike buffer duration/hidden buffers, which already work fine
-    /// remotely since they're just obs-websocket calls. Greys out the local
-    /// section (mounting a drive here would be a silent no-op if OBS is remote)
-    /// and shows the transmitter-control panel instead.
+    /// OBS. Hides the local section when OBS is remote and shows the transmitter-control
+    /// panel instead.
     /// </summary>
     private void RefreshRamDiskRemoteGating()
     {
         bool remote = _settings.ObsIsRemote;
-        RamDiskRemoteNotice.Visibility = remote ? Visibility.Visible : Visibility.Collapsed;
-        LocalRamDiskSection.IsEnabled = !remote;
+        LocalRamDiskSection.Visibility = remote ? Visibility.Collapsed : Visibility.Visible;
         RemoteRamDiskSection.Visibility = remote ? Visibility.Visible : Visibility.Collapsed;
 
         if (remote)
