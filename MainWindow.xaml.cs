@@ -3796,7 +3796,7 @@ public partial class MainWindow : Window
         _ = LoadReplayRowsAsync();
     }
 
-    private async void GalleryTile_Click(object sender, RoutedEventArgs e)
+    private void GalleryTile_Click(object sender, RoutedEventArgs e)
     {
         ShowScreen(Screen.Gallery);
         _currentGalleryFolder = null;
@@ -3808,40 +3808,7 @@ public partial class MainWindow : Window
         // hidden unconditionally now.
         _galleryIsRemote = !string.IsNullOrEmpty(_settings.PairedPeerSecret);
         RefreshGallerySourceTabsVisibility();
-        if (_galleryIsRemote)
-            await EnterRemoteGalleryAsync();
-        else
-            LoadGallery();
-    }
-
-    /// <summary>
-    /// Entering the remote Gallery specifically (not every subsequent folder
-    /// click or filter keystroke within it -- those still go through the
-    /// plain LoadRemoteGalleryAsync, one folder at a time, same as before)
-    /// runs a full SyncRemoteClipsAsync pass first, with the same
-    /// "Downloading... X%" progress readout OpenRemoteClipAsync already
-    /// shows for a single clip -- requested directly: clips should be synced
-    /// BEFORE you're looking at the gallery, not silently sometime in the
-    /// next 20 minutes. The periodic background timer still exists
-    /// independently of this for whenever the Gallery just isn't open at all.
-    /// </summary>
-    private async Task EnterRemoteGalleryAsync()
-    {
-        GalleryGrid.Children.Clear();
-        _galleryCardSelection.Clear();
-        _selectedClipPaths.Clear();
-        RefreshGallerySelectionUi();
-        UpdateGalleryPathBar();
-        GalleryStatus.Text = "Syncing clips...";
-
-        var progress = new Progress<double>(p => GalleryStatus.Text = $"Syncing clips... {p:P0}");
-        await SyncRemoteClipsAsync(progress);
-
-        // Unreachable partway through, unpaired mid-sync, etc. -- falls
-        // through to LoadRemoteGalleryAsync's own connectivity check below
-        // regardless, so its existing "Couldn't reach..." messaging still
-        // applies rather than this method needing a second copy of it.
-        await LoadRemoteGalleryAsync();
+        LoadGallery();
     }
 
     /// <summary>
@@ -3876,7 +3843,7 @@ public partial class MainWindow : Window
         LoadGallery();
     }
 
-    private async void GalleryRemoteTab_Click(object sender, RoutedEventArgs e)
+    private void GalleryRemoteTab_Click(object sender, RoutedEventArgs e)
     {
         if (_galleryIsRemote || string.IsNullOrEmpty(_settings.PairedPeerSecret))
             return;
@@ -3884,7 +3851,7 @@ public partial class MainWindow : Window
         _galleryIsRemote = true;
         _currentRemoteGalleryFolder = null;
         RefreshGallerySourceTabsVisibility();
-        await EnterRemoteGalleryAsync();
+        LoadGallery();
     }
 
     private void SettingsButton_Click(object sender, RoutedEventArgs e)
@@ -6116,14 +6083,15 @@ public partial class MainWindow : Window
         if (string.IsNullOrEmpty(_settings.PairedPeerDeviceId))
             return;
 
-        string destPath = GetRemoteClipCachePath(relativePath, file.Name);
-        if (File.Exists(destPath))
-        {
-            OpenInPlayer(new FileInfo(destPath));
-            _currentPlayerRemoteOrigin = (relativePath, _settings.PairedPeerDeviceId);
-            return;
-        }
-
+        // Always streams, deliberately, even if SyncRemoteClipsAsync's own
+        // background mirror already has a local copy of this exact clip --
+        // preferring the local copy here was the actual bug reported live
+        // ("why is it still syncing instead of streaming?"): entering the
+        // remote Gallery used to run a full sync pass first, which routinely
+        // finished downloading a clip before it was ever clicked, so this
+        // fast-path effectively won every time and streaming never actually
+        // ran. "Always stream, never cache" was the explicit answer when
+        // this was first asked about; this is that, literally.
         long myToken = ++_clipOpenToken;
         string? thumbnailCachePath = GetRemoteThumbnailCachePath(relativePath, file.Modified, file.Size);
         ShowPlayerLoadingUi(file.Name, thumbnailCachePath);
