@@ -279,6 +279,7 @@ public sealed class PairingService : IDisposable
                     "newest_clip" => HandleNewestClip(doc.RootElement),
                     "delete_clip" => HandleDeleteClip(doc.RootElement),
                     "rename_clip" => HandleRenameClip(doc.RootElement),
+                    "trim_clip" => await HandleTrimClipAsync(doc.RootElement),
                     _ => JsonSerializer.Serialize(new { error = "unknown request type" }),
                 };
 
@@ -456,6 +457,20 @@ public sealed class PairingService : IDisposable
     public Func<string, long?>? GetCachedDurationMsForRemote { get; set; }
 
     /// <summary>
+    /// Set by MainWindow so a trim_clip request can reuse this instance's own
+    /// ExportTrim (the real LibVLC transcode) directly against the file
+    /// already sitting on THIS PC's own disk -- no clip bytes ever need to
+    /// cross the network for a remote trim at all, in either direction, since
+    /// the encode happens on the same machine the source file (and the
+    /// result) actually live on. Takes a resolved local full path, the
+    /// trim's start/end in seconds, and whether to replace that file in
+    /// place or write a new "(trimmed)"-suffixed one alongside it -- returns
+    /// the final file's own name (not full path; HandleTrimClipAsync turns
+    /// that into a relative path itself) on success.
+    /// </summary>
+    public Func<string, double, double, bool, Task<(bool Success, string? Error, string? NewFileName)>>? TrimClipForRemote { get; set; }
+
+    /// <summary>
     /// The relative path (forward-slash separated, matching MainWindow's own
     /// RemoteClipRelativePath convention client-side) of the single most-
     /// recently-written clip anywhere in this PC's whole clips tree -- the
@@ -620,6 +635,44 @@ public sealed class PairingService : IDisposable
         int lastSlash = relativePath.LastIndexOf('/');
         string folderPrefix = lastSlash < 0 ? "" : relativePath[..lastSlash];
         return folderPrefix.Length == 0 ? newFileName : $"{folderPrefix}/{newFileName}";
+    }
+
+    /// <summary>
+    /// Trims this PC's own real clip on behalf of a paired receiver PC --
+    /// runs entirely on this side (see TrimClipForRemote's own comment), so
+    /// unlike a local trim triggered from a downloaded copy, no clip bytes
+    /// travel over the pairing connection in either direction at all, just
+    /// this one request/response. "Replace" overwrites the original in
+    /// place; otherwise a new "(trimmed)"-suffixed file lands next to it,
+    /// same naming convention MainWindow.RunTrimAsync's own local
+    /// save-as-new path already uses.
+    /// </summary>
+    private async Task<string> HandleTrimClipAsync(JsonElement request)
+    {
+        if (!IsAuthorizedClient(request))
+            return JsonSerializer.Serialize(new { success = false, error = "Not authorized -- pair with this PC first." });
+
+        string relativePath = request.TryGetProperty("path", out JsonElement p) ? p.GetString() ?? "" : "";
+        double startSeconds = request.TryGetProperty("startSeconds", out JsonElement s) ? s.GetDouble() : -1;
+        double endSeconds = request.TryGetProperty("endSeconds", out JsonElement en) ? en.GetDouble() : -1;
+        bool replaceOriginal = request.TryGetProperty("replaceOriginal", out JsonElement r) && r.GetBoolean();
+
+        if (!TryResolveGalleryPath(relativePath, out string fullPath, out string? pathError) ||
+            !GalleryFormats.VideoExtensions.Contains(Path.GetExtension(fullPath).ToLowerInvariant()))
+            return JsonSerializer.Serialize(new { success = false, error = pathError ?? "Not a clip file." });
+        if (startSeconds < 0 || endSeconds <= startSeconds)
+            return JsonSerializer.Serialize(new { success = false, error = "Invalid trim range." });
+        if (!File.Exists(fullPath))
+            return JsonSerializer.Serialize(new { success = false, error = "That clip doesn't exist on this PC anymore." });
+        if (TrimClipForRemote is null)
+            return JsonSerializer.Serialize(new { success = false, error = "This PC's Backtrack can't trim clips right now (player not ready)." });
+
+        (bool success, string? error, string? newFileName) = await TrimClipForRemote(fullPath, startSeconds, endSeconds, replaceOriginal);
+        if (!success || newFileName is null)
+            return JsonSerializer.Serialize(new { success = false, error = error ?? "Trim failed." });
+
+        string newRelativePath = WithNewFileName(relativePath, newFileName);
+        return JsonSerializer.Serialize(new { success = true, path = newRelativePath });
     }
 
     /// <summary>
@@ -1034,6 +1087,59 @@ public sealed class PairingService : IDisposable
         (bool success, string? error, string? path) = await SendClipMutationRequestWithPathAsync("rename_clip",
             new Dictionary<string, object?> { ["path"] = relativePath, ["newName"] = newName });
         return (success, error, path);
+    }
+
+    // A real encode, not a metadata-only op like rename/delete -- MutationRequestTimeout
+    // (15s) is tuned for those and would abort a trim of anything but a very
+    // short clip while the transmitter's still genuinely working on it, not
+    // actually stuck. Only the RESPONSE wait gets the long timeout; connect
+    // and the request write itself stay on the short one, so a genuinely
+    // unreachable PC still fails fast instead of hanging for 5 minutes.
+    private static readonly TimeSpan TrimRequestTimeout = TimeSpan.FromMinutes(5);
+
+    /// <summary>
+    /// Trims a remote clip entirely on the transmitter's own side -- see
+    /// HandleTrimClipAsync/TrimClipForRemote's own comments for why this
+    /// never transfers the clip's actual bytes in either direction, just
+    /// this one request/response, unlike a local trim on a downloaded copy.
+    /// </summary>
+    public async Task<(bool Success, string? Error, string? NewPath)> TrimRemoteClipAsync(string relativePath, TimeSpan start, TimeSpan end, bool replaceOriginal)
+    {
+        if (string.IsNullOrEmpty(_settings.PairedPeerHost) || string.IsNullOrEmpty(_settings.PairedPeerSecret))
+            return (false, "Not paired with a transmitter PC.", null);
+
+        try
+        {
+            using var client = new TcpClient();
+            await client.ConnectAsync(_settings.PairedPeerHost, _settings.PairedPeerPort).WaitAsync(MutationRequestTimeout);
+            var fields = new Dictionary<string, object?>
+            {
+                ["type"] = "trim_clip",
+                ["secret"] = _settings.PairedPeerSecret,
+                ["path"] = relativePath,
+                ["startSeconds"] = start.TotalSeconds,
+                ["endSeconds"] = end.TotalSeconds,
+                ["replaceOriginal"] = replaceOriginal,
+            };
+            await WriteLineAsync(client.GetStream(), JsonSerializer.Serialize(fields)).WaitAsync(MutationRequestTimeout);
+            string? responseLine = await ReadLineAsync(client.GetStream()).WaitAsync(TrimRequestTimeout);
+            if (responseLine is null)
+                return (false, "No response from the transmitter PC.", null);
+
+            using JsonDocument doc = JsonDocument.Parse(responseLine);
+            bool success = doc.RootElement.TryGetProperty("success", out JsonElement s) && s.GetBoolean();
+            string? error = doc.RootElement.TryGetProperty("error", out JsonElement er) ? er.GetString() : null;
+            string? path = doc.RootElement.TryGetProperty("path", out JsonElement pt) ? pt.GetString() : null;
+            return (success, success ? null : (error ?? "Trim failed."), path);
+        }
+        catch (TimeoutException)
+        {
+            return (false, $"{_settings.PairedPeerName ?? "The paired PC"} didn't respond in time -- it may be asleep, unreachable, or frozen.", null);
+        }
+        catch (Exception ex)
+        {
+            return (false, ex.Message, null);
+        }
     }
 
     private async Task<(bool Success, string? Error)> SendClipMutationRequestAsync(string type, Dictionary<string, object?> fields)

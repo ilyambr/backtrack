@@ -98,6 +98,23 @@ public sealed class RemoteClipStreamServer
         return $"http://127.0.0.1:{_port}/stream/{token}";
     }
 
+    /// <summary>
+    /// Updates an already-open session's relative path in place -- for a
+    /// remote rename applied WHILE that same clip is actively streaming
+    /// (see MainWindow.PlayerRename_Click's remote branch): the clip itself
+    /// on the transmitter didn't change, just the path it lives at, and any
+    /// already-in-flight relay request keeps reading from wherever it
+    /// already connected regardless. Only a FUTURE seek (a fresh HTTP Range
+    /// request against this same token) would otherwise ask for the OLD,
+    /// now-renamed path and 404 -- this is what keeps that working without
+    /// needing to restart playback over a brand new URL/token.
+    /// </summary>
+    public void UpdateSessionPath(string token, string newRelativePath)
+    {
+        if (_sessions.TryGetValue(token, out var session))
+            _sessions[token] = (newRelativePath, session.TotalSize);
+    }
+
     private async Task AcceptLoopAsync(HttpListener listener)
     {
         while (listener.IsListening)

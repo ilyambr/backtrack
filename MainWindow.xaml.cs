@@ -493,6 +493,10 @@ public partial class MainWindow : Window
         // So list_gallery hides obviously-broken/glitched clips the same way
         // the local Gallery does -- see TryGetCachedDurationMs.
         _pairing.GetCachedDurationMsForRemote = fullPath => TryGetCachedDurationMs(new FileInfo(fullPath));
+        // Lets a paired receiver PC's trim_clip request run the real trim
+        // directly against this PC's own local file -- see TrimClipForRemote's
+        // own comment for why nothing needs to cross the network for this.
+        _pairing.TrimClipForRemote = TrimClipForRemoteAsync;
 
         // Same reasoning as RAM disk above -- plugin version checks/updates read
         // and write C:\Program Files\obs-studio on THIS machine (see
@@ -6119,6 +6123,14 @@ public partial class MainWindow : Window
         long myToken = ++_clipOpenToken;
         string? thumbnailCachePath = GetRemoteThumbnailCachePath(relativePath, file.Modified, file.Size);
         ShowPlayerLoadingUi(file.Name, thumbnailCachePath);
+        // ShowPlayerLoadingUi only clears _currentPlayerFile (no local file
+        // for a streamed clip, ever) -- this is still a real, actionable
+        // remote clip though, just without a local copy backing it. Trim/
+        // Rename/Delete all key off THIS, not _currentPlayerFile, so they
+        // stay available while streaming instead of silently no-op'ing --
+        // see PlayerDelete_Click/PlayerRename_Click/RunTrimAsync's own
+        // streaming branches.
+        _currentPlayerRemoteOrigin = (relativePath, _settings.PairedPeerDeviceId);
 
         // No FileInfo at all for a streamed clip -- these come straight from
         // the metadata list_gallery already gave us (RemoteGalleryFile),
@@ -6127,9 +6139,22 @@ public partial class MainWindow : Window
         StatDate.Text = $"{file.Modified.ToLocalTime():MMM d, yyyy h:mm tt}";
 
         string streamUrl = _remoteStreamServer.PrepareStream(relativePath, file.Size);
+        _currentStreamToken = streamUrl[(streamUrl.LastIndexOf('/') + 1)..];
         var mediaUri = new Uri(streamUrl);
         Dispatcher.BeginInvoke(new Action(() => StartPlayerPlayback(mediaUri, myToken, hideFreezeFrameOnFirstPlay: true)), DispatcherPriority.Loaded);
     }
+
+    /// <summary>
+    /// The token segment of whatever stream URL is currently playing (see
+    /// PrepareStream) -- null while playing a real local file. Only
+    /// meaningful use so far: after a remote rename while streaming, the
+    /// session RemoteClipStreamServer already has open for this token still
+    /// remembers the OLD relative path, so any FUTURE seek on the same
+    /// still-open player would ask for a path that no longer exists on the
+    /// transmitter. Updating the session in place (see PlayerRename_Click)
+    /// fixes that without needing to restart playback over a brand new URL.
+    /// </summary>
+    private string? _currentStreamToken;
 
     /// <summary>
     /// Deterministic per-peer local cache path for one remote clip's actual
@@ -7733,10 +7758,14 @@ public partial class MainWindow : Window
 
     private void PlayerRename_Click(object sender, RoutedEventArgs e)
     {
-        if (_currentPlayerFile is null)
+        // A streamed clip has no local FileInfo -- rename needs
+        // _currentPlayerRemoteOrigin alone, same reasoning as
+        // PlayerDelete_Click's own fix.
+        if (_currentPlayerFile is null && _currentPlayerRemoteOrigin is null)
             return;
         _isPlayerRenaming = true;
-        FileInfo file = _currentPlayerFile;
+        FileInfo? file = _currentPlayerFile;
+        string currentName = file?.Name ?? Path.GetFileName(_currentPlayerRemoteOrigin!.Value.RelativePath);
         bool finished = false;
 
         var stack = (StackPanel)PlayerTitle.Parent;
@@ -7744,7 +7773,7 @@ public partial class MainWindow : Window
 
         var box = new TextBox
         {
-            Text = Path.GetFileNameWithoutExtension(file.Name),
+            Text = Path.GetFileNameWithoutExtension(currentName),
             FontWeight = FontWeights.Bold,
             FontSize = 13,
             MinWidth = 120,
@@ -7781,40 +7810,71 @@ public partial class MainWindow : Window
             _isPlayerRenaming = false;
             _cancelPlayerRename = null;
             string newName = box.Text.Trim();
-            if (!string.IsNullOrEmpty(newName) && newName != Path.GetFileNameWithoutExtension(file.Name))
+            if (string.IsNullOrEmpty(newName) || newName == Path.GetFileNameWithoutExtension(currentName))
             {
-                // Captured before OpenInPlayer below clears it (same
-                // reasoning as RunTrimAsync's own remoteOrigin capture).
-                (string RelativePath, string DeviceId)? remoteOrigin = _currentPlayerRemoteOrigin;
-                try
-                {
-                    StopPlayerPlayback();
-                    string newPath = Path.Combine(file.DirectoryName!, newName + file.Extension);
-                    File.Move(file.FullName, newPath);
-                    _currentPlayerFile = new FileInfo(newPath);
-                    PlayerTitle.Text = Path.GetFileNameWithoutExtension(_currentPlayerFile.Name);
-                    stack.Children.Remove(box);
-                    stack.Children.Insert(index, PlayerTitle);
-                    OpenInPlayer(_currentPlayerFile);
+                RevertBox();
+                return;
+            }
 
-                    if (remoteOrigin is (string relPath, string deviceId))
-                    {
-                        // Restore what OpenInPlayer just cleared, then mirror
-                        // the rename to the real clip on the stream PC --
-                        // see HandleRenameClip.
-                        _currentPlayerRemoteOrigin = remoteOrigin;
-                        (bool success, string? error, string? newRelPath) = await _pairing.RenameRemoteClipAsync(relPath, newName);
-                        if (success)
-                            _currentPlayerRemoteOrigin = (newRelPath ?? relPath, deviceId);
-                        else
-                            MessageBox.Show(this, $"Renamed locally, but couldn't rename on {_settings.PairedPeerName}'s PC: {error}", "Backtrack");
-                    }
-                    return;
-                }
-                catch (Exception ex)
+            if (file is null)
+            {
+                // Pure streaming -- no local file to move at all, straight to
+                // the transmitter's own rename (HandleRenameClip), same as
+                // Delete's remote-only path. Playback itself keeps running
+                // uninterrupted throughout (no StopPlayerPlayback/OpenInPlayer
+                // needed -- the underlying stream connection doesn't care
+                // what the file's called), just the title and the tracked
+                // relative path update once it's confirmed.
+                (string relPath, string deviceId) = _currentPlayerRemoteOrigin!.Value;
+                stack.Children.Remove(box);
+                stack.Children.Insert(index, PlayerTitle);
+                (bool success, string? error, string? newRelPath) = await _pairing.RenameRemoteClipAsync(relPath, newName);
+                if (success)
                 {
-                    MessageBox.Show(this, $"Couldn't rename: {ex.Message}", "Backtrack");
+                    string finalRelPath = newRelPath ?? relPath;
+                    _currentPlayerRemoteOrigin = (finalRelPath, deviceId);
+                    PlayerTitle.Text = newName;
+                    if (_currentStreamToken is not null)
+                        _remoteStreamServer.UpdateSessionPath(_currentStreamToken, finalRelPath);
                 }
+                else
+                {
+                    MessageBox.Show(this, $"Couldn't rename on {_settings.PairedPeerName}'s PC: {error}", "Backtrack");
+                }
+                return;
+            }
+
+            // Captured before OpenInPlayer below clears it (same
+            // reasoning as RunTrimAsync's own remoteOrigin capture).
+            (string RelativePath, string DeviceId)? remoteOrigin = _currentPlayerRemoteOrigin;
+            try
+            {
+                StopPlayerPlayback();
+                string newPath = Path.Combine(file.DirectoryName!, newName + file.Extension);
+                File.Move(file.FullName, newPath);
+                _currentPlayerFile = new FileInfo(newPath);
+                PlayerTitle.Text = Path.GetFileNameWithoutExtension(_currentPlayerFile.Name);
+                stack.Children.Remove(box);
+                stack.Children.Insert(index, PlayerTitle);
+                OpenInPlayer(_currentPlayerFile);
+
+                if (remoteOrigin is (string relPath2, string deviceId2))
+                {
+                    // Restore what OpenInPlayer just cleared, then mirror
+                    // the rename to the real clip on the stream PC --
+                    // see HandleRenameClip.
+                    _currentPlayerRemoteOrigin = remoteOrigin;
+                    (bool success, string? error, string? newRelPath) = await _pairing.RenameRemoteClipAsync(relPath2, newName);
+                    if (success)
+                        _currentPlayerRemoteOrigin = (newRelPath ?? relPath2, deviceId2);
+                    else
+                        MessageBox.Show(this, $"Renamed locally, but couldn't rename on {_settings.PairedPeerName}'s PC: {error}", "Backtrack");
+                }
+                return;
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(this, $"Couldn't rename: {ex.Message}", "Backtrack");
             }
             RevertBox();
         }
@@ -7822,15 +7882,22 @@ public partial class MainWindow : Window
 
     private void PlayerDelete_Click(object sender, RoutedEventArgs e)
     {
-        if (_currentPlayerFile is null)
+        // A streamed clip has no local FileInfo at all -- delete needs
+        // _currentPlayerRemoteOrigin alone, not both, or every remote
+        // delete during streaming would silently no-op (reported live as
+        // "trimming, deleting, renaming COMPLETELY broken remotely" --
+        // QueueRemoteDeleteWithUndo already accepts file: null below and
+        // was never actually the problem, this guard was).
+        if (_currentPlayerFile is null && _currentPlayerRemoteOrigin is null)
             return;
 
-        FileInfo file = _currentPlayerFile;
+        FileInfo? file = _currentPlayerFile;
         (string RelativePath, string DeviceId)? remoteOrigin = _currentPlayerRemoteOrigin;
+        string displayName = file?.Name ?? Path.GetFileName(remoteOrigin!.Value.RelativePath);
 
         string message = remoteOrigin is null
-            ? $"Are you sure you want to delete \"{file.Name}\"? This will send it to your recycle bin."
-            : $"Delete \"{file.Name}\"? This deletes both the cached copy and the original clip on {_settings.PairedPeerName}'s PC. The original is sent to its Recycle Bin.";
+            ? $"Are you sure you want to delete \"{displayName}\"? This will send it to your recycle bin."
+            : $"Delete \"{displayName}\"? This deletes the original clip on {_settings.PairedPeerName}'s PC (sent to its Recycle Bin there){(file is null ? "." : ", and the cached copy here.")}";
 
         ShowConfirmDialog(
             message,
@@ -7847,20 +7914,24 @@ public partial class MainWindow : Window
 
                 if (remoteOrigin is (string relPath, _))
                 {
-                    // This local file is just a downloaded cache copy, not
-                    // the real clip -- delete it outright right away (no
-                    // undo toast for IT specifically, nothing meaningful to
+                    // This local file (if any -- null while streaming) is
+                    // just a downloaded cache copy, not the real clip --
+                    // delete it outright right away (no undo toast for IT
+                    // specifically, nothing meaningful to
                     // undo about a cache copy), then run the actual remote
                     // delete through the same undo-toast flow the Gallery
                     // card's own remote delete uses. `file: null` since
                     // there's no RemoteGalleryFile handy here to also key a
                     // remote thumbnail-cache cleanup off of.
-                    try { File.Delete(file.FullName); } catch { /* best effort */ }
-                    QueueRemoteDeleteWithUndo(relPath, file.Name, file: null);
+                    if (file is not null)
+                    {
+                        try { File.Delete(file.FullName); } catch { /* best effort */ }
+                    }
+                    QueueRemoteDeleteWithUndo(relPath, displayName, file: null);
                 }
                 else
                 {
-                    QueueDeleteWithUndo(file);
+                    QueueDeleteWithUndo(file!); // remoteOrigin null means this is a genuinely local clip -- file is never null here
                 }
             });
     }
@@ -8272,11 +8343,27 @@ public partial class MainWindow : Window
     /// </summary>
     private async Task RunTrimAsync(bool replaceOriginal)
     {
-        if (_libVlc is null || _currentPlayerFile is null || _trimStart is null || _trimEnd is null || _trimEnd <= _trimStart)
+        if (_trimStart is null || _trimEnd is null || _trimEnd <= _trimStart)
         {
             MessageBox.Show(this, "Set both a start and end point first (end must be after start).", "Backtrack");
             return;
         }
+
+        // Streaming (no local file at all) -- runs entirely on the
+        // transmitter's own side instead, no clip bytes cross the network
+        // in either direction. See TrimRemoteClipAsync/HandleTrimClipAsync's
+        // own comments for why. This used to just silently do nothing
+        // (blocked by the old _currentPlayerFile is null check above),
+        // reported live as "trimming COMPLETELY broken remotely".
+        if (_currentPlayerFile is null)
+        {
+            if (_currentPlayerRemoteOrigin is not null)
+                await RunRemoteTrimAsync(replaceOriginal);
+            return;
+        }
+
+        if (_libVlc is null)
+            return;
 
         FileInfo sourceFile = _currentPlayerFile;
         TimeSpan start = _trimStart.Value;
@@ -8392,6 +8479,122 @@ public partial class MainWindow : Window
             _isTrimming = false;
             TrimReplaceButton.IsEnabled = true;
             TrimSaveNewButton.IsEnabled = true;
+        }
+    }
+
+    /// <summary>
+    /// The streaming counterpart of RunTrimAsync's local logic -- sends
+    /// trim_clip and lets the transmitter do the actual encode against its
+    /// own real file (see TrimRemoteClipAsync), so this never downloads or
+    /// uploads any clip bytes, just the one request/response. Only
+    /// meaningfully different from the local path in what happens
+    /// afterward: a "replace" changes the exact file this Player is
+    /// actively streaming out from under itself, so rather than try to
+    /// reload that stream in place mid-playback (a real race against
+    /// whatever's already buffered), this just returns to Gallery and lets
+    /// reopening the clip fresh pick up the new, genuinely shorter result.
+    /// "Save as new" leaves the original (and this Player's current
+    /// playback) untouched, so nothing needs to restart at all.
+    /// </summary>
+    private async Task RunRemoteTrimAsync(bool replaceOriginal)
+    {
+        (string relPath, string _) = _currentPlayerRemoteOrigin!.Value;
+        TimeSpan start = _trimStart!.Value;
+        TimeSpan end = _trimEnd!.Value;
+
+        if (replaceOriginal)
+        {
+            bool? userConfirmed = null;
+            ShowConfirmDialog("Replace the original clip with this trimmed version? This can't be undone.", "Replace", c => userConfirmed = c);
+            while (!userConfirmed.HasValue && IsVisible)
+                await Task.Delay(50);
+            if (userConfirmed != true)
+                return;
+        }
+
+        _isTrimming = true;
+        TrimReplaceButton.IsEnabled = false;
+        TrimSaveNewButton.IsEnabled = false;
+        TrimStatusText.Text = $"Trimming on {_settings.PairedPeerName}'s PC...";
+
+        try
+        {
+            (bool success, string? error, _) = await _pairing.TrimRemoteClipAsync(relPath, start, end, replaceOriginal);
+            if (!success)
+            {
+                MessageBox.Show(this, $"Couldn't trim on {_settings.PairedPeerName}'s PC: {error}", "Backtrack");
+                return;
+            }
+
+            TrimPanel.Visibility = Visibility.Collapsed;
+            PlayerTransportRow.Visibility = Visibility.Visible;
+            MoveTransportControlsForTrim(intoTrimRow: false);
+
+            if (replaceOriginal)
+            {
+                StopPlayerPlayback();
+                ShowScreen(Screen.Gallery);
+                LoadGallery();
+            }
+            else
+            {
+                _ = RefreshGalleryCountAsync();
+                MessageBox.Show(this, $"Trimmed clip saved on {_settings.PairedPeerName}'s PC.", "Backtrack");
+            }
+        }
+        finally
+        {
+            _isTrimming = false;
+            TrimReplaceButton.IsEnabled = true;
+            TrimSaveNewButton.IsEnabled = true;
+        }
+    }
+
+    /// <summary>
+    /// Headless counterpart to RunTrimAsync -- reused ExportTrim directly, no
+    /// dialogs/UI (the confirm-before-replace step already happened on the
+    /// RECEIVER side, before it even sent the request; see
+    /// PlayerTrimReplace/SaveNew_Click's own remote branch), since this runs
+    /// in response to a trim_clip request from a paired PC, off this app's
+    /// own UI thread. Same "(trimmed)"/"(trimmed 2)" dedup naming as the
+    /// local save-as-new path, for the exact same reason: two remote trims
+    /// of the same clip shouldn't silently clobber each other.
+    /// </summary>
+    private async Task<(bool Success, string? Error, string? NewFileName)> TrimClipForRemoteAsync(string fullPath, double startSeconds, double endSeconds, bool replaceOriginal)
+    {
+        var file = new FileInfo(fullPath);
+        var start = TimeSpan.FromSeconds(startSeconds);
+        var end = TimeSpan.FromSeconds(endSeconds);
+        string tempOut = Path.Combine(Path.GetTempPath(), $"cc_trim_{Guid.NewGuid():N}{file.Extension}");
+
+        try
+        {
+            await Task.Run(() => ExportTrim(fullPath, tempOut, start, end));
+
+            if (replaceOriginal)
+            {
+                File.Copy(tempOut, fullPath, overwrite: true);
+                File.Delete(tempOut);
+                return (true, null, file.Name);
+            }
+
+            string newName = $"{Path.GetFileNameWithoutExtension(file.Name)} (trimmed){file.Extension}";
+            string destPath = Path.Combine(file.DirectoryName!, newName);
+            int i = 2;
+            while (File.Exists(destPath))
+            {
+                newName = $"{Path.GetFileNameWithoutExtension(file.Name)} (trimmed {i}){file.Extension}";
+                destPath = Path.Combine(file.DirectoryName!, newName);
+                i++;
+            }
+            File.Copy(tempOut, destPath, overwrite: false);
+            File.Delete(tempOut);
+            return (true, null, newName);
+        }
+        catch (Exception ex)
+        {
+            try { File.Delete(tempOut); } catch { /* best effort */ }
+            return (false, ex.Message, null);
         }
     }
 
