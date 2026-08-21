@@ -169,8 +169,14 @@ public sealed class RemoteClipStreamServer
                 context.Response.StatusCode = 200;
             }
 
+            // No WriteTimeout override here -- HttpListenerResponse.OutputStream
+            // doesn't reliably support setting one (CanTimeout is false on its
+            // real implementation), and setting it anyway throws immediately,
+            // before a single byte goes out. Confirmed live as the actual cause
+            // of a total playback failure (0:00 duration, no frame ever
+            // rendered, no audio track list -- libvlc never got anything back
+            // from this server at all, not a slow-stream/buffering symptom).
             using var cts = new CancellationTokenSource();
-            context.Response.OutputStream.WriteTimeout = Timeout.Infinite;
             (bool success, string? error) = await _pairing.StreamRemoteClipToAsync(relativePath, offset, context.Response.OutputStream, cts.Token);
             if (!success)
                 Debug.WriteLine($"RemoteClipStreamServer: relay for '{relativePath}' from offset {offset} ended early: {error}");
