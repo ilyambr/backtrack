@@ -8573,7 +8573,16 @@ public partial class MainWindow : Window
 
             if (replaceOriginal)
             {
-                File.Copy(tempOut, fullPath, overwrite: true);
+                // The original is a real, actively-managed clip file --
+                // something else on this PC (this same Backtrack's own
+                // thumbnail generation, antivirus briefly scanning it, etc.)
+                // can genuinely have it open for a moment. Confirmed live:
+                // "The process cannot access the file ... because it is
+                // being used by another process", with zero retry before
+                // this, killing an otherwise-successful trim over a
+                // transient lock. Same bounded-retry reasoning as
+                // ApplySelfUpdateAsync's own robocopy step.
+                await CopyWithRetryAsync(tempOut, fullPath, overwrite: true);
                 File.Delete(tempOut);
                 return (true, null, file.Name);
             }
@@ -8587,7 +8596,7 @@ public partial class MainWindow : Window
                 destPath = Path.Combine(file.DirectoryName!, newName);
                 i++;
             }
-            File.Copy(tempOut, destPath, overwrite: false);
+            await CopyWithRetryAsync(tempOut, destPath, overwrite: false);
             File.Delete(tempOut);
             return (true, null, newName);
         }
@@ -8595,6 +8604,22 @@ public partial class MainWindow : Window
         {
             try { File.Delete(tempOut); } catch { /* best effort */ }
             return (false, ex.Message, null);
+        }
+    }
+
+    private static async Task CopyWithRetryAsync(string sourcePath, string destPath, bool overwrite, int attempts = 5)
+    {
+        for (int attempt = 1; ; attempt++)
+        {
+            try
+            {
+                File.Copy(sourcePath, destPath, overwrite);
+                return;
+            }
+            catch (IOException) when (attempt < attempts)
+            {
+                await Task.Delay(TimeSpan.FromSeconds(1));
+            }
         }
     }
 
