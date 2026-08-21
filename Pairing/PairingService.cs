@@ -11,6 +11,9 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Backtrack.Interop;
+// For AppLog -- see HandleTrimClipAsync/TrimRemoteClipAsync's own comments
+// on why the remote trim path specifically needed real logging added.
+using Backtrack;
 
 namespace Backtrack.Pairing;
 
@@ -647,31 +650,67 @@ public sealed class PairingService : IDisposable
     /// same naming convention MainWindow.RunTrimAsync's own local
     /// save-as-new path already uses.
     /// </summary>
+    /// <summary>
+    /// Logs every real branch of this method (not just failures) to
+    /// AppLog/backtrack.log -- added specifically because remote trim had
+    /// no logging at all through several rounds of live "it's still not
+    /// working" reports with no way to tell WHICH side (receiver's request,
+    /// this PC's own validation, or the actual TrimClipForRemote call) was
+    /// even the one failing, or whether this handler was being reached at
+    /// all. This runs on the TRANSMITTER -- check ITS backtrack.log, not
+    /// the receiver's, for these lines.
+    /// </summary>
     private async Task<string> HandleTrimClipAsync(JsonElement request)
     {
-        if (!IsAuthorizedClient(request))
-            return JsonSerializer.Serialize(new { success = false, error = "Not authorized -- pair with this PC first." });
-
         string relativePath = request.TryGetProperty("path", out JsonElement p) ? p.GetString() ?? "" : "";
         double startSeconds = request.TryGetProperty("startSeconds", out JsonElement s) ? s.GetDouble() : -1;
         double endSeconds = request.TryGetProperty("endSeconds", out JsonElement en) ? en.GetDouble() : -1;
         bool replaceOriginal = request.TryGetProperty("replaceOriginal", out JsonElement r) && r.GetBoolean();
+        AppLog.Write($"[trim_clip] request received: path='{relativePath}' start={startSeconds:0.###}s end={endSeconds:0.###}s replace={replaceOriginal}");
+
+        if (!IsAuthorizedClient(request))
+        {
+            AppLog.Write("[trim_clip] rejected: not authorized (bad/missing pairing secret)");
+            return JsonSerializer.Serialize(new { success = false, error = "Not authorized -- pair with this PC first." });
+        }
 
         if (!TryResolveGalleryPath(relativePath, out string fullPath, out string? pathError) ||
             !GalleryFormats.VideoExtensions.Contains(Path.GetExtension(fullPath).ToLowerInvariant()))
+        {
+            AppLog.Write($"[trim_clip] rejected: bad path -- {pathError ?? "not a clip file"} (resolved to '{fullPath}')");
             return JsonSerializer.Serialize(new { success = false, error = pathError ?? "Not a clip file." });
+        }
         if (startSeconds < 0 || endSeconds <= startSeconds)
+        {
+            AppLog.Write($"[trim_clip] rejected: invalid range (start={startSeconds:0.###}s end={endSeconds:0.###}s)");
             return JsonSerializer.Serialize(new { success = false, error = "Invalid trim range." });
+        }
         if (!File.Exists(fullPath))
+        {
+            AppLog.Write($"[trim_clip] rejected: '{fullPath}' doesn't exist on this PC");
             return JsonSerializer.Serialize(new { success = false, error = "That clip doesn't exist on this PC anymore." });
+        }
         if (TrimClipForRemote is null)
+        {
+            // This is the one most worth checking for first: it means
+            // MainWindow never wired up _pairing.TrimClipForRemote at all
+            // (e.g. this PC's own LibVLC/player never finished initializing)
+            // -- every trim_clip request fails instantly with this exact
+            // message, before ever touching the file.
+            AppLog.Write("[trim_clip] rejected: TrimClipForRemote delegate is null -- this PC's own player/LibVLC isn't ready");
             return JsonSerializer.Serialize(new { success = false, error = "This PC's Backtrack can't trim clips right now (player not ready)." });
+        }
 
+        AppLog.Write($"[trim_clip] resolved to '{fullPath}' -- starting export");
         (bool success, string? error, string? newFileName) = await TrimClipForRemote(fullPath, startSeconds, endSeconds, replaceOriginal);
         if (!success || newFileName is null)
+        {
+            AppLog.Write($"[trim_clip] TrimClipForRemote FAILED: {error ?? "(no error message)"}");
             return JsonSerializer.Serialize(new { success = false, error = error ?? "Trim failed." });
+        }
 
         string newRelativePath = WithNewFileName(relativePath, newFileName);
+        AppLog.Write($"[trim_clip] success -- new relative path '{newRelativePath}'");
         return JsonSerializer.Serialize(new { success = true, path = newRelativePath });
     }
 
@@ -1119,11 +1158,23 @@ public sealed class PairingService : IDisposable
     /// never transfers the clip's actual bytes in either direction, just
     /// this one request/response, unlike a local trim on a downloaded copy.
     /// </summary>
+    /// <summary>
+    /// Logs every real branch here too -- runs on the RECEIVER, so its
+    /// backtrack.log lines (all prefixed "[trim_clip]", same as
+    /// HandleTrimClipAsync's own on the transmitter side) are what to check
+    /// for a connect/timeout/network-level failure specifically; a failure
+    /// that made it all the way to a real {success:false} response instead
+    /// shows up in the TRANSMITTER's own log, from HandleTrimClipAsync.
+    /// </summary>
     public async Task<(bool Success, string? Error, string? NewPath)> TrimRemoteClipAsync(string relativePath, TimeSpan start, TimeSpan end, bool replaceOriginal)
     {
         if (string.IsNullOrEmpty(_settings.PairedPeerHost) || string.IsNullOrEmpty(_settings.PairedPeerSecret))
+        {
+            AppLog.Write("[trim_clip] not sent: not paired with a transmitter PC");
             return (false, "Not paired with a transmitter PC.", null);
+        }
 
+        AppLog.Write($"[trim_clip] sending: path='{relativePath}' start={start.TotalSeconds:0.###}s end={end.TotalSeconds:0.###}s replace={replaceOriginal} -> {_settings.PairedPeerHost}:{_settings.PairedPeerPort}");
         try
         {
             using var client = new TcpClient();
@@ -1138,22 +1189,30 @@ public sealed class PairingService : IDisposable
                 ["replaceOriginal"] = replaceOriginal,
             };
             await WriteLineAsync(client.GetStream(), JsonSerializer.Serialize(fields)).WaitAsync(MutationRequestTimeout);
+            AppLog.Write("[trim_clip] connected and sent -- waiting on the transmitter's own response (can take a while, this is a real encode)");
             string? responseLine = await ReadLineAsync(client.GetStream()).WaitAsync(TrimRequestTimeout);
             if (responseLine is null)
+            {
+                AppLog.Write("[trim_clip] connection closed with no response line at all");
                 return (false, "No response from the transmitter PC.", null);
+            }
+            AppLog.Write($"[trim_clip] raw response: {responseLine}");
 
             using JsonDocument doc = JsonDocument.Parse(responseLine);
             bool success = doc.RootElement.TryGetProperty("success", out JsonElement s) && s.GetBoolean();
             string? error = doc.RootElement.TryGetProperty("error", out JsonElement er) ? er.GetString() : null;
             string? path = doc.RootElement.TryGetProperty("path", out JsonElement pt) ? pt.GetString() : null;
+            AppLog.Write(success ? $"[trim_clip] transmitter reported success -- new path '{path}'" : $"[trim_clip] transmitter reported failure: {error}");
             return (success, success ? null : (error ?? "Trim failed."), path);
         }
         catch (TimeoutException)
         {
+            AppLog.Write($"[trim_clip] timed out (connect/send capped at {MutationRequestTimeout.TotalSeconds:0}s, response capped at {TrimRequestTimeout.TotalMinutes:0} min)");
             return (false, $"{_settings.PairedPeerName ?? "The paired PC"} didn't respond in time -- it may be asleep, unreachable, or frozen.", null);
         }
         catch (Exception ex)
         {
+            AppLog.WriteError("[trim_clip] request threw", ex);
             return (false, ex.Message, null);
         }
     }

@@ -8358,7 +8358,23 @@ public partial class MainWindow : Window
         if (_currentPlayerFile is null)
         {
             if (_currentPlayerRemoteOrigin is not null)
+            {
                 await RunRemoteTrimAsync(replaceOriginal);
+                return;
+            }
+
+            // Both null -- neither a local file NOR a tracked remote origin.
+            // Used to silently return here with zero feedback at all (no
+            // toast, no error, nothing), which is indistinguishable from
+            // Trim just not working -- reported live as exactly that
+            // ("it just doesn't work"). Showing this explicitly, and
+            // logging it, is what actually tells us whether THIS is the
+            // real failure (a state-tracking bug losing the remote origin
+            // somewhere) versus the request genuinely reaching the
+            // transmitter and failing there -- see HandleTrimClipAsync's
+            // own logging for that side.
+            AppLog.Write("[trim_clip] RunTrimAsync: both _currentPlayerFile and _currentPlayerRemoteOrigin are null -- nothing to trim, this is the actual failure");
+            MessageBox.Show(this, "Nothing to trim -- this clip isn't tracked as either a local file or a remote clip right now. Try reopening it.", "Backtrack");
             return;
         }
 
@@ -8501,6 +8517,7 @@ public partial class MainWindow : Window
         (string relPath, string _) = _currentPlayerRemoteOrigin!.Value;
         TimeSpan start = _trimStart!.Value;
         TimeSpan end = _trimEnd!.Value;
+        AppLog.Write($"[trim_clip] RunRemoteTrimAsync entered: path='{relPath}' {start}-{end} replace={replaceOriginal}");
 
         if (replaceOriginal)
         {
@@ -8509,7 +8526,10 @@ public partial class MainWindow : Window
             while (!userConfirmed.HasValue && IsVisible)
                 await Task.Delay(50);
             if (userConfirmed != true)
+            {
+                AppLog.Write("[trim_clip] replace not confirmed -- aborted");
                 return;
+            }
 
             // The clip currently STREAMING right now holds a real open read
             // handle on the transmitter's own copy of this file (see
@@ -8543,6 +8563,7 @@ public partial class MainWindow : Window
         try
         {
             (bool success, string? error, _) = await _pairing.TrimRemoteClipAsync(relPath, start, end, replaceOriginal);
+            AppLog.Write(success ? "[trim_clip] RunRemoteTrimAsync: succeeded" : $"[trim_clip] RunRemoteTrimAsync: failed -- {error}");
             if (!success)
             {
                 MessageBox.Show(this, $"Couldn't trim on {_settings.PairedPeerName}'s PC: {error}", "Backtrack");
@@ -8590,10 +8611,21 @@ public partial class MainWindow : Window
         var start = TimeSpan.FromSeconds(startSeconds);
         var end = TimeSpan.FromSeconds(endSeconds);
         string tempOut = Path.Combine(Path.GetTempPath(), $"cc_trim_{Guid.NewGuid():N}{file.Extension}");
+        AppLog.Write($"[trim_clip] TrimClipForRemoteAsync: '{fullPath}' {start}-{end} replace={replaceOriginal}, exporting to '{tempOut}'");
 
         try
         {
             await Task.Run(() => ExportTrim(fullPath, tempOut, start, end));
+
+            // The single most useful line if this is silently doing nothing --
+            // ExportTrim itself has no return value, so this is the only
+            // direct evidence of whether the actual libvlc encode produced
+            // real output at all before anything downstream (the copy,
+            // renaming, etc.) even runs.
+            long tempOutSize = File.Exists(tempOut) ? new FileInfo(tempOut).Length : -1;
+            AppLog.Write($"[trim_clip] ExportTrim finished -- tempOut {(tempOutSize < 0 ? "does not exist" : $"is {tempOutSize} bytes")}");
+            if (tempOutSize <= 0)
+                return (false, "The trim produced no output file (libvlc export failed silently) -- check this PC's own log around ExportTrim for details.", null);
 
             if (replaceOriginal)
             {
@@ -8608,6 +8640,7 @@ public partial class MainWindow : Window
                 // ApplySelfUpdateAsync's own robocopy step.
                 await CopyWithRetryAsync(tempOut, fullPath, overwrite: true);
                 File.Delete(tempOut);
+                AppLog.Write($"[trim_clip] replaced '{fullPath}' in place");
                 return (true, null, file.Name);
             }
 
@@ -8622,10 +8655,12 @@ public partial class MainWindow : Window
             }
             await CopyWithRetryAsync(tempOut, destPath, overwrite: false);
             File.Delete(tempOut);
+            AppLog.Write($"[trim_clip] saved as new file '{destPath}'");
             return (true, null, newName);
         }
         catch (Exception ex)
         {
+            AppLog.WriteError("[trim_clip] TrimClipForRemoteAsync threw", ex);
             try { File.Delete(tempOut); } catch { /* best effort */ }
             return (false, ex.Message, null);
         }
