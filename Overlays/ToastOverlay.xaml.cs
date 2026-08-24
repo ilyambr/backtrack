@@ -7,6 +7,7 @@ using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Shapes;
 using System.Windows.Threading;
+using Backtrack.Core;
 using Backtrack.Interop;
 
 namespace Backtrack;
@@ -65,6 +66,11 @@ public partial class ToastOverlay : Window
 
     public void ShowRecording(bool started, string? resolvedPath)
     {
+        if (!started)
+        {
+            AudioCues.PlayRecordingSaved();
+        }
+
         // A real shape instead of a bigger text glyph for the "started" dot --
         // matching the record tile's own Ellipse gives pixel-exact size and
         // centering, where a bigger font glyph (tried first) doesn't reliably
@@ -119,8 +125,42 @@ public partial class ToastOverlay : Window
         Show(icon, started ? Stream : Text2, started ? "Livestream Started" : "Livestream Ended", null);
     }
 
-    public void ShowReplaySaved(string label, string resolvedPath) =>
+    public void ShowRecordingCancelled(string? name = null, string? duration = null)
+    {
+        string subMessage;
+        if (!string.IsNullOrEmpty(name) && !string.IsNullOrEmpty(duration))
+            subMessage = $"{name} · {duration} discarded";
+        else if (!string.IsNullOrEmpty(name))
+            subMessage = $"{name} · discarded";
+        else if (!string.IsNullOrEmpty(duration))
+            subMessage = $"{duration} discarded";
+        else
+            subMessage = "Recording discarded";
+
+        Show(GlyphIcon("✕", Rec), Rec, "Recording Canceled", subMessage);
+    }
+
+    public void ShowReplaySaved(string label, string resolvedPath)
+    {
+        AudioCues.PlayClipSaved();
         Show(GlyphIcon("\u21bb", Green), Green, $"{label} saved", $"Saved at '{resolvedPath}'", truncateSubMessage: true);
+    }
+
+    public void ShowTrimSaved(string? resolvedPath)
+    {
+        AudioCues.PlayClipSaved();
+        var icon = new Path
+        {
+            Data = Geometry.Parse("M9.64,7.64c0.23,-0.5,0.36,-1.05,0.36,-1.64c0,-2.21,-1.79,-4,-4,-4S2,3.79,2,6s1.79,4,4,4c0.59,0,1.14,-0.13,1.64,-0.36L10,12l-2.36,2.36C7.14,14.13,6.59,14,6,14c-2.21,0,-4,1.79,-4,4s1.79,4,4,4s4,-1.79,4,-4c0,-0.59,-0.13,-1.14,-0.36,-1.64L12,14l7,7h3v-1L9.64,7.64zM6,8C4.9,8,4,7.1,4,6s0.9,-2,2,-2s2,0.9,2,2S7.1,8,6,8zM6,20c-1.1,0,-2,-0.9,-2,-2s0.9,-2,2,-2s2,0.9,2,2S7.1,20,6,20zM12,13.5c-0.28,0,-0.5,-0.22,-0.5,-0.5s0.22,-0.5,0.5,-0.5s0.5,0.22,0.5,0.5S12.28,13.5,12,13.5zM19,3l-6,6l2,2l7,-7V3H19z"),
+            Fill = Green,
+            Width = 14,
+            Height = 14,
+            Stretch = Stretch.Uniform,
+            Margin = new Thickness(0, 1, 10, 0),
+            VerticalAlignment = VerticalAlignment.Top,
+        };
+        Show(icon, Green, "Trim Saved", resolvedPath is null ? null : $"Saved at '{resolvedPath}'", truncateSubMessage: true);
+    }
 
     // Keyed by row key, not label -- CompleteProcessingClip needs to find the
     // right toast again once ReplaySaved fires for that same key, and two
@@ -147,10 +187,13 @@ public partial class ToastOverlay : Window
     /// </summary>
     public void ShowProcessingClip(string key, string label)
     {
-        // A second click on the same row while one's still in flight (or a
-        // stale leftover some other edge case left behind) shouldn't stack a
-        // duplicate -- replace it instead of piling toasts up.
-        RemoveProcessingToast(key);
+        if (_processingToasts.ContainsKey(key))
+            return;
+
+        if (!IsVisible)
+        {
+            Show();
+        }
 
         IntPtr hwnd = new WindowInteropHelper(this).Handle;
         if (hwnd != IntPtr.Zero)
@@ -202,6 +245,7 @@ public partial class ToastOverlay : Window
         ToastStack.Children.Insert(0, toast);
 
         const double rampSec = 6.0;
+        const double maxTimeoutSec = 20.0;
         var startTime = DateTime.UtcNow;
         double CurrentFraction() => Math.Clamp((DateTime.UtcNow - startTime).TotalSeconds / rampSec, 0.0, 1.0);
         double Eased(double t) => 1.0 - Math.Pow(1.0 - t, 3); // cubic ease-out -- settles in, doesn't just count linearly
@@ -209,10 +253,19 @@ public partial class ToastOverlay : Window
         var timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(16) }; // 60 FPS
         timer.Tick += (_, _) =>
         {
+            double elapsed = (DateTime.UtcNow - startTime).TotalSeconds;
+            if (elapsed >= maxTimeoutSec)
+            {
+                RemoveProcessingToast(key);
+                return;
+            }
+
             double t = CurrentFraction();
             progressFill.Width = Eased(t) * toast.ActualWidth;
             if (t >= 1.0)
-                timer.Stop(); // holds flat, full -- nothing left to animate until CompleteProcessingClip
+            {
+                progressFill.Width = toast.ActualWidth;
+            }
         };
         toast.SizeChanged += (_, _) => progressFill.Width = Eased(CurrentFraction()) * toast.ActualWidth;
         timer.Start();
@@ -269,6 +322,16 @@ public partial class ToastOverlay : Window
             return;
         entry.Timer.Stop();
         ToastStack.Children.Remove(entry.Toast);
+    }
+
+    public void ClearAllProcessingToasts()
+    {
+        foreach (var entry in _processingToasts.Values)
+        {
+            entry.Timer.Stop();
+            ToastStack.Children.Remove(entry.Toast);
+        }
+        _processingToasts.Clear();
     }
 
     // Keyed by component name ("Replay Slider", "Source Record", "Backtrack")
@@ -351,6 +414,11 @@ public partial class ToastOverlay : Window
             Child = new Border { Padding = new Thickness(12, 10, 14, 10), Child = row },
         };
 
+        if (!IsVisible)
+        {
+            Show();
+        }
+
         IntPtr hwnd = new WindowInteropHelper(this).Handle;
         if (hwnd != IntPtr.Zero)
             WindowZOrder.BringToFrontWithoutActivating(hwnd);
@@ -385,9 +453,19 @@ public partial class ToastOverlay : Window
     private void ShowDeleteUndoToast(string title, string subtitle, Action onExpire, Action? onUndo)
     {
         _activeUndoCount++;
+
+        if (!IsVisible)
+        {
+            Show();
+        }
+
         IntPtr hwnd = new WindowInteropHelper(this).Handle;
         ClickThrough.Disable(hwnd);
-        WindowZOrder.BringToFrontWithoutActivating(hwnd);
+        if (hwnd != IntPtr.Zero)
+        {
+            WindowZOrder.BringToFrontWithoutActivating(hwnd);
+            Dispatcher.BeginInvoke(new Action(() => WindowZOrder.BringToFrontWithoutActivating(hwnd)), DispatcherPriority.Loaded);
+        }
 
         // Same Material "delete" icon as the Player screen's own Delete
         // button, not the old Segoe MDL2 Assets trash glyph -- that one
@@ -507,10 +585,16 @@ public partial class ToastOverlay : Window
     /// </summary>
     private void Show(UIElement icon, Brush accentColor, string message, string? subMessage, double durationSec = 4.0, bool truncateSubMessage = false)
     {
+        if (!IsVisible)
+        {
+            Show();
+        }
+
         IntPtr hwnd = new WindowInteropHelper(this).Handle;
         if (hwnd != IntPtr.Zero)
         {
             WindowZOrder.BringToFrontWithoutActivating(hwnd);
+            Dispatcher.BeginInvoke(new Action(() => WindowZOrder.BringToFrontWithoutActivating(hwnd)), DispatcherPriority.Loaded);
         }
 
         var msg = new TextBlock { Text = message, FontWeight = FontWeights.Bold, FontSize = 12.5, Foreground = Text0, TextWrapping = TextWrapping.Wrap, MaxWidth = 210 };

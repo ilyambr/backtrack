@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
@@ -15,6 +16,7 @@ using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
+using Backtrack.Core;
 using Backtrack.Interop;
 using Backtrack.Obs;
 using Backtrack.Pairing;
@@ -153,7 +155,14 @@ public partial class MainWindow : Window
     private readonly RemoteClipStreamServer _remoteStreamServer;
     private readonly Dictionary<string, string> _rowLabels = new();
     private List<ReplayRow> _lastReplayRows = new();
+    private const int OpenOverlayHotkeyId = 0x9001;
+    private const int CancelRecordHotkeyId = 0x9002;
     private GlobalHotkey? _hotkey;
+    private GlobalHotkey? _cancelRecordHotkey;
+    private bool _capturingCancelRecordHotkey;
+    private bool _cancellingMainRecording;
+    private string? _cancellingMainRecordingDuration;
+    private readonly HashSet<string> _cancelledRecordRows = new();
     private Screen _lastScreen = Screen.Idle;
     // Which screen BackToGallery_Click returns to. Defaults to Gallery at the
     // top of every OpenInPlayer call (the overwhelming common case: clicking
@@ -192,6 +201,7 @@ public partial class MainWindow : Window
     // or another Play() call on top of the already-ended one. See
     // PlayPauseButton_Click and CommitSeek, the two ways to resume.
     private bool _playerHasEnded;
+    private bool _isMuted;
     private Task? _pendingVlcDisposeTask;
     private FileInfo? _currentPlayerFile;
     // Set (right after OpenInPlayer) whenever the clip currently open in
@@ -343,8 +353,25 @@ public partial class MainWindow : Window
         // Events, not polling -- these fire the instant OBS says so, whether or
         // not the HUD is even open, which is the only way "did it actually save"
         // can be answered truthfully instead of guessed at.
-        _obs.RecordingStateChanged += (active, path) => Dispatcher.BeginInvoke(() =>
+        _obs.RecordingStateChanged += (active, path) => Dispatcher.BeginInvoke(async () =>
         {
+            if (_cancellingMainRecording)
+            {
+                if (!active)
+                {
+                    _cancellingMainRecording = false;
+                    string? dur = _cancellingMainRecordingDuration;
+                    _cancellingMainRecordingDuration = null;
+                    if (path is not null)
+                    {
+                        await DeleteOrRecycleCancelledFileAsync(path);
+                    }
+                    _toastOverlay.ShowRecordingCancelled("Full Scene", dur);
+                    AppLog.Write($"Main recording cancelled and recycled: '{path}'");
+                }
+                return;
+            }
+
             _toastOverlay.ShowRecording(active, path);
             if (active)
                 AppLog.Write("Recording started");
@@ -493,6 +520,10 @@ public partial class MainWindow : Window
         // So list_gallery hides obviously-broken/glitched clips the same way
         // the local Gallery does -- see TryGetCachedDurationMs.
         _pairing.GetCachedDurationMsForRemote = fullPath => TryGetCachedDurationMs(new FileInfo(fullPath));
+        // Lets a paired receiver PC's trim_clip request run the real trim
+        // directly against this PC's own local file -- see TrimClipForRemote's
+        // own comment for why nothing needs to cross the network for this.
+        _pairing.TrimClipForRemote = TrimClipForRemoteAsync;
 
         // Same reasoning as RAM disk above -- plugin version checks/updates read
         // and write C:\Program Files\obs-studio on THIS machine (see
@@ -701,6 +732,7 @@ public partial class MainWindow : Window
             // (Tried --avcodec-hw=any to see if it also fixed the ~1s glitchy startup
             // frame -- it didn't, so no reason to carry that regression risk for nothing.)
             _libVlc = new LibVlc.LibVLC("--no-video-title-show", "--avcodec-hw=none");
+            AudioCues.Initialize();
 
             // A real HWND for thumbnail-generation MediaPlayers to render into, never
             // shown (EnsureHandle creates the native window without Show() ever being
@@ -898,7 +930,7 @@ public partial class MainWindow : Window
                 .Where(f => VideoExtensions.Contains(Path.GetExtension(f).ToLowerInvariant())
                             && !_pendingDeletePaths.Contains(Path.GetFullPath(f)))
                 .Select(f => new FileInfo(f))
-                .Where(f => TryGetCachedDurationMs(f) is not < 2000)
+                .Where(f => f.Exists && f.Length > 0 && TryGetCachedDurationMs(f) is not < 2000)
                 .OrderByDescending(f => f.LastWriteTime)
                 .Take(4)
                 .ToList();
@@ -938,10 +970,13 @@ public partial class MainWindow : Window
 
     private Border BuildRecentClipTile(FileInfo file)
     {
-        var thumb = new Border { Background = (Brush)FindResource("ThumbnailBg"), Width = 96, Height = 64, Cursor = Cursors.Hand, ClipToBounds = true };
         var thumbImage = new Image { Stretch = Stretch.UniformToFill };
-        thumb.Child = thumbImage;
-        thumb.MouseLeftButtonUp += (_, _) => ShowMainWindowAndOpenInPlayer(file);
+        var thumb = new Border { Background = (Brush)FindResource("ThumbnailBg"), Width = 96, Height = 64, Cursor = Cursors.Hand, ClipToBounds = true, Child = thumbImage };
+        thumb.MouseLeftButtonUp += (_, e) =>
+        {
+            e.Handled = true;
+            ShowMainWindowAndOpenInPlayer(file);
+        };
 
         var title = new TextBlock
         {
@@ -952,6 +987,16 @@ public partial class MainWindow : Window
             TextTrimming = TextTrimming.CharacterEllipsis,
             Width = 96,
             Margin = new Thickness(0, 4, 0, 0),
+            Cursor = Cursors.IBeam,
+            ToolTip = "Double-click to rename",
+        };
+        title.MouseLeftButtonDown += (_, e) =>
+        {
+            if (e.ClickCount == 2)
+            {
+                e.Handled = true;
+                BeginRecentClipRename(title, file);
+            }
         };
 
         DateTime modified = file.LastWriteTime;
@@ -981,28 +1026,87 @@ public partial class MainWindow : Window
         var contextMenu = new ContextMenu { Style = (Style)FindResource("DarkContextMenu") };
         var openFolderItem = new MenuItem { Header = "Open file location", Style = (Style)FindResource("DarkMenuItem") };
         openFolderItem.Click += (_, _) => RevealInExplorerAndClose(file.FullName);
+        var renameItem = new MenuItem { Header = "Rename", Style = (Style)FindResource("DarkMenuItem") };
+        renameItem.Click += (_, _) => BeginRecentClipRename(title, file);
         var copyPathItem = new MenuItem { Header = "Copy path", Style = (Style)FindResource("DarkMenuItem") };
         copyPathItem.Click += (_, _) => Clipboard.SetText(file.FullName);
         var deleteItem = new MenuItem { Header = "Delete", Style = (Style)FindResource("DarkMenuItem"), Foreground = (Brush)FindResource("Rec") };
-        deleteItem.Click += (_, _) =>
-        {
-            // DeleteClip's Border param is unused internally (confirmed by
-            // reading it -- it only drives QueueDeleteWithUndo(file), which
-            // finds/removes cards by matching FileInfo, not this reference),
-            // so a throwaway one here is fine. No RefreshRecentClipsOverlay()
-            // call needed here -- DeleteClip shows an async confirm dialog
-            // first, so calling it right here would've fired before the user
-            // even answered; QueueDeleteWithUndo itself now refreshes this
-            // overlay once the delete is actually queued (see its own
-            // comment), which covers every entry point, not just this one.
-            DeleteClip(file, new Border());
-        };
+        deleteItem.Click += (_, _) => QueueDeleteWithUndo(file);
         contextMenu.Items.Add(openFolderItem);
+        contextMenu.Items.Add(renameItem);
         contextMenu.Items.Add(copyPathItem);
         contextMenu.Items.Add(deleteItem);
         thumb.ContextMenu = contextMenu;
 
         return tile;
+    }
+
+    private void BeginRecentClipRename(TextBlock title, FileInfo file)
+    {
+        if (title.Parent is not Panel parent)
+            return;
+        int index = parent.Children.IndexOf(title);
+        if (index < 0)
+            return;
+
+        bool finished = false;
+
+        var box = new TextBox
+        {
+            Text = Path.GetFileNameWithoutExtension(file.Name),
+            FontWeight = FontWeights.Bold,
+            FontSize = 10.5,
+            Width = 96,
+            Margin = title.Margin,
+            Background = (Brush)FindResource("RowBg"),
+            Foreground = (Brush)FindResource("Text0"),
+            BorderThickness = new Thickness(0),
+            Padding = new Thickness(0),
+        };
+
+        parent.Children.RemoveAt(index);
+        parent.Children.Insert(index, box);
+
+        box.Loaded += (_, _) => { box.Focus(); box.SelectAll(); };
+        box.KeyDown += (_, e) =>
+        {
+            if (e.Key == Key.Enter) { if (!finished) { finished = true; CommitRename(); } }
+            else if (e.Key == Key.Escape) { e.Handled = true; if (!finished) { finished = true; RestoreTitle(); } }
+        };
+        box.LostFocus += (_, _) => { if (!finished) { finished = true; CommitRename(); } };
+
+        void RestoreTitle()
+        {
+            int i = parent.Children.IndexOf(box);
+            if (i >= 0)
+            {
+                parent.Children.RemoveAt(i);
+                parent.Children.Insert(i, title);
+            }
+        }
+
+        void CommitRename()
+        {
+            string newName = box.Text.Trim();
+            if (!string.IsNullOrEmpty(newName) && newName != Path.GetFileNameWithoutExtension(file.Name))
+            {
+                try
+                {
+                    string newPath = Path.Combine(file.DirectoryName!, newName + file.Extension);
+                    File.Move(file.FullName, newPath);
+                    title.Text = newName;
+                    RefreshRecentClipsOverlay();
+                    if (GalleryPanel.Visibility == Visibility.Visible)
+                        LoadGallery();
+                    return;
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show(this, $"Couldn't rename: {ex.Message}", "Backtrack");
+                }
+            }
+            RestoreTitle();
+        }
     }
 
     /// <summary>
@@ -1017,10 +1121,13 @@ public partial class MainWindow : Window
     /// </summary>
     private Border BuildRecentRemoteClipTile(string relativePath, RemoteGalleryFile file)
     {
-        var thumb = new Border { Background = (Brush)FindResource("ThumbnailBg"), Width = 96, Height = 64, Cursor = Cursors.Hand, ClipToBounds = true };
         var thumbImage = new Image { Stretch = Stretch.UniformToFill };
-        thumb.Child = thumbImage;
-        thumb.MouseLeftButtonUp += (_, _) => OpenRemoteClipStreaming(relativePath, file);
+        var thumb = new Border { Background = (Brush)FindResource("ThumbnailBg"), Width = 96, Height = 64, Cursor = Cursors.Hand, ClipToBounds = true, Child = thumbImage };
+        thumb.MouseLeftButtonUp += (_, e) =>
+        {
+            e.Handled = true;
+            OpenRemoteClipStreaming(relativePath, file);
+        };
 
         var title = new TextBlock
         {
@@ -1031,6 +1138,16 @@ public partial class MainWindow : Window
             TextTrimming = TextTrimming.CharacterEllipsis,
             Width = 96,
             Margin = new Thickness(0, 4, 0, 0),
+            Cursor = Cursors.IBeam,
+            ToolTip = "Double-click to rename",
+        };
+        title.MouseLeftButtonDown += (_, e) =>
+        {
+            if (e.ClickCount == 2)
+            {
+                e.Handled = true;
+                BeginRecentRemoteClipRename(title, relativePath, file);
+            }
         };
 
         DateTime modified = file.Modified.ToLocalTime();
@@ -1053,15 +1170,85 @@ public partial class MainWindow : Window
         _ = LoadRemoteThumbnailAsync(relativePath, file, thumbImage);
 
         var contextMenu = new ContextMenu { Style = (Style)FindResource("DarkContextMenu") };
+        var renameItem = new MenuItem { Header = "Rename", Style = (Style)FindResource("DarkMenuItem") };
+        renameItem.Click += (_, _) => BeginRecentRemoteClipRename(title, relativePath, file);
         var copyPathItem = new MenuItem { Header = "Copy path", Style = (Style)FindResource("DarkMenuItem") };
         copyPathItem.Click += (_, _) => Clipboard.SetText(relativePath);
         var deleteItem = new MenuItem { Header = "Delete", Style = (Style)FindResource("DarkMenuItem"), Foreground = (Brush)FindResource("Rec") };
         deleteItem.Click += (_, _) => DeleteRemoteClip(relativePath, file);
+        contextMenu.Items.Add(renameItem);
         contextMenu.Items.Add(copyPathItem);
         contextMenu.Items.Add(deleteItem);
         thumb.ContextMenu = contextMenu;
 
         return tile;
+    }
+
+    private void BeginRecentRemoteClipRename(TextBlock title, string relativePath, RemoteGalleryFile file)
+    {
+        if (title.Parent is not Panel parent)
+            return;
+        int index = parent.Children.IndexOf(title);
+        if (index < 0)
+            return;
+
+        bool finished = false;
+
+        var box = new TextBox
+        {
+            Text = Path.GetFileNameWithoutExtension(file.Name),
+            FontWeight = FontWeights.Bold,
+            FontSize = 10.5,
+            Width = 96,
+            Margin = title.Margin,
+            Background = (Brush)FindResource("RowBg"),
+            Foreground = (Brush)FindResource("Text0"),
+            BorderThickness = new Thickness(0),
+            Padding = new Thickness(0),
+        };
+
+        parent.Children.RemoveAt(index);
+        parent.Children.Insert(index, box);
+
+        box.Loaded += (_, _) => { box.Focus(); box.SelectAll(); };
+        box.KeyDown += (_, e) =>
+        {
+            if (e.Key == Key.Enter) { if (!finished) { finished = true; CommitRemoteRename(); } }
+            else if (e.Key == Key.Escape) { e.Handled = true; if (!finished) { finished = true; RestoreTitle(); } }
+        };
+        box.LostFocus += (_, _) => { if (!finished) { finished = true; CommitRemoteRename(); } };
+
+        void RestoreTitle()
+        {
+            int i = parent.Children.IndexOf(box);
+            if (i >= 0)
+            {
+                parent.Children.RemoveAt(i);
+                parent.Children.Insert(i, title);
+            }
+        }
+
+        async void CommitRemoteRename()
+        {
+            string newName = box.Text.Trim();
+            if (!string.IsNullOrEmpty(newName) && newName != Path.GetFileNameWithoutExtension(file.Name))
+            {
+                (bool success, string? error, _) = await _pairing.RenameRemoteClipAsync(relativePath, newName);
+                if (success)
+                {
+                    title.Text = newName;
+                    _ = RefreshRecentClipsOverlayRemoteAsync();
+                    if (GalleryPanel.Visibility == Visibility.Visible)
+                        LoadGallery();
+                    return;
+                }
+                else
+                {
+                    MessageBox.Show(this, $"Couldn't rename: {error}", "Backtrack");
+                }
+            }
+            RestoreTitle();
+        }
     }
 
     /// <summary>
@@ -1077,8 +1264,8 @@ public partial class MainWindow : Window
     private async Task LoadThumbnailAndPruneIfGlitchedAsync(FileInfo file, Image thumbImage, Border tile)
     {
         await LoadThumbnailAsync(file, thumbImage);
-        if (TryGetCachedDurationMs(file) is < 2000 && tile.Parent is Panel parent)
-            parent.Children.Remove(tile);
+        if (TryGetCachedDurationMs(file) is < 2000)
+            RefreshRecentClipsOverlay();
     }
 
     private static string FormatFileSize(long bytes)
@@ -1088,9 +1275,17 @@ public partial class MainWindow : Window
         return sizeMb >= 1000 ? $"{sizeMb / 1024.0:0.#} GB" : $"{sizeMb:0.#} MB";
     }
 
+    private DateTime _lastQuickOpenUtc = DateTime.MinValue;
+
     /// <summary>The overlay is only ever visible while the HUD itself is (see ToggleVisible/CloseOverlay), so the visibility check here is mostly defensive -- reveals the HUD first if it's somehow hidden anyway, then opens the clip. Same "only show if not already" check App.xaml.cs's own _showEvent handler uses.</summary>
     private void ShowMainWindowAndOpenInPlayer(FileInfo file)
     {
+        if (DateTime.UtcNow - _lastQuickOpenUtc < TimeSpan.FromMilliseconds(400))
+            return;
+        _lastQuickOpenUtc = DateTime.UtcNow;
+
+        _scrim.ArmDismissCooldown(400);
+
         if (!IsVisible)
             ToggleVisible();
 
@@ -2108,7 +2303,7 @@ public partial class MainWindow : Window
     {
         bool expand = DestructiveContent.Visibility != Visibility.Visible;
         DestructiveContent.Visibility = expand ? Visibility.Visible : Visibility.Collapsed;
-        DestructiveHeaderText.Text = expand ? "▾ DESTRUCTIVE" : "▸ DESTRUCTIVE";
+        DestructiveHeaderText.Text = expand ? "▾ MAINTENANCE" : "▸ MAINTENANCE";
     }
 
     /// <summary>
@@ -2344,12 +2539,29 @@ public partial class MainWindow : Window
     {
         try
         {
-            _hotkey = new GlobalHotkey(this, (GlobalHotkey.Modifiers)_settings.HotkeyModifiers, (uint)_settings.HotkeyVirtualKey);
+            _hotkey = new GlobalHotkey(this, (GlobalHotkey.Modifiers)_settings.HotkeyModifiers, (uint)_settings.HotkeyVirtualKey, id: OpenOverlayHotkeyId);
             _hotkey.Pressed += () => Dispatcher.Invoke(ToggleVisible);
         }
         catch (InvalidOperationException ex)
         {
             Debug.WriteLine($"Hotkey registration failed: {ex.Message}");
+        }
+
+        if (_settings.CancelRecordHotkeyVirtualKey != 0)
+        {
+            try
+            {
+                _cancelRecordHotkey = new GlobalHotkey(this, (GlobalHotkey.Modifiers)_settings.CancelRecordHotkeyModifiers, (uint)_settings.CancelRecordHotkeyVirtualKey, id: CancelRecordHotkeyId);
+                _cancelRecordHotkey.Pressed += () => Dispatcher.Invoke(async () =>
+                {
+                    await CancelActiveRecordingsAsync();
+                    await RefreshStatusAsync();
+                });
+            }
+            catch (InvalidOperationException ex)
+            {
+                Debug.WriteLine($"Cancel record hotkey registration failed: {ex.Message}");
+            }
         }
     }
 
@@ -2513,6 +2725,11 @@ public partial class MainWindow : Window
     private void CloseOverlay(bool preserveScreen = false)
     {
         // preserveScreen (and IsCriticalOperationActive below) can both skip
+        if (_capturingHotkey)
+            EndHotkeyCapture(cancelled: true);
+        if (_capturingCancelRecordHotkey)
+            EndCancelRecordHotkeyCapture(cancelled: true);
+
         // the ShowScreen call that would otherwise stop this -- covered
         // directly here too so closing the HUD mid-autoscroll can never
         // leave CompositionTarget.Rendering ticking against a hidden window.
@@ -2712,10 +2929,7 @@ public partial class MainWindow : Window
                 ShowPlayerActionFeedback(PlayerFeedbackIcon.SeekForward, "End");
                 break;
             case Key.M:
-                _vlcPlayer.Mute = !_vlcPlayer.Mute;
-                UpdateVolumeIcon();
-                ShowPlayerActionFeedback(_vlcPlayer.Mute ? PlayerFeedbackIcon.Mute : PlayerFeedbackIcon.Volume,
-                    _vlcPlayer.Mute ? "Muted" : $"{_vlcPlayer.Volume}%");
+                TogglePlayerMute();
                 break;
             case Key.Up:
                 // Through the slider's own Value, not _vlcPlayer.Volume
@@ -2779,6 +2993,7 @@ public partial class MainWindow : Window
         }
         else
         {
+            _scrim.ArmDismissCooldown(400);
             if (_settings.EnableAnimations)
             {
                 FadeWindowIn(_scrim);
@@ -2950,6 +3165,8 @@ public partial class MainWindow : Window
 
     private void ShowScreen(Screen screen, bool skipEntranceAnimation = false)
     {
+        _scrim.ArmDismissCooldown(400);
+
         // Unconditional, not just when leaving Settings specifically -- cheap
         // no-op via its own IsActive guard if autoscroll isn't running, but
         // navigating away (or even just switching to a different screen and
@@ -3562,8 +3779,15 @@ public partial class MainWindow : Window
                         newlyStartedKeys.Add(row.Key);
                 }
                 List<string> newlyStoppedKeys = _recordRowActiveSinceUtc.Keys.Where(k => !activeKeys.Contains(k)).ToList();
+                var stoppedDurations = new Dictionary<string, string>();
                 foreach (string staleKey in newlyStoppedKeys)
-                    _recordRowActiveSinceUtc.Remove(staleKey);
+                {
+                    if (_recordRowActiveSinceUtc.Remove(staleKey, out DateTime since))
+                    {
+                        long durMs = (long)(DateTime.UtcNow - since).TotalMilliseconds;
+                        stoppedDurations[staleKey] = FormatDuration(durMs);
+                    }
+                }
 
                 // No RecordStateChanged-style event exists for a filter's own
                 // recording (that's specific to OBS's own main output), so
@@ -3583,9 +3807,38 @@ public partial class MainWindow : Window
                         _toastOverlay.ShowRecording(started: true, resolvedPath: null);
                     foreach (string key in newlyStoppedKeys)
                     {
+                        string? dur = stoppedDurations.TryGetValue(key, out var d) ? d : null;
                         string? path = _recordRowInfoByKey.TryGetValue(key, out var info) && !string.IsNullOrEmpty(info.SourceName) && !string.IsNullOrEmpty(info.FilterName)
                             ? await _obs.GetRecordRowDestinationFolderAsync(info.SourceName, info.FilterName)
                             : null;
+
+                        if (_cancelledRecordRows.Remove(key))
+                        {
+                            string label = _recordRowInfoByKey.TryGetValue(key, out var cInfo) ? DisplayLabel(cInfo.Label) : "";
+                            if (!string.IsNullOrEmpty(path) && Directory.Exists(path))
+                            {
+                                try
+                                {
+                                    var dir = new DirectoryInfo(path);
+                                    var latestFile = dir.GetFiles("*.*")
+                                        .Where(f => f.Extension.Equals(".mp4", StringComparison.OrdinalIgnoreCase) ||
+                                                    f.Extension.Equals(".mkv", StringComparison.OrdinalIgnoreCase) ||
+                                                    f.Extension.Equals(".mov", StringComparison.OrdinalIgnoreCase) ||
+                                                    f.Extension.Equals(".ts", StringComparison.OrdinalIgnoreCase))
+                                        .OrderByDescending(f => f.LastWriteTimeUtc)
+                                        .FirstOrDefault();
+                                    if (latestFile != null && (DateTime.UtcNow - latestFile.LastWriteTimeUtc).TotalSeconds < 30)
+                                    {
+                                        _ = DeleteOrRecycleCancelledFileAsync(latestFile.FullName);
+                                    }
+                                }
+                                catch { }
+                            }
+                            _toastOverlay.ShowRecordingCancelled(string.IsNullOrEmpty(label) ? null : label, dur);
+                            _recordRowInfoByKey.Remove(key);
+                            continue;
+                        }
+
                         _toastOverlay.ShowRecording(started: false, resolvedPath: path);
                         _recordRowInfoByKey.Remove(key);
                     }
@@ -3790,15 +4043,112 @@ public partial class MainWindow : Window
         }
     }
 
+    private async Task DeleteOrRecycleCancelledFileAsync(string path)
+    {
+        string fullPath = Path.GetFullPath(path);
+        _pendingDeletePaths.Add(fullPath);
+        Dispatcher.Invoke(() =>
+        {
+            RefreshRecentClipsOverlay();
+            if (GalleryPanel.Visibility == Visibility.Visible)
+                LoadGallery();
+            else
+                _ = RefreshGalleryCountAsync();
+        });
+
+        try
+        {
+            for (int attempt = 0; attempt < 15; attempt++)
+            {
+                if (!File.Exists(path))
+                    break;
+                try
+                {
+                    if (RecycleBin.Delete(path))
+                        break;
+                    File.Delete(path);
+                    break;
+                }
+                catch
+                {
+                    await Task.Delay(100);
+                }
+            }
+        }
+        finally
+        {
+            _pendingDeletePaths.Remove(fullPath);
+            Dispatcher.Invoke(() =>
+            {
+                RefreshRecentClipsOverlay();
+                if (GalleryPanel.Visibility == Visibility.Visible)
+                    LoadGallery();
+                else
+                    _ = RefreshGalleryCountAsync();
+            });
+        }
+    }
+
+    private async Task CancelActiveRecordingsAsync()
+    {
+        if (!_obs.IsConnected)
+            return;
+
+        try
+        {
+            RecordStatus mainStatus = await _obs.GetRecordStatusAsync();
+            if (mainStatus.Active)
+            {
+                _cancellingMainRecording = true;
+                _cancellingMainRecordingDuration = FormatDuration(mainStatus.DurationMs);
+                await _obs.StopMainRecordAsync();
+            }
+
+            List<RecordRow> activeRows = (await _obs.ListRecordRowsAsync()).Where(r => r.Status == RecordStatusRecording).ToList();
+            foreach (RecordRow row in activeRows)
+            {
+                _cancelledRecordRows.Add(row.Key);
+                await _obs.CancelRecordRowAsync(row.Key);
+            }
+        }
+        catch (Exception ex)
+        {
+            AppLog.Write($"CancelActiveRecordings failed: {ex.Message}");
+        }
+    }
+
+    private void RecordTile_MouseRightButtonUp(object sender, MouseButtonEventArgs e)
+    {
+        if (RecordLabel.Text != "Stop Recording" && _lastKnownActiveRecordRowCount == 0)
+            return;
+
+        e.Handled = true;
+        var contextMenu = new ContextMenu { Style = (Style)FindResource("DarkContextMenu") };
+        var cancelItem = new MenuItem
+        {
+            Header = "Cancel recording",
+            Style = (Style)FindResource("DarkMenuItem"),
+            Foreground = (Brush)FindResource("Rec")
+        };
+        cancelItem.Click += async (_, _) =>
+        {
+            await CancelActiveRecordingsAsync();
+            await RefreshStatusAsync();
+        };
+        contextMenu.Items.Add(cancelItem);
+        contextMenu.PlacementTarget = RecordTile;
+        contextMenu.Placement = PlacementMode.MousePoint;
+        contextMenu.IsOpen = true;
+    }
+
     private void SaveReplayTile_Click(object sender, RoutedEventArgs e)
     {
         ShowScreen(Screen.SaveReplay);
         _ = LoadReplayRowsAsync();
     }
 
-    private void GalleryTile_Click(object sender, RoutedEventArgs e)
+    private async void GalleryTile_Click(object sender, RoutedEventArgs e)
     {
-        ShowScreen(Screen.Gallery);
         _currentGalleryFolder = null;
         _currentRemoteGalleryFolder = null;
         // Paired-for-sharing devices care about the OTHER PC's clips, not
@@ -3808,7 +4158,18 @@ public partial class MainWindow : Window
         // hidden unconditionally now.
         _galleryIsRemote = !string.IsNullOrEmpty(_settings.PairedPeerSecret);
         RefreshGallerySourceTabsVisibility();
-        LoadGallery();
+
+        if (_galleryIsRemote)
+        {
+            // Populate remote cards before revealing Gallery screen so it never renders a blank frame
+            await LoadRemoteGalleryAsync();
+            ShowScreen(Screen.Gallery);
+        }
+        else
+        {
+            ShowScreen(Screen.Gallery);
+            LoadGallery();
+        }
     }
 
     /// <summary>
@@ -4115,7 +4476,13 @@ public partial class MainWindow : Window
     private void ReopenPlayerOverlayPopup()
     {
         PlayerOverlayPopup.IsOpen = false;
-        Dispatcher.BeginInvoke(new Action(() => PlayerOverlayPopup.IsOpen = true), DispatcherPriority.Loaded);
+        Dispatcher.BeginInvoke(new Action(() =>
+        {
+            PlayerOverlayPopup.IsOpen = true;
+            IntPtr toastHwnd = new WindowInteropHelper(_toastOverlay).Handle;
+            if (toastHwnd != IntPtr.Zero)
+                WindowZOrder.BringToFrontWithoutActivating(toastHwnd);
+        }), DispatcherPriority.Loaded);
     }
 
     // ------------------------------------------------------------ save replay
@@ -4180,6 +4547,9 @@ public partial class MainWindow : Window
     /// </summary>
     private async Task LoadBufferVisibilityUi()
     {
+        if (_settings.ObsIsRemote)
+            return;
+
         BufferVisibilityPanel.Children.Clear();
 
         if (!_obs.IsConnected)
@@ -4211,6 +4581,9 @@ public partial class MainWindow : Window
 
     private async Task LoadRecordFolderUi()
     {
+        if (_settings.ObsIsRemote)
+            return;
+
         RecordFolderPanel.Children.Clear();
 
         if (!_obs.IsConnected)
@@ -4574,6 +4947,21 @@ public partial class MainWindow : Window
             ToolTip = "Choose destination folder"
         };
 
+        // This browses (and constrains picks to) THIS PC's own ClipsFolder
+        // tree -- see IsWithinClipsFolder's own comment -- which has nothing
+        // to do with the transmitter's filesystem when OBS is remote. There's
+        // no way to browse a REMOTE folder tree through a local dialog, so
+        // rather than let it silently produce a path that's meaningless once
+        // pushed to the filter on the other PC, disable the picker entirely
+        // when OBS is on a different PC -- same "this control genuinely can't
+        // do anything useful right now" reasoning as RefreshRamDiskRemoteGating's
+        // own local-section disabling.
+        if (_settings.ObsIsRemote)
+        {
+            button.IsEnabled = false;
+            button.ToolTip = "OBS is on a different PC -- destination folders can't be browsed from here.";
+        }
+
         button.MouseEnter += (_, _) => iconPath.Fill = (Brush)FindResource("Text0");
         button.MouseLeave += (_, _) => iconPath.Fill = (Brush)FindResource("Text1");
 
@@ -4709,9 +5097,8 @@ public partial class MainWindow : Window
                 // buffer to disk. The actual trim down to this row's clip length
                 // happens afterward, async, on the OBS side (see
                 // ShowProcessingClip's own comment), so this button
-                // re-enabling is NOT the clip being ready; _obs.ReplaySaved
-                // (elsewhere in this file) is what fires once it actually is,
-                // and dismisses this same toast via CompleteProcessingClip.
+                // re-enabling is NOT the clip being ready.
+                //
                 _toastOverlay.ShowProcessingClip(row.Key, DisplayLabel(row.Label));
                 await _obs.SaveReplayRowAsync(row.Key);
             }
@@ -4772,7 +5159,19 @@ public partial class MainWindow : Window
         {
             RecordStatus mainStatus = await _obs.GetRecordStatusAsync();
             RecRowsPanel.Children.Add(BuildRecordRowButton("Full Scene", mainStatus.Active ? RecordStatusRecording : RecordStatusStopped,
-                start: _obs.StartMainRecordAsync, stop: _obs.StopMainRecordAsync));
+                start: _obs.StartMainRecordAsync,
+                stop: _obs.StopMainRecordAsync,
+                cancel: async () =>
+                {
+                    _cancellingMainRecording = true;
+                    try
+                    {
+                        RecordStatus s = await _obs.GetRecordStatusAsync();
+                        _cancellingMainRecordingDuration = s.Active ? FormatDuration(s.DurationMs) : null;
+                    }
+                    catch { }
+                    await _obs.StopMainRecordAsync();
+                }));
         }
         catch (Exception ex)
         {
@@ -4805,7 +5204,10 @@ public partial class MainWindow : Window
         {
             string key = row.Key;
             RecRowsPanel.Children.Add(BuildRecordRowButton(DisplayLabel(row.Label), row.Status,
-                start: () => _obs.StartRecordRowAsync(key), stop: () => _obs.StopRecordRowAsync(key), hotkey: row.Hotkey));
+                start: () => _obs.StartRecordRowAsync(key),
+                stop: () => _obs.StopRecordRowAsync(key),
+                cancel: async () => { _cancelledRecordRows.Add(key); await _obs.CancelRecordRowAsync(key); },
+                hotkey: row.Hotkey));
         }
     }
 
@@ -4918,7 +5320,7 @@ public partial class MainWindow : Window
         _autoDeleteOldClipsTimer.Start();
     }
 
-    private Button BuildRecordRowButton(string label, int status, Func<Task> start, Func<Task> stop, string? hotkey = null)
+    private Button BuildRecordRowButton(string label, int status, Func<Task> start, Func<Task> stop, Func<Task>? cancel = null, string? hotkey = null)
     {
         bool recording = status == RecordStatusRecording;
 
@@ -4989,6 +5391,46 @@ public partial class MainWindow : Window
 
         string styleKey = recording ? "BufRowButton" : "BufRowButtonNoHover";
         var button = new Button { Style = (Style)FindResource(styleKey), Content = content };
+
+        if (cancel is not null)
+        {
+            button.MouseRightButtonUp += (s, e) =>
+            {
+                if (stateText.Text != "Recording")
+                    return;
+
+                e.Handled = true;
+                var contextMenu = new ContextMenu { Style = (Style)FindResource("DarkContextMenu") };
+                var cancelItem = new MenuItem
+                {
+                    Header = "Cancel recording",
+                    Style = (Style)FindResource("DarkMenuItem"),
+                    Foreground = (Brush)FindResource("Rec")
+                };
+                cancelItem.Click += async (_, _) =>
+                {
+                    button.IsEnabled = false;
+                    try
+                    {
+                        await cancel();
+                        dot.Fill = (Brush)FindResource("Text2");
+                        stateText.Text = "Stopped";
+                        button.Style = (Style)FindResource("BufRowButton");
+                        await Task.Delay(1000);
+                        await LoadRecordRowsAsync();
+                    }
+                    catch (Exception ex)
+                    {
+                        MessageBox.Show(this, $"Couldn't cancel recording: {ex.Message}", "Backtrack");
+                        button.IsEnabled = true;
+                    }
+                };
+                contextMenu.Items.Add(cancelItem);
+                contextMenu.PlacementTarget = button;
+                contextMenu.Placement = PlacementMode.MousePoint;
+                contextMenu.IsOpen = true;
+            };
+        }
 
         // Inactive used to be dead code on the plugin side (every row only
         // ever reported Stopped/Recording/Error -- see obs-replay-slider's
@@ -5250,7 +5692,9 @@ public partial class MainWindow : Window
         {
             return Directory.Exists(_settings.ClipsFolder)
                 ? Directory.EnumerateFiles(_settings.ClipsFolder, "*", SearchOption.AllDirectories)
-                    .Count(f => VideoExtensions.Contains(Path.GetExtension(f).ToLowerInvariant()))
+                    .Where(f => VideoExtensions.Contains(Path.GetExtension(f).ToLowerInvariant()))
+                    .Select(f => new FileInfo(f))
+                    .Count(f => f.Exists && f.Length > 0 && TryGetCachedDurationMs(f) is not < 2000)
                 : 0;
         }
         catch
@@ -5278,11 +5722,7 @@ public partial class MainWindow : Window
                 ? Directory.EnumerateFiles(_settings.ClipsFolder, "*", SearchOption.AllDirectories)
                     .Where(f => VideoExtensions.Contains(Path.GetExtension(f).ToLowerInvariant()))
                     .Select(f => new FileInfo(f))
-                    // Same glitched-clip filter LoadGallery/RefreshRecentClipsOverlay
-                    // already apply -- without it, this could point the "newest"
-                    // dot at a sub-2s glitched clip that's hidden from the Gallery
-                    // list entirely, leading nowhere a user could actually find it.
-                    .Where(f => TryGetCachedDurationMs(f) is not < 2000)
+                    .Where(f => f.Exists && f.Length > 0 && TryGetCachedDurationMs(f) is not < 2000)
                     .OrderByDescending(f => f.LastWriteTime)
                     .FirstOrDefault()
                     ?.FullName
@@ -5369,7 +5809,7 @@ public partial class MainWindow : Window
                 // extra guard against that case was redundant, and actively wrong,
                 // since it also let a genuine 0ms glitched clip slip through the
                 // same way (0 isn't > 0 either).
-                .Where(f => TryGetCachedDurationMs(f) is not < 2000)
+                .Where(f => f.Exists && f.Length > 0 && TryGetCachedDurationMs(f) is not < 2000)
                 .OrderByDescending(f => f.LastWriteTime)
                 .ToList();
         }
@@ -5412,7 +5852,10 @@ public partial class MainWindow : Window
             GalleryGrid.Children.Add(BuildClipCard(file,
                 isNewest: newestClipPath is not null && string.Equals(Path.GetFullPath(file.FullName), newestClipPath, StringComparison.OrdinalIgnoreCase)));
 
-        GalleryStatus.Text = files.Count == 1 ? "1 clip" : $"{files.Count} clips";
+        if (_currentGalleryFolder is null && subfolders.Count > 0)
+            _ = RefreshGalleryCountAsync();
+        else
+            GalleryStatus.Text = files.Count == 1 ? "1 clip" : $"{files.Count} clips";
     }
 
     /// <summary>
@@ -5519,7 +5962,6 @@ public partial class MainWindow : Window
     /// </summary>
     private async Task LoadRemoteGalleryAsync()
     {
-        GalleryGrid.Children.Clear();
         _galleryCardSelection.Clear();
         _selectedClipPaths.Clear();
         RefreshGallerySelectionUi();
@@ -5537,6 +5979,7 @@ public partial class MainWindow : Window
                 _remotePcWasConnected = false;
                 _toastOverlay.ShowRemotePcDisconnected(_settings.PairedPeerHost ?? _settings.PairedPeerName ?? "The remote PC");
             }
+            GalleryGrid.Children.Clear();
             GalleryGrid.Children.Add(new TextBlock
             {
                 Text = $"Couldn't reach {_settings.PairedPeerName}'s Backtrack -- make sure it's running and paired.",
@@ -5572,6 +6015,7 @@ public partial class MainWindow : Window
 
         if (folders.Count == 0 && files.Count == 0)
         {
+            GalleryGrid.Children.Clear();
             GalleryGrid.Children.Add(new TextBlock
             {
                 Text = filter.Length == 0 ? "No clips in this folder yet." : $"Nothing here matches \"{filter}\".",
@@ -5582,6 +6026,7 @@ public partial class MainWindow : Window
             return;
         }
 
+        var newCards = new List<UIElement>();
         foreach (string name in folders)
         {
             string folderRelPath = RemoteClipRelativePath(name);
@@ -5592,12 +6037,16 @@ public partial class MainWindow : Window
             bool leadsToNewest = newestRemotePath is not null
                 && (string.Equals(newestRemotePath, folderRelPath, StringComparison.OrdinalIgnoreCase)
                     || newestRemotePath.StartsWith(folderRelPath + "/", StringComparison.OrdinalIgnoreCase));
-            GalleryGrid.Children.Add(BuildFolderCard(name, () => OpenRemoteGalleryFolder(name), leadsToNewest));
+            newCards.Add(BuildFolderCard(name, () => OpenRemoteGalleryFolder(name), leadsToNewest));
         }
 
         foreach (RemoteGalleryFile file in files)
-            GalleryGrid.Children.Add(BuildRemoteClipCard(file,
+            newCards.Add(BuildRemoteClipCard(file,
                 isNewest: newestRemotePath is not null && string.Equals(RemoteClipRelativePath(file.Name), newestRemotePath, StringComparison.OrdinalIgnoreCase)));
+
+        GalleryGrid.Children.Clear();
+        foreach (UIElement card in newCards)
+            GalleryGrid.Children.Add(card);
 
         GalleryStatus.Text = files.Count == 1 ? "1 clip" : $"{files.Count} clips";
     }
@@ -5943,6 +6392,12 @@ public partial class MainWindow : Window
     /// </summary>
     private void BeginRenameRemote(Border card, TextBlock title, string relativePath, RemoteGalleryFile file)
     {
+        if (title.Parent is not Panel parent)
+            return;
+        int index = parent.Children.IndexOf(title);
+        if (index < 0)
+            return;
+
         _isRenamingCard = true;
         bool finished = false;
 
@@ -5957,10 +6412,8 @@ public partial class MainWindow : Window
             BorderThickness = new Thickness(0),
         };
 
-        var stack = (StackPanel)card.Child;
-        int index = stack.Children.IndexOf(title);
-        stack.Children.RemoveAt(index);
-        stack.Children.Insert(index, box);
+        parent.Children.RemoveAt(index);
+        parent.Children.Insert(index, box);
 
         box.Loaded += (_, _) => { box.Focus(); box.SelectAll(); };
         box.KeyDown += (_, e) =>
@@ -6027,19 +6480,27 @@ public partial class MainWindow : Window
                 return;
         }
 
-        try
+        BitmapImage? bitmap = null;
+        if (File.Exists(cachePath))
         {
-            var bitmap = new BitmapImage();
-            bitmap.BeginInit();
-            bitmap.CacheOption = BitmapCacheOption.OnLoad;
-            bitmap.UriSource = new Uri(cachePath);
-            bitmap.EndInit();
-            bitmap.Freeze();
-            target.Source = bitmap;
+            try
+            {
+                bitmap = new BitmapImage();
+                bitmap.BeginInit();
+                bitmap.CacheOption = BitmapCacheOption.OnLoad;
+                bitmap.UriSource = new Uri(cachePath, UriKind.Absolute);
+                bitmap.EndInit();
+                bitmap.Freeze();
+            }
+            catch
+            {
+                bitmap = null;
+            }
         }
-        catch
+
+        if (bitmap is not null)
         {
-            // Cached file is somehow unreadable -- leave the play-triangle placeholder.
+            await target.Dispatcher.InvokeAsync(() => target.Source = bitmap);
         }
     }
 
@@ -6095,17 +6556,38 @@ public partial class MainWindow : Window
         long myToken = ++_clipOpenToken;
         string? thumbnailCachePath = GetRemoteThumbnailCachePath(relativePath, file.Modified, file.Size);
         ShowPlayerLoadingUi(file.Name, thumbnailCachePath);
+        // ShowPlayerLoadingUi only clears _currentPlayerFile (no local file
+        // for a streamed clip, ever) -- this is still a real, actionable
+        // remote clip though, just without a local copy backing it. Trim/
+        // Rename/Delete all key off THIS, not _currentPlayerFile, so they
+        // stay available while streaming instead of silently no-op'ing --
+        // see PlayerDelete_Click/PlayerRename_Click/RunTrimAsync's own
+        // streaming branches.
+        _currentPlayerRemoteOrigin = (relativePath, _settings.PairedPeerDeviceId);
 
         // No FileInfo at all for a streamed clip -- these come straight from
         // the metadata list_gallery already gave us (RemoteGalleryFile),
         // same info a real download's FileInfo would've reported anyway.
-        StatSize.Text = $"{file.Size / 1024.0 / 1024.0:0.#} MB";
+        StatSize.Text = file.Size > 0 ? $"{file.Size / 1024.0 / 1024.0:0.#} MB" : "";
         StatDate.Text = $"{file.Modified.ToLocalTime():MMM d, yyyy h:mm tt}";
 
-        string streamUrl = _remoteStreamServer.PrepareStream(relativePath, file.Size);
+        string streamUrl = _remoteStreamServer.PrepareStream(relativePath);
+        _currentStreamToken = streamUrl[(streamUrl.LastIndexOf('/') + 1)..];
         var mediaUri = new Uri(streamUrl);
         Dispatcher.BeginInvoke(new Action(() => StartPlayerPlayback(mediaUri, myToken, hideFreezeFrameOnFirstPlay: true)), DispatcherPriority.Loaded);
     }
+
+    /// <summary>
+    /// The token segment of whatever stream URL is currently playing (see
+    /// PrepareStream) -- null while playing a real local file. Only
+    /// meaningful use so far: after a remote rename while streaming, the
+    /// session RemoteClipStreamServer already has open for this token still
+    /// remembers the OLD relative path, so any FUTURE seek on the same
+    /// still-open player would ask for a path that no longer exists on the
+    /// transmitter. Updating the session in place (see PlayerRename_Click)
+    /// fixes that without needing to restart playback over a brand new URL.
+    /// </summary>
+    private string? _currentStreamToken;
 
     /// <summary>
     /// Deterministic per-peer local cache path for one remote clip's actual
@@ -6583,6 +7065,9 @@ public partial class MainWindow : Window
     /// </summary>
     private async Task<string?> EnsureThumbnailCachedAsync(FileInfo file)
     {
+        if (!file.Exists || file.Length == 0)
+            return null;
+
         string cachePath = GetThumbnailCachePath(file);
         // Both need to exist, not just the jpg -- a thumbnail cached before the
         // .duration sidecar existed (i.e. every clip already thumbnailed once
@@ -6626,9 +7111,10 @@ public partial class MainWindow : Window
         List<FileInfo> files;
         try
         {
-            files = Directory.EnumerateFiles(_settings.ClipsFolder)
+            files = Directory.EnumerateFiles(_settings.ClipsFolder, "*.*", SearchOption.AllDirectories)
                 .Where(f => VideoExtensions.Contains(Path.GetExtension(f).ToLowerInvariant()))
                 .Select(f => new FileInfo(f))
+                .Where(f => f.Exists && f.Length > 0)
                 .OrderByDescending(f => f.LastWriteTime) // newest first -- most likely to be looked at soonest
                 .ToList();
         }
@@ -6645,29 +7131,36 @@ public partial class MainWindow : Window
     {
         string? cachePath = await EnsureThumbnailCachedAsync(file);
 
-        // Generation (if it ran) also drops the duration sidecar as a side
-        // effect, so a card built before that duration was known gets it
-        // filled in here once thumbnailing catches up.
-        if (durationTarget is not null && TryGetCachedDurationMs(file) is long ms)
-            durationTarget.Text = FormatDuration(ms);
+        long? durationMs = TryGetCachedDurationMs(file);
 
-        if (cachePath is null)
+        if (cachePath is null && durationMs is null)
             return;
 
-        try
+        BitmapImage? bitmap = null;
+        if (cachePath is not null && File.Exists(cachePath))
         {
-            var bitmap = new BitmapImage();
-            bitmap.BeginInit();
-            bitmap.CacheOption = BitmapCacheOption.OnLoad;
-            bitmap.UriSource = new Uri(cachePath);
-            bitmap.EndInit();
-            bitmap.Freeze();
-            target.Source = bitmap;
+            try
+            {
+                bitmap = new BitmapImage();
+                bitmap.BeginInit();
+                bitmap.CacheOption = BitmapCacheOption.OnLoad;
+                bitmap.UriSource = new Uri(cachePath, UriKind.Absolute);
+                bitmap.EndInit();
+                bitmap.Freeze();
+            }
+            catch
+            {
+                bitmap = null;
+            }
         }
-        catch
+
+        await target.Dispatcher.InvokeAsync(() =>
         {
-            // Cached file is somehow unreadable -- leave the neutral placeholder.
-        }
+            if (bitmap is not null)
+                target.Source = bitmap;
+            if (durationTarget is not null && durationMs is not null)
+                durationTarget.Text = FormatDuration(durationMs.Value);
+        });
     }
 
     private async Task GenerateThumbnailAsync(FileInfo file, string cachePath)
@@ -6683,7 +7176,7 @@ public partial class MainWindow : Window
         {
             try
             {
-                using var media = new LibVlc.Media(_libVlc!, new Uri(file.FullName));
+                using var media = new LibVlc.Media(_libVlc!, file.FullName, LibVlc.FromType.FromPath);
                 media.AddOption(":no-audio");
                 using var player = new LibVlc.MediaPlayer(media) { Hwnd = _thumbnailSinkHwnd, Mute = true };
                 using var playingSignal = new ManualResetEventSlim(false);
@@ -6706,23 +7199,36 @@ public partial class MainWindow : Window
                 long seekTarget = Math.Min(2000, Math.Max(player.Length / 4, 0));
                 if (seekTarget > 0)
                     player.Time = seekTarget;
-                Thread.Sleep(150);
+                Thread.Sleep(200);
 
                 player.TakeSnapshot(0, cachePath, 480, 0);
-                for (int i = 0; i < 15 && !File.Exists(cachePath); i++)
+                for (int i = 0; i < 20 && !File.Exists(cachePath); i++)
                     Thread.Sleep(100);
 
                 player.Stop();
             }
             catch
             {
-                // No thumbnail this time -- the placeholder stays, not worth surfacing an error for.
+                // Clean up partial duration file if snapshot failed
+                try
+                {
+                    string durPath = Path.ChangeExtension(cachePath, ".duration");
+                    if (!File.Exists(cachePath) && File.Exists(durPath))
+                        File.Delete(durPath);
+                }
+                catch { }
             }
         });
     }
 
     private void BeginRename(Border card, TextBlock title, FileInfo file)
     {
+        if (title.Parent is not Panel parent)
+            return;
+        int index = parent.Children.IndexOf(title);
+        if (index < 0)
+            return;
+
         _isRenamingCard = true;
         bool finished = false;
 
@@ -6737,10 +7243,8 @@ public partial class MainWindow : Window
             BorderThickness = new Thickness(0),
         };
 
-        var stack = (StackPanel)card.Child;
-        int index = stack.Children.IndexOf(title);
-        stack.Children.RemoveAt(index);
-        stack.Children.Insert(index, box);
+        parent.Children.RemoveAt(index);
+        parent.Children.Insert(index, box);
 
         box.Loaded += (_, _) => { box.Focus(); box.SelectAll(); };
         box.KeyDown += (_, e) =>
@@ -6931,16 +7435,10 @@ public partial class MainWindow : Window
             PlayerFreezeFramePopup.IsOpen = true;
             _freezeFrameTimer.Stop();
             _freezeFrameTimer.Start();
-
-            // Two independent Popups (this one and PlayerOverlayPopup, the
-            // back button/title) racing their own opens -- WPF stacks
-            // most-recently-opened on top, and this one's open is timing-
-            // dependent on the thumbnail load above finishing, so it could
-            // win that race and end up covering the back button/title until
-            // it closed again. Reasserting the back button/title's Popup
-            // right here, immediately after this one opens, guarantees it
-            // ends up on top regardless of how that race actually went.
             ReopenPlayerOverlayPopup();
+            IntPtr toastHwnd = new WindowInteropHelper(_toastOverlay).Handle;
+            if (toastHwnd != IntPtr.Zero)
+                WindowZOrder.BringToFrontWithoutActivating(toastHwnd);
         }), DispatcherPriority.Loaded);
     }
 
@@ -7111,6 +7609,10 @@ public partial class MainWindow : Window
         using var media = new LibVlc.Media(_libVlc, mediaUri);
         _vlcPlayer.Play(media);
 
+        IntPtr toastHwnd = new WindowInteropHelper(_toastOverlay).Handle;
+        if (toastHwnd != IntPtr.Zero)
+            WindowZOrder.BringToFrontWithoutActivating(toastHwnd);
+
         // Explicit, not just "set the slider to 100 and let ValueChanged
         // propagate it" -- that was the actual bug (reported live as clips
         // starting muted). WPF's Slider doesn't raise ValueChanged when the
@@ -7126,6 +7628,7 @@ public partial class MainWindow : Window
         // own audio output isn't necessarily set up yet before playback has
         // actually started, so Volume/Mute writes before this point aren't
         // reliably guaranteed to stick either. Slider/icon still synced to match.
+        _isMuted = false;
         _vlcPlayer.Volume = 100;
         _vlcPlayer.Mute = false;
         PlayerVolumeSlider.Value = 100;
@@ -7188,7 +7691,7 @@ public partial class MainWindow : Window
             {
                 volumeConfirmed = true;
                 _vlcPlayer.Volume = (int)PlayerVolumeSlider.Value;
-                _vlcPlayer.Mute = false;
+                _vlcPlayer.Mute = _isMuted;
                 UpdateVolumeIcon();
             }
         });
@@ -7304,14 +7807,20 @@ public partial class MainWindow : Window
         }
     }
 
-    private void PlayerVolumeButton_Click(object sender, RoutedEventArgs e)
+    private void TogglePlayerMute()
     {
         if (_vlcPlayer is null)
             return;
-        _vlcPlayer.Mute = !_vlcPlayer.Mute;
+        _isMuted = !_isMuted;
+        _vlcPlayer.Mute = _isMuted;
         UpdateVolumeIcon();
-        ShowPlayerActionFeedback(_vlcPlayer.Mute ? PlayerFeedbackIcon.Mute : PlayerFeedbackIcon.Volume,
-            _vlcPlayer.Mute ? "Muted" : $"{_vlcPlayer.Volume}%");
+        ShowPlayerActionFeedback(_isMuted ? PlayerFeedbackIcon.Mute : PlayerFeedbackIcon.Volume,
+            _isMuted ? "Muted" : $"{(int)PlayerVolumeSlider.Value}%");
+    }
+
+    private void PlayerVolumeButton_Click(object sender, RoutedEventArgs e)
+    {
+        TogglePlayerMute();
     }
 
     // Wired to both PlayerVolumeButton itself and PlayerVolumePopup's own
@@ -7341,8 +7850,11 @@ public partial class MainWindow : Window
         // Dragging the level back up un-mutes, matching most other players'
         // own volume sliders -- otherwise raising the slider while muted
         // would look like it did nothing.
-        if (e.NewValue > 0 && _vlcPlayer.Mute)
+        if (e.NewValue > 0 && _isMuted)
+        {
+            _isMuted = false;
             _vlcPlayer.Mute = false;
+        }
         UpdateVolumeIcon();
     }
 
@@ -7350,7 +7862,7 @@ public partial class MainWindow : Window
     {
         if (_vlcPlayer is null)
             return;
-        bool showMuted = _vlcPlayer.Mute || _vlcPlayer.Volume <= 0;
+        bool showMuted = _isMuted || PlayerVolumeSlider.Value <= 0;
         PlayerVolumeIcon.Data = Geometry.Parse(showMuted ? VolumeOffIcon : VolumeUpIcon);
     }
 
@@ -7709,18 +8221,25 @@ public partial class MainWindow : Window
 
     private void PlayerRename_Click(object sender, RoutedEventArgs e)
     {
-        if (_currentPlayerFile is null)
+        // A streamed clip has no local FileInfo -- rename needs
+        // _currentPlayerRemoteOrigin alone, same reasoning as
+        // PlayerDelete_Click's own fix.
+        if (_currentPlayerFile is null && _currentPlayerRemoteOrigin is null)
             return;
         _isPlayerRenaming = true;
-        FileInfo file = _currentPlayerFile;
+        FileInfo? file = _currentPlayerFile;
+        string currentName = file?.Name ?? Path.GetFileName(_currentPlayerRemoteOrigin!.Value.RelativePath);
         bool finished = false;
 
-        var stack = (StackPanel)PlayerTitle.Parent;
+        if (PlayerTitle.Parent is not Panel stack)
+            return;
         int index = stack.Children.IndexOf(PlayerTitle);
+        if (index < 0)
+            return;
 
         var box = new TextBox
         {
-            Text = Path.GetFileNameWithoutExtension(file.Name),
+            Text = Path.GetFileNameWithoutExtension(currentName),
             FontWeight = FontWeights.Bold,
             FontSize = 13,
             MinWidth = 120,
@@ -7757,40 +8276,71 @@ public partial class MainWindow : Window
             _isPlayerRenaming = false;
             _cancelPlayerRename = null;
             string newName = box.Text.Trim();
-            if (!string.IsNullOrEmpty(newName) && newName != Path.GetFileNameWithoutExtension(file.Name))
+            if (string.IsNullOrEmpty(newName) || newName == Path.GetFileNameWithoutExtension(currentName))
             {
-                // Captured before OpenInPlayer below clears it (same
-                // reasoning as RunTrimAsync's own remoteOrigin capture).
-                (string RelativePath, string DeviceId)? remoteOrigin = _currentPlayerRemoteOrigin;
-                try
-                {
-                    StopPlayerPlayback();
-                    string newPath = Path.Combine(file.DirectoryName!, newName + file.Extension);
-                    File.Move(file.FullName, newPath);
-                    _currentPlayerFile = new FileInfo(newPath);
-                    PlayerTitle.Text = Path.GetFileNameWithoutExtension(_currentPlayerFile.Name);
-                    stack.Children.Remove(box);
-                    stack.Children.Insert(index, PlayerTitle);
-                    OpenInPlayer(_currentPlayerFile);
+                RevertBox();
+                return;
+            }
 
-                    if (remoteOrigin is (string relPath, string deviceId))
-                    {
-                        // Restore what OpenInPlayer just cleared, then mirror
-                        // the rename to the real clip on the stream PC --
-                        // see HandleRenameClip.
-                        _currentPlayerRemoteOrigin = remoteOrigin;
-                        (bool success, string? error, string? newRelPath) = await _pairing.RenameRemoteClipAsync(relPath, newName);
-                        if (success)
-                            _currentPlayerRemoteOrigin = (newRelPath ?? relPath, deviceId);
-                        else
-                            MessageBox.Show(this, $"Renamed locally, but couldn't rename on {_settings.PairedPeerName}'s PC: {error}", "Backtrack");
-                    }
-                    return;
-                }
-                catch (Exception ex)
+            if (file is null)
+            {
+                // Pure streaming -- no local file to move at all, straight to
+                // the transmitter's own rename (HandleRenameClip), same as
+                // Delete's remote-only path. Playback itself keeps running
+                // uninterrupted throughout (no StopPlayerPlayback/OpenInPlayer
+                // needed -- the underlying stream connection doesn't care
+                // what the file's called), just the title and the tracked
+                // relative path update once it's confirmed.
+                (string relPath, string deviceId) = _currentPlayerRemoteOrigin!.Value;
+                stack.Children.Remove(box);
+                stack.Children.Insert(index, PlayerTitle);
+                (bool success, string? error, string? newRelPath) = await _pairing.RenameRemoteClipAsync(relPath, newName);
+                if (success)
                 {
-                    MessageBox.Show(this, $"Couldn't rename: {ex.Message}", "Backtrack");
+                    string finalRelPath = newRelPath ?? relPath;
+                    _currentPlayerRemoteOrigin = (finalRelPath, deviceId);
+                    PlayerTitle.Text = newName;
+                    if (_currentStreamToken is not null)
+                        _remoteStreamServer.UpdateSessionPath(_currentStreamToken, finalRelPath);
                 }
+                else
+                {
+                    MessageBox.Show(this, $"Couldn't rename on {_settings.PairedPeerName}'s PC: {error}", "Backtrack");
+                }
+                return;
+            }
+
+            // Captured before OpenInPlayer below clears it (same
+            // reasoning as RunTrimAsync's own remoteOrigin capture).
+            (string RelativePath, string DeviceId)? remoteOrigin = _currentPlayerRemoteOrigin;
+            try
+            {
+                StopPlayerPlayback();
+                string newPath = Path.Combine(file.DirectoryName!, newName + file.Extension);
+                File.Move(file.FullName, newPath);
+                _currentPlayerFile = new FileInfo(newPath);
+                PlayerTitle.Text = Path.GetFileNameWithoutExtension(_currentPlayerFile.Name);
+                stack.Children.Remove(box);
+                stack.Children.Insert(index, PlayerTitle);
+                OpenInPlayer(_currentPlayerFile);
+
+                if (remoteOrigin is (string relPath2, string deviceId2))
+                {
+                    // Restore what OpenInPlayer just cleared, then mirror
+                    // the rename to the real clip on the stream PC --
+                    // see HandleRenameClip.
+                    _currentPlayerRemoteOrigin = remoteOrigin;
+                    (bool success, string? error, string? newRelPath) = await _pairing.RenameRemoteClipAsync(relPath2, newName);
+                    if (success)
+                        _currentPlayerRemoteOrigin = (newRelPath ?? relPath2, deviceId2);
+                    else
+                        MessageBox.Show(this, $"Renamed locally, but couldn't rename on {_settings.PairedPeerName}'s PC: {error}", "Backtrack");
+                }
+                return;
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(this, $"Couldn't rename: {ex.Message}", "Backtrack");
             }
             RevertBox();
         }
@@ -7798,15 +8348,22 @@ public partial class MainWindow : Window
 
     private void PlayerDelete_Click(object sender, RoutedEventArgs e)
     {
-        if (_currentPlayerFile is null)
+        // A streamed clip has no local FileInfo at all -- delete needs
+        // _currentPlayerRemoteOrigin alone, not both, or every remote
+        // delete during streaming would silently no-op (reported live as
+        // "trimming, deleting, renaming COMPLETELY broken remotely" --
+        // QueueRemoteDeleteWithUndo already accepts file: null below and
+        // was never actually the problem, this guard was).
+        if (_currentPlayerFile is null && _currentPlayerRemoteOrigin is null)
             return;
 
-        FileInfo file = _currentPlayerFile;
+        FileInfo? file = _currentPlayerFile;
         (string RelativePath, string DeviceId)? remoteOrigin = _currentPlayerRemoteOrigin;
+        string displayName = file?.Name ?? Path.GetFileName(remoteOrigin!.Value.RelativePath);
 
         string message = remoteOrigin is null
-            ? $"Are you sure you want to delete \"{file.Name}\"? This will send it to your recycle bin."
-            : $"Delete \"{file.Name}\"? This deletes both the cached copy and the original clip on {_settings.PairedPeerName}'s PC. The original is sent to its Recycle Bin.";
+            ? $"Are you sure you want to delete \"{displayName}\"? This will send it to your recycle bin."
+            : $"Delete \"{displayName}\"? This deletes the original clip on {_settings.PairedPeerName}'s PC (sent to its Recycle Bin there){(file is null ? "." : ", and the cached copy here.")}";
 
         ShowConfirmDialog(
             message,
@@ -7823,20 +8380,24 @@ public partial class MainWindow : Window
 
                 if (remoteOrigin is (string relPath, _))
                 {
-                    // This local file is just a downloaded cache copy, not
-                    // the real clip -- delete it outright right away (no
-                    // undo toast for IT specifically, nothing meaningful to
+                    // This local file (if any -- null while streaming) is
+                    // just a downloaded cache copy, not the real clip --
+                    // delete it outright right away (no undo toast for IT
+                    // specifically, nothing meaningful to
                     // undo about a cache copy), then run the actual remote
                     // delete through the same undo-toast flow the Gallery
                     // card's own remote delete uses. `file: null` since
                     // there's no RemoteGalleryFile handy here to also key a
                     // remote thumbnail-cache cleanup off of.
-                    try { File.Delete(file.FullName); } catch { /* best effort */ }
-                    QueueRemoteDeleteWithUndo(relPath, file.Name, file: null);
+                    if (file is not null)
+                    {
+                        try { File.Delete(file.FullName); } catch { /* best effort */ }
+                    }
+                    QueueRemoteDeleteWithUndo(relPath, displayName, file: null);
                 }
                 else
                 {
-                    QueueDeleteWithUndo(file);
+                    QueueDeleteWithUndo(file!); // remoteOrigin null means this is a genuinely local clip -- file is never null here
                 }
             });
     }
@@ -8248,11 +8809,43 @@ public partial class MainWindow : Window
     /// </summary>
     private async Task RunTrimAsync(bool replaceOriginal)
     {
-        if (_libVlc is null || _currentPlayerFile is null || _trimStart is null || _trimEnd is null || _trimEnd <= _trimStart)
+        if (_trimStart is null || _trimEnd is null || _trimEnd <= _trimStart)
         {
             MessageBox.Show(this, "Set both a start and end point first (end must be after start).", "Backtrack");
             return;
         }
+
+        // Streaming (no local file at all) -- runs entirely on the
+        // transmitter's own side instead, no clip bytes cross the network
+        // in either direction. See TrimRemoteClipAsync/HandleTrimClipAsync's
+        // own comments for why. This used to just silently do nothing
+        // (blocked by the old _currentPlayerFile is null check above),
+        // reported live as "trimming COMPLETELY broken remotely".
+        if (_currentPlayerFile is null)
+        {
+            if (_currentPlayerRemoteOrigin is not null)
+            {
+                await RunRemoteTrimAsync(replaceOriginal);
+                return;
+            }
+
+            // Both null -- neither a local file NOR a tracked remote origin.
+            // Used to silently return here with zero feedback at all (no
+            // toast, no error, nothing), which is indistinguishable from
+            // Trim just not working -- reported live as exactly that
+            // ("it just doesn't work"). Showing this explicitly, and
+            // logging it, is what actually tells us whether THIS is the
+            // real failure (a state-tracking bug losing the remote origin
+            // somewhere) versus the request genuinely reaching the
+            // transmitter and failing there -- see HandleTrimClipAsync's
+            // own logging for that side.
+            AppLog.Write("[trim_clip] RunTrimAsync: both _currentPlayerFile and _currentPlayerRemoteOrigin are null -- nothing to trim, this is the actual failure");
+            MessageBox.Show(this, "Nothing to trim -- this clip isn't tracked as either a local file or a remote clip right now. Try reopening it.", "Backtrack");
+            return;
+        }
+
+        if (_libVlc is null)
+            return;
 
         FileInfo sourceFile = _currentPlayerFile;
         TimeSpan start = _trimStart.Value;
@@ -8301,6 +8894,7 @@ public partial class MainWindow : Window
                 File.Delete(tempOut);
                 _currentPlayerFile = new FileInfo(sourceFile.FullName);
                 OpenInPlayer(_currentPlayerFile);
+                _toastOverlay.ShowTrimSaved(sourceFile.FullName);
 
                 if (remoteOrigin is (string relPath, _))
                 {
@@ -8315,35 +8909,25 @@ public partial class MainWindow : Window
             }
             else
             {
-                string newName = $"{Path.GetFileNameWithoutExtension(sourceFile.Name)} (trimmed){sourceFile.Extension}";
-                string destPath = Path.Combine(sourceFile.DirectoryName!, newName);
-                int i = 2;
-                while (File.Exists(destPath))
-                {
-                    destPath = Path.Combine(sourceFile.DirectoryName!, $"{Path.GetFileNameWithoutExtension(sourceFile.Name)} (trimmed {i}){sourceFile.Extension}");
-                    i++;
-                }
+                string destPath = GetTrimmedDestinationPath(sourceFile.DirectoryName!, sourceFile.Name);
                 File.Copy(tempOut, destPath, overwrite: false);
                 File.Delete(tempOut);
                 _ = RefreshGalleryCountAsync();
-                OpenInPlayer(sourceFile);
+                var newFileInfo = new FileInfo(destPath);
+                _currentPlayerFile = newFileInfo;
+                OpenInPlayer(newFileInfo);
+                _toastOverlay.ShowTrimSaved(destPath);
 
                 if (remoteOrigin is (string relPath, _))
                 {
-                    // Still viewing the same original remote clip (this
-                    // branch reopens sourceFile unchanged, not the new
-                    // trimmed copy) -- restore what OpenInPlayer just
-                    // cleared, then send the NEW trimmed copy to the stream
-                    // PC as an additional clip alongside the original
-                    // (overwrite:false lets HandlePutClipAsync dedupe the
-                    // name server-side if needed, same as this already did
-                    // locally just above).
-                    _currentPlayerRemoteOrigin = remoteOrigin;
                     int lastSlash = relPath.LastIndexOf('/');
                     string folderPrefix = lastSlash < 0 ? "" : relPath[..lastSlash];
                     string remoteDestRelPath = folderPrefix.Length == 0 ? Path.GetFileName(destPath) : $"{folderPrefix}/{Path.GetFileName(destPath)}";
+                    _currentPlayerRemoteOrigin = (remoteDestRelPath, _settings.PairedPeerDeviceId ?? "");
                     TrimStatusText.Text = $"Sending to {_settings.PairedPeerName}'s PC...";
-                    (bool upSuccess, string? upError, _) = await _pairing.UploadRemoteClipAsync(remoteDestRelPath, destPath, overwrite: false);
+                    (bool upSuccess, string? upError, string? actualRemotePath) = await _pairing.UploadRemoteClipAsync(remoteDestRelPath, destPath, overwrite: false);
+                    if (actualRemotePath is not null)
+                        _currentPlayerRemoteOrigin = (actualRemotePath, _settings.PairedPeerDeviceId ?? "");
                     if (!upSuccess)
                         MessageBox.Show(this, $"Trimmed locally, but couldn't send the new clip to {_settings.PairedPeerName}'s PC: {upError}", "Backtrack");
                 }
@@ -8368,6 +8952,231 @@ public partial class MainWindow : Window
             _isTrimming = false;
             TrimReplaceButton.IsEnabled = true;
             TrimSaveNewButton.IsEnabled = true;
+        }
+    }
+
+    /// <summary>
+    /// The streaming counterpart of RunTrimAsync's local logic -- sends
+    /// trim_clip and lets the transmitter do the actual encode against its
+    /// own real file (see TrimRemoteClipAsync), so this never downloads or
+    /// uploads any clip bytes, just the one request/response. Only
+    /// meaningfully different from the local path in what happens
+    /// afterward: a "replace" changes the exact file this Player is
+    /// actively streaming out from under itself, so rather than try to
+    /// reload that stream in place mid-playback (a real race against
+    /// whatever's already buffered), this just returns to Gallery and lets
+    /// reopening the clip fresh pick up the new, genuinely shorter result.
+    /// "Save as new" leaves the original (and this Player's current
+    /// playback) untouched, so nothing needs to restart at all.
+    /// </summary>
+    private async Task RunRemoteTrimAsync(bool replaceOriginal)
+    {
+        (string relPath, string _) = _currentPlayerRemoteOrigin!.Value;
+        TimeSpan start = _trimStart!.Value;
+        TimeSpan end = _trimEnd!.Value;
+        AppLog.Write($"[trim_clip] RunRemoteTrimAsync entered: path='{relPath}' {start}-{end} replace={replaceOriginal}");
+
+        if (replaceOriginal)
+        {
+            bool? userConfirmed = null;
+            ShowConfirmDialog("Replace the original clip with this trimmed version? This can't be undone.", "Replace", c => userConfirmed = c);
+            while (!userConfirmed.HasValue && IsVisible)
+                await Task.Delay(50);
+            if (userConfirmed != true)
+            {
+                AppLog.Write("[trim_clip] replace not confirmed -- aborted");
+                return;
+            }
+
+            // The clip currently STREAMING right now holds a real open read
+            // handle on the transmitter's own copy of this file (see
+            // StreamFileResponseAsync) for as long as playback keeps going --
+            // trim_clip's own final overwrite on that PC needs to WRITE to
+            // that exact file, which a still-open reader blocks outright,
+            // not just briefly. Stopping playback here (same idea as
+            // RunTrimAsync's local path already does before its own export)
+            // is what actually lets that read handle go on the transmitter's
+            // side. Not needed for "save as new" -- that writes a brand new
+            // file, and a second concurrent READ of the original doesn't
+            // conflict with the stream's own read.
+            //
+            // DetachPlayerVideo()+DisposeVlcPlayerAsync(), NOT the plain
+            // StopPlayerPlayback() the local path uses -- that one blocks the
+            // UI thread on _vlcPlayer.Dispose() (see DisposeVlcPlayerSync's
+            // own comment on exactly this), which is fine for a local file
+            // but confirmed live to hang the WHOLE APP ("not responding")
+            // here specifically: disposing a MediaPlayer mid network-stream
+            // took long enough to be a real, visible freeze, not the near-
+            // instant local-file teardown that call was written for.
+            DetachPlayerVideo();
+            DisposeVlcPlayerAsync();
+        }
+
+        _isTrimming = true;
+        TrimReplaceButton.IsEnabled = false;
+        TrimSaveNewButton.IsEnabled = false;
+        TrimStatusText.Text = $"Trimming on {_settings.PairedPeerName}'s PC...";
+
+        try
+        {
+            (bool success, string? error, string? newPath) = await _pairing.TrimRemoteClipAsync(relPath, start, end, replaceOriginal);
+            AppLog.Write(success ? "[trim_clip] RunRemoteTrimAsync: succeeded" : $"[trim_clip] RunRemoteTrimAsync: failed -- {error}");
+            if (!success)
+            {
+                MessageBox.Show(this, $"Couldn't trim on {_settings.PairedPeerName}'s PC: {error}", "Backtrack");
+                return;
+            }
+
+            TrimPanel.Visibility = Visibility.Collapsed;
+            PlayerTransportRow.Visibility = Visibility.Visible;
+            MoveTransportControlsForTrim(intoTrimRow: false);
+
+            string trimDisplayPath = newPath is not null
+                ? $"{_settings.PairedPeerName}: {newPath}"
+                : $"{_settings.PairedPeerName}'s PC";
+            _toastOverlay.ShowTrimSaved(trimDisplayPath);
+
+            if (replaceOriginal)
+            {
+                StopPlayerPlayback();
+                ShowScreen(Screen.Gallery);
+                LoadGallery();
+                RefreshRecentClipsOverlay();
+            }
+            else
+            {
+                _ = RefreshGalleryCountAsync();
+                if (newPath is not null)
+                {
+                    var remoteFile = new RemoteGalleryFile(
+                        Name: Path.GetFileName(newPath),
+                        Size: 0,
+                        Modified: DateTime.UtcNow
+                    );
+                    OpenRemoteClipStreaming(newPath, remoteFile);
+                }
+            }
+        }
+        finally
+        {
+            _isTrimming = false;
+            TrimReplaceButton.IsEnabled = true;
+            TrimSaveNewButton.IsEnabled = true;
+        }
+    }
+
+    /// <summary>
+    /// Headless counterpart to RunTrimAsync -- reused ExportTrim directly, no
+    /// dialogs/UI (the confirm-before-replace step already happened on the
+    /// RECEIVER side, before it even sent the request; see
+    /// PlayerTrimReplace/SaveNew_Click's own remote branch), since this runs
+    /// in response to a trim_clip request from a paired PC, off this app's
+    /// own UI thread. Same "(trimmed)"/"(trimmed 2)" dedup naming as the
+    /// local save-as-new path, for the exact same reason: two remote trims
+    /// of the same clip shouldn't silently clobber each other.
+    /// </summary>
+    private async Task<(bool Success, string? Error, string? NewFileName)> TrimClipForRemoteAsync(string fullPath, double startSeconds, double endSeconds, bool replaceOriginal)
+    {
+        var file = new FileInfo(fullPath);
+        var start = TimeSpan.FromSeconds(startSeconds);
+        var end = TimeSpan.FromSeconds(endSeconds);
+        string tempOut = Path.Combine(Path.GetTempPath(), $"cc_trim_{Guid.NewGuid():N}{file.Extension}");
+        AppLog.Write($"[trim_clip] TrimClipForRemoteAsync: '{fullPath}' {start}-{end} replace={replaceOriginal}, exporting to '{tempOut}'");
+
+        try
+        {
+            await Task.Run(() => ExportTrim(fullPath, tempOut, start, end));
+
+            // The single most useful line if this is silently doing nothing --
+            // ExportTrim itself has no return value, so this is the only
+            // direct evidence of whether the actual libvlc encode produced
+            // real output at all before anything downstream (the copy,
+            // renaming, etc.) even runs.
+            long tempOutSize = File.Exists(tempOut) ? new FileInfo(tempOut).Length : -1;
+            AppLog.Write($"[trim_clip] ExportTrim finished -- tempOut {(tempOutSize < 0 ? "does not exist" : $"is {tempOutSize} bytes")}");
+            if (tempOutSize <= 0)
+                return (false, "The trim produced no output file (libvlc export failed silently) -- check this PC's own log around ExportTrim for details.", null);
+
+            if (replaceOriginal)
+            {
+                // The original is a real, actively-managed clip file --
+                // something else on this PC (this same Backtrack's own
+                // thumbnail generation, antivirus briefly scanning it, etc.)
+                // can genuinely have it open for a moment. Confirmed live:
+                // "The process cannot access the file ... because it is
+                // being used by another process", with zero retry before
+                // this, killing an otherwise-successful trim over a
+                // transient lock. Same bounded-retry reasoning as
+                // ApplySelfUpdateAsync's own robocopy step.
+                await CopyWithRetryAsync(tempOut, fullPath, overwrite: true);
+                File.Delete(tempOut);
+                AppLog.Write($"[trim_clip] replaced '{fullPath}' in place");
+                return (true, null, file.Name);
+            }
+
+            string newName = GetTrimmedFileName(file.Name, name => File.Exists(Path.Combine(file.DirectoryName!, name)));
+            string destPath = Path.Combine(file.DirectoryName!, newName);
+            await CopyWithRetryAsync(tempOut, destPath, overwrite: false);
+            File.Delete(tempOut);
+            AppLog.Write($"[trim_clip] saved as new file '{destPath}'");
+            return (true, null, newName);
+        }
+        catch (Exception ex)
+        {
+            AppLog.WriteError("[trim_clip] TrimClipForRemoteAsync threw", ex);
+            try { File.Delete(tempOut); } catch { /* best effort */ }
+            return (false, ex.Message, null);
+        }
+    }
+
+    /// <summary>
+    /// Computes a clean filename for a trimmed clip:
+    /// 1st trim: "{base} (trimmed)"
+    /// 2nd trim / collision: "{base} (trimmed) (1)"
+    /// 3rd trim / collision: "{base} (trimmed) (2)"
+    /// Strips any existing "(trimmed)", "(trimmed) (N)", or "(trimmed N)" suffix so
+    /// repeatedly trimming an already-trimmed clip stacks numbers "(trimmed) (1)", "(trimmed) (2)"
+    /// instead of repeating "(trimmed) (trimmed) (trimmed)".
+    /// </summary>
+    private static string GetTrimmedFileName(string originalFileName, Func<string, bool> fileExists)
+    {
+        string nameWithoutExt = Path.GetFileNameWithoutExtension(originalFileName);
+        string ext = Path.GetExtension(originalFileName);
+
+        string baseName = Regex.Replace(nameWithoutExt, @"(\s*\(trimmed(?:\s+\d+)?\)\s*(\(\d+\))?)+$", "", RegexOptions.IgnoreCase).TrimEnd();
+        if (string.IsNullOrEmpty(baseName))
+            baseName = nameWithoutExt;
+
+        string candidateName = $"{baseName} (trimmed){ext}";
+        if (!fileExists(candidateName))
+            return candidateName;
+
+        int i = 1;
+        while (true)
+        {
+            candidateName = $"{baseName} (trimmed) ({i}){ext}";
+            if (!fileExists(candidateName))
+                return candidateName;
+            i++;
+        }
+    }
+
+    private static string GetTrimmedDestinationPath(string directory, string originalFileName) =>
+        Path.Combine(directory, GetTrimmedFileName(originalFileName, name => File.Exists(Path.Combine(directory, name))));
+
+    private static async Task CopyWithRetryAsync(string sourcePath, string destPath, bool overwrite, int attempts = 5)
+    {
+        for (int attempt = 1; ; attempt++)
+        {
+            try
+            {
+                File.Copy(sourcePath, destPath, overwrite);
+                return;
+            }
+            catch (IOException) when (attempt < attempts)
+            {
+                await Task.Delay(TimeSpan.FromSeconds(1));
+            }
         }
     }
 
@@ -8457,6 +9266,9 @@ public partial class MainWindow : Window
         BufferDurationSlider.Value = _settings.ReplayBufferMinutes;
         RefreshBufferDurationUi();
 
+        BuffersSection.Visibility = _settings.ObsIsRemote ? Visibility.Collapsed : Visibility.Visible;
+        RecordingsSection.Visibility = _settings.ObsIsRemote ? Visibility.Collapsed : Visibility.Visible;
+
         ObsRemoteToggle.IsChecked = _settings.ObsIsRemote;
         ObsRemoteFields.Visibility = _settings.ObsIsRemote ? Visibility.Visible : Visibility.Collapsed;
         ObsHostBox.Text = _settings.ObsHost;
@@ -8464,6 +9276,7 @@ public partial class MainWindow : Window
         ObsPasswordBox.Password = _settings.ObsRemotePassword;
 
         ShowDisclaimerToggle.IsChecked = _settings.ShowDisclaimer;
+        DisableAudioCuesToggle.IsChecked = _settings.DisableAudioCues;
         ShowStatusIndicatorToggle.IsChecked = _settings.ShowStatusIndicator;
         // Same unsubscribe/resubscribe reasoning as StatusIndicatorOrientationSelector
         // just below -- a programmatic SelectedIndex assignment fires
@@ -8507,8 +9320,19 @@ public partial class MainWindow : Window
         // the case where Settings is opened fresh with dev mode already on,
         // not just the moment the dev mode toggle itself gets clicked.
         DisableBacktrackAutoUpdateToggle.IsEnabled = !_settings.DeveloperModeEnabled;
-        DisablePluginAutoUpdateToggle.IsChecked = _settings.DisablePluginAutoUpdate;
+
+        // When OBS is remote, local OBS plugin auto-updates are locked enabled
+        // (checked + disabled/grayed out), same pattern as Developer Mode locking
+        // Backtrack auto-updates above.
+        if (_settings.ObsIsRemote && !_settings.DisablePluginAutoUpdate)
+        {
+            _settings.DisablePluginAutoUpdate = true;
+            _settings.Save();
+        }
+        DisablePluginAutoUpdateToggle.IsChecked = _settings.ObsIsRemote || _settings.DisablePluginAutoUpdate;
+        DisablePluginAutoUpdateToggle.IsEnabled = !_settings.ObsIsRemote;
         HotkeyCaptureButton.Content = FormatHotkey((GlobalHotkey.Modifiers)_settings.HotkeyModifiers, (uint)_settings.HotkeyVirtualKey);
+        CancelRecordHotkeyCaptureButton.Content = FormatHotkey((GlobalHotkey.Modifiers)_settings.CancelRecordHotkeyModifiers, (uint)_settings.CancelRecordHotkeyVirtualKey);
 
         LoadDisplaySelector();
 
@@ -8976,6 +9800,14 @@ public partial class MainWindow : Window
             _settings.ObsRemotePassword = ObsPasswordBox.Password;
             _settings.Save();
 
+            BuffersSection.Visibility = remote ? Visibility.Collapsed : Visibility.Visible;
+            RecordingsSection.Visibility = remote ? Visibility.Collapsed : Visibility.Visible;
+            if (!remote)
+            {
+                _ = LoadBufferVisibilityUi();
+                _ = LoadRecordFolderUi();
+            }
+
             (string url, string? password, _serverEnabledAtStartup) = ResolveObsConnection();
             _obs.Reconfigure(url, password);
             _ = RefreshStatusAsync();
@@ -8990,16 +9822,13 @@ public partial class MainWindow : Window
 
     /// <summary>
     /// RAM disk is the one setting that's genuinely local to whichever PC runs
-    /// OBS -- unlike buffer duration/hidden buffers, which already work fine
-    /// remotely since they're just obs-websocket calls. Greys out the local
-    /// section (mounting a drive here would be a silent no-op if OBS is remote)
-    /// and shows the transmitter-control panel instead.
+    /// OBS. Hides the local section when OBS is remote and shows the transmitter-control
+    /// panel instead.
     /// </summary>
     private void RefreshRamDiskRemoteGating()
     {
         bool remote = _settings.ObsIsRemote;
-        RamDiskRemoteNotice.Visibility = remote ? Visibility.Visible : Visibility.Collapsed;
-        LocalRamDiskSection.IsEnabled = !remote;
+        LocalRamDiskSection.Visibility = remote ? Visibility.Collapsed : Visibility.Visible;
         RemoteRamDiskSection.Visibility = remote ? Visibility.Visible : Visibility.Collapsed;
 
         if (remote)
@@ -9070,7 +9899,21 @@ public partial class MainWindow : Window
         RemotePluginSection.Visibility = remote ? Visibility.Visible : Visibility.Collapsed;
 
         if (remote)
+        {
+            if (!_settings.DisablePluginAutoUpdate)
+            {
+                _settings.DisablePluginAutoUpdate = true;
+                _settings.Save();
+            }
+            DisablePluginAutoUpdateToggle.IsChecked = true;
+            DisablePluginAutoUpdateToggle.IsEnabled = false;
             RefreshRemotePluginStatusText();
+        }
+        else
+        {
+            DisablePluginAutoUpdateToggle.IsChecked = _settings.DisablePluginAutoUpdate;
+            DisablePluginAutoUpdateToggle.IsEnabled = true;
+        }
     }
 
     private void RefreshRemotePluginStatusText()
@@ -9346,6 +10189,12 @@ public partial class MainWindow : Window
             _disclaimer.Hide();
         else if (IsVisible)
             _disclaimer.Show();
+    }
+
+    private void DisableAudioCuesToggle_Click(object sender, RoutedEventArgs e)
+    {
+        _settings.DisableAudioCues = DisableAudioCuesToggle.IsChecked == true;
+        _settings.Save();
     }
 
     private void DisableBacktrackAutoUpdateToggle_Click(object sender, RoutedEventArgs e)
@@ -9642,18 +10491,39 @@ public partial class MainWindow : Window
 
     private static string FormatHotkey(GlobalHotkey.Modifiers modifiers, uint virtualKey)
     {
+        if (virtualKey == 0)
+            return "(unbound)";
         var parts = new List<string>();
         if (modifiers.HasFlag(GlobalHotkey.Modifiers.Control)) parts.Add("Ctrl");
         if (modifiers.HasFlag(GlobalHotkey.Modifiers.Alt)) parts.Add("Alt");
         if (modifiers.HasFlag(GlobalHotkey.Modifiers.Shift)) parts.Add("Shift");
         if (modifiers.HasFlag(GlobalHotkey.Modifiers.Win)) parts.Add("Win");
-        parts.Add(((char)virtualKey).ToString());
+
+        string keyStr = virtualKey switch
+        {
+            186 => ";",
+            187 => "=",
+            188 => ",",
+            189 => "-",
+            190 => ".",
+            191 => "/",
+            192 => "`",
+            219 => "[",
+            220 => "\\",
+            221 => "]",
+            222 => "'",
+            _ => (virtualKey >= 'A' && virtualKey <= 'Z') || (virtualKey >= '0' && virtualKey <= '9')
+                ? ((char)virtualKey).ToString()
+                : KeyInterop.KeyFromVirtualKey((int)virtualKey).ToString()
+        };
+
+        parts.Add(keyStr);
         return string.Join("+", parts);
     }
 
     private void HotkeyCaptureButton_Click(object sender, RoutedEventArgs e)
     {
-        if (_capturingHotkey)
+        if (_capturingHotkey || _capturingCancelRecordHotkey)
             return;
 
         _capturingHotkey = true;
@@ -9692,7 +10562,7 @@ public partial class MainWindow : Window
         {
             if (_hotkey is null)
             {
-                _hotkey = new GlobalHotkey(this, modifiers, virtualKey);
+                _hotkey = new GlobalHotkey(this, modifiers, virtualKey, id: OpenOverlayHotkeyId);
                 _hotkey.Pressed += () => Dispatcher.Invoke(ToggleVisible);
             }
             else
@@ -9722,12 +10592,94 @@ public partial class MainWindow : Window
             HotkeyCaptureButton.Content = FormatHotkey((GlobalHotkey.Modifiers)_settings.HotkeyModifiers, (uint)_settings.HotkeyVirtualKey);
     }
 
+    private void CancelRecordHotkeyCaptureButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_capturingCancelRecordHotkey || _capturingHotkey)
+            return;
+
+        _capturingCancelRecordHotkey = true;
+        CancelRecordHotkeyCaptureButton.Content = "Press a key combo (Esc to clear)...";
+        PreviewKeyDown += CancelRecordHotkeyCapture_PreviewKeyDown;
+    }
+
+    private void CancelRecordHotkeyCapture_PreviewKeyDown(object sender, KeyEventArgs e)
+    {
+        Key key = e.Key == Key.System ? e.SystemKey : e.Key;
+
+        if (key is Key.LeftCtrl or Key.RightCtrl or Key.LeftAlt or Key.RightAlt or Key.LeftShift or Key.RightShift or Key.LWin or Key.RWin)
+        {
+            e.Handled = true;
+            return;
+        }
+
+        if (key == Key.Escape)
+        {
+            e.Handled = true;
+            _cancelRecordHotkey?.Dispose();
+            _cancelRecordHotkey = null;
+            _settings.CancelRecordHotkeyModifiers = 0;
+            _settings.CancelRecordHotkeyVirtualKey = 0;
+            _settings.Save();
+            CancelRecordHotkeyCaptureButton.Content = "(unbound)";
+            EndCancelRecordHotkeyCapture(cancelled: false);
+            return;
+        }
+
+        e.Handled = true;
+
+        GlobalHotkey.Modifiers modifiers = 0;
+        if (Keyboard.Modifiers.HasFlag(ModifierKeys.Control)) modifiers |= GlobalHotkey.Modifiers.Control;
+        if (Keyboard.Modifiers.HasFlag(ModifierKeys.Alt)) modifiers |= GlobalHotkey.Modifiers.Alt;
+        if (Keyboard.Modifiers.HasFlag(ModifierKeys.Shift)) modifiers |= GlobalHotkey.Modifiers.Shift;
+        if (Keyboard.Modifiers.HasFlag(ModifierKeys.Windows)) modifiers |= GlobalHotkey.Modifiers.Win;
+
+        uint virtualKey = (uint)KeyInterop.VirtualKeyFromKey(key);
+
+        try
+        {
+            if (_cancelRecordHotkey is null)
+            {
+                _cancelRecordHotkey = new GlobalHotkey(this, modifiers, virtualKey, id: CancelRecordHotkeyId);
+                _cancelRecordHotkey.Pressed += () => Dispatcher.Invoke(async () =>
+                {
+                    await CancelActiveRecordingsAsync();
+                    await RefreshStatusAsync();
+                });
+            }
+            else
+            {
+                _cancelRecordHotkey.Rebind(modifiers, virtualKey);
+            }
+
+            _settings.CancelRecordHotkeyModifiers = (int)modifiers;
+            _settings.CancelRecordHotkeyVirtualKey = (int)virtualKey;
+            _settings.Save();
+            CancelRecordHotkeyCaptureButton.Content = FormatHotkey(modifiers, virtualKey);
+        }
+        catch (InvalidOperationException ex)
+        {
+            MessageBox.Show(this, ex.Message, "Backtrack");
+            CancelRecordHotkeyCaptureButton.Content = FormatHotkey((GlobalHotkey.Modifiers)_settings.CancelRecordHotkeyModifiers, (uint)_settings.CancelRecordHotkeyVirtualKey);
+        }
+
+        EndCancelRecordHotkeyCapture(cancelled: false);
+    }
+
+    private void EndCancelRecordHotkeyCapture(bool cancelled)
+    {
+        PreviewKeyDown -= CancelRecordHotkeyCapture_PreviewKeyDown;
+        _capturingCancelRecordHotkey = false;
+        if (cancelled)
+            CancelRecordHotkeyCaptureButton.Content = FormatHotkey((GlobalHotkey.Modifiers)_settings.CancelRecordHotkeyModifiers, (uint)_settings.CancelRecordHotkeyVirtualKey);
+    }
+
     protected override void OnClosed(EventArgs e)
     {
         _trayManager.Dispose();
         StopPlayerPlayback();
         _libVlc?.Dispose();
         _hotkey?.Dispose();
+        _cancelRecordHotkey?.Dispose();
         // Tied to this app's own lifetime, not left mounted independent of it --
         // see InitializeRamDiskAsync. No-op if it was never mounted.
         if (_settings.RamDiskEnabled)

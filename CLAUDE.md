@@ -324,3 +324,13 @@ and let Backtrack's own auto-updater install it.
   they had been. If a fix required real investigation and generalizes
   beyond the one line it was applied to, add it here in the same turn,
   don't wait to be asked.
+
+## Cancel Recording & OBS Vendor Bridge Lessons
+
+- **Cancelling in-progress recordings**:
+  - Main recordings write directly to disk; when cancelled, `_cancellingMainRecording` flags the incoming stop event to suppress the "Recording Saved" toast and immediately recycles the partial output file via `RecycleBin.Delete` (with `File.Delete` fallback and retry).
+  - Source Record filters cancel via `cancel_record_row` vendor request on `obs-replay-slider`'s `replay-buffer-slider` vendor (which flips `record_mode` off and deletes the output file) and tracks `_cancelledRecordRows` in Backtrack to prevent duplicate toasts.
+  - In-flight Replay Buffer trims cancel via `cancel_save` vendor request, aborting trim notifications and deleting the generated clip file.
+- **Never touch the user's running OBS**:
+  - Never run `taskkill` on `obs64.exe` or overwrite plugin binaries under `C:\Program Files\obs-studio\obs-plugins` while OBS is active. New plugin builds are built via GitHub CI and installed by Backtrack's auto-updater or by the user on next restart.
+

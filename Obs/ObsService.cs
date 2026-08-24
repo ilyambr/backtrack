@@ -594,6 +594,23 @@ public sealed class ObsService
         });
     }
 
+    public async Task CancelRecordRowAsync(string key)
+    {
+        try
+        {
+            await _client.RequestAsync("CallVendorRequest", new Dictionary<string, object?>
+            {
+                ["vendorName"] = "replay-buffer-slider",
+                ["requestType"] = "cancel_record_row",
+                ["requestData"] = new Dictionary<string, object?> { ["key"] = key },
+            });
+        }
+        catch
+        {
+            await StopRecordRowAsync(key);
+        }
+    }
+
     public async Task SaveReplayRowAsync(string key)
     {
         await _client.RequestAsync("CallVendorRequest", new Dictionary<string, object?>
@@ -602,6 +619,20 @@ public sealed class ObsService
             ["requestType"] = "save_row",
             ["requestData"] = new Dictionary<string, object?> { ["key"] = key },
         });
+    }
+
+    public async Task CancelReplayRowSaveAsync(string key)
+    {
+        try
+        {
+            await _client.RequestAsync("CallVendorRequest", new Dictionary<string, object?>
+            {
+                ["vendorName"] = "replay-buffer-slider",
+                ["requestType"] = "cancel_save",
+                ["requestData"] = new Dictionary<string, object?> { ["key"] = key },
+            });
+        }
+        catch { }
     }
 
     /// <summary>Needs the set-row-length bridge PR merged into the plugin; older builds will just error.</summary>

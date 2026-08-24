@@ -514,7 +514,7 @@
                         <ColumnDefinition/>
                     </Grid.ColumnDefinitions>
 
-                    <Button Grid.Column="0" x:Name="RecordTile" Style="{StaticResource TileButton}" Click="RecordTile_Click">
+                    <Button Grid.Column="0" x:Name="RecordTile" Style="{StaticResource TileButton}" Click="RecordTile_Click" MouseRightButtonUp="RecordTile_MouseRightButtonUp">
                         <StackPanel>
                             <Grid Width="20" Height="20" Margin="0,0,0,6" HorizontalAlignment="Center">
                                 <Ellipse x:Name="RecordDot" Width="14" Height="14" Fill="{DynamicResource Text1}"
@@ -1099,6 +1099,8 @@
                               PreviewMouseDown="SettingsScrollHost_PreviewMouseDown"
                               PreviewMouseUp="SettingsScrollHost_PreviewMouseUp">
                     <StackPanel Margin="0,0,10,0">
+                        <!-- 1. GENERAL -->
+                        <TextBlock Text="GENERAL" Style="{StaticResource SettingsSectionHeader}" Margin="0,4,0,10"/>
                         <Border Style="{StaticResource SettingsRow}" BorderThickness="0">
                             <Grid>
                                 <Grid.ColumnDefinitions>
@@ -1113,51 +1115,23 @@
                                           DisplayMemberPath="Name" SelectedValuePath="DeviceName" SelectionChanged="DisplaySelector_SelectionChanged"/>
                             </Grid>
                         </Border>
-                        <TextBlock Text="APPEARANCE" Style="{StaticResource SettingsSectionHeader}" Margin="0,4,0,10"/>
                         <Border Style="{StaticResource SettingsRow}" BorderThickness="0">
                             <StackPanel>
                                 <TextBlock Text="Theme" FontSize="13" FontWeight="Bold" Foreground="{DynamicResource Text0}"/>
                                 <TextBlock Text="Applies to the HUD and every small overlay window." FontSize="11" Foreground="{DynamicResource Text2}" Margin="0,3,0,14" TextWrapping="Wrap"/>
-                                <!-- However many themes ThemeManager.DiscoverThemes finds (122px each
-                                     + margins), which can run wider than the settings panel once there
-                                     are more than a handful: horizontal drag-to-scroll
-                                     (ThemeSwatchesScroll_PreviewMouseXxx in code-behind) rather than a
-                                     visible scrollbar, since these are meant to read as a single strip
-                                     of physical swatches you can slide, not a scrolling list. Wraps
-                                     BOTH the swatch row and its label row below in one ScrollViewer so
-                                     a drag moves them together, keeping each label under its own
-                                     swatch. -->
                                 <ScrollViewer x:Name="ThemeSwatchesScroll" HorizontalScrollBarVisibility="Hidden" VerticalScrollBarVisibility="Disabled"
                                               PreviewMouseLeftButtonDown="ThemeSwatchesScroll_PreviewMouseLeftButtonDown"
                                               PreviewMouseMove="ThemeSwatchesScroll_PreviewMouseMove"
                                               PreviewMouseLeftButtonUp="ThemeSwatchesScroll_PreviewMouseLeftButtonUp"
                                               MouseLeave="ThemeSwatchesScroll_PreviewMouseLeave">
-                                <StackPanel>
-                                <!-- Populated by BuildThemeSwatches() in code-behind, reading each
-                                     theme's own real ResourceDictionary (PanelBg/Accent/Text0/Text2)
-                                     rather than duplicating hex values here by hand: the previous
-                                     version hardcoded a literal color per swatch and it drifted out
-                                     of sync with Theme.YamiAcri.xaml's real palette the very first
-                                     time that file changed after the swatch was written, silently,
-                                     with nothing to catch it. Building from the real dictionaries
-                                     means a themes's swatch can't go stale independently of the
-                                     theme itself ever again. -->
-                                <StackPanel x:Name="ThemeSwatchesPanel" Orientation="Horizontal"/>
-                                <StackPanel x:Name="ThemeSwatchLabelsPanel" Orientation="Horizontal" Margin="0,8,0,0"/>
-                                </StackPanel>
+                                    <StackPanel>
+                                        <StackPanel x:Name="ThemeSwatchesPanel" Orientation="Horizontal"/>
+                                        <StackPanel x:Name="ThemeSwatchLabelsPanel" Orientation="Horizontal" Margin="0,8,0,0"/>
+                                    </StackPanel>
                                 </ScrollViewer>
-                                <!-- Drop a Theme.*.xaml file in here and it shows up above on next
-                                     Settings open: see ThemeManager.DiscoverThemes. Opens the exact
-                                     folder that reads from (ThemeManager.ThemesFolder), not a second
-                                     hardcoded path that could drift from it. -->
                                 <Button Content="Open themes folder" Style="{StaticResource FlatButton}" HorizontalAlignment="Left" Margin="0,10,0,0" Click="OpenThemesFolderButton_Click"/>
                             </StackPanel>
                         </Border>
-
-                        <TextBlock Text="GENERAL" Style="{StaticResource SettingsSectionHeader}" Margin="0,4,0,10"/>
-                        <!-- Check for updates and everything update-related lead GENERAL now,
-                             not buried below Launch with Windows/Show alpha disclaimer: it's
-                             the row people actually come here looking for first. -->
                         <Border Style="{StaticResource SettingsRow}" BorderThickness="0">
                             <StackPanel>
                                 <Grid>
@@ -1167,9 +1141,6 @@
                                     </Grid.ColumnDefinitions>
                                     <StackPanel VerticalAlignment="Center">
                                         <TextBlock Text="Check for updates" FontSize="13" FontWeight="Bold" Foreground="{DynamicResource Text0}"/>
-                                        <!-- Was "Checks automatically every hour", stale even before these two
-                                             toggles existed: there's no recurring re-check anymore, only once
-                                             at startup (see CheckForUpdatesAsync's own comment). -->
                                         <TextBlock Text="Checks automatically once, at startup" FontSize="11" Foreground="{DynamicResource Text2}" Margin="0,3,0,0"/>
                                     </StackPanel>
                                     <Button x:Name="CheckUpdatesButton" Grid.Column="1" Content="Check now" Style="{StaticResource FlatButton}" VerticalAlignment="Center" Click="CheckUpdatesButton_Click"/>
@@ -1185,10 +1156,6 @@
                                         <TextBlock Grid.Column="1" Text="Backtrack" FontSize="12" FontWeight="Bold" Foreground="{DynamicResource Text0}" VerticalAlignment="Center"/>
                                         <TextBlock x:Name="BacktrackVersionText" Grid.Column="2" Text="—" FontSize="11.5" Foreground="{DynamicResource Text2}" VerticalAlignment="Center"/>
                                     </Grid>
-                                    <!-- Grey, not hidden, when OBS is remote: these two read/write
-                                         C:\Program Files\obs-studio on THIS machine, which is the
-                                         wrong PC's OBS install when remote. Backtrack's own row
-                                         above stays active since self-update is per-instance either way. -->
                                     <StackPanel x:Name="LocalPluginStatusRows">
                                         <Grid Margin="0,0,0,10">
                                             <Grid.ColumnDefinitions>
@@ -1212,7 +1179,7 @@
                                         </Grid>
                                     </StackPanel>
                                     <TextBlock x:Name="PluginStatusRemoteNotice" Visibility="Collapsed"
-                                               Text="OBS is on a different PC, so these two check/update the PC this Backtrack is running on, not the transmitter. See &quot;Transmitter's plugins&quot; below instead."
+                                               Text="OBS is on a different PC, so these two check/update the PC this Backtrack is running on, not the transmitter. See &quot;Transmitter's plugins&quot; in OBS settings instead."
                                                FontSize="10.5" Foreground="{DynamicResource Rec}" TextWrapping="Wrap" Margin="0,0,0,4"/>
                                 </StackPanel>
                                 <Grid Margin="0,10,0,0">
@@ -1233,8 +1200,302 @@
                                 </Grid>
                             </StackPanel>
                         </Border>
+                        <Border Style="{StaticResource SettingsRow}" BorderThickness="0">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="Launch with Windows" FontSize="13" FontWeight="Bold" Foreground="{DynamicResource Text0}" VerticalAlignment="Center"/>
+                                <ToggleButton x:Name="LaunchWithWindowsToggle" Grid.Column="1" Style="{StaticResource AppToggle}" VerticalAlignment="Center" Click="LaunchWithWindowsToggle_Click"/>
+                            </Grid>
+                        </Border>
+                        <Border Style="{StaticResource SettingsRow}">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="Show alpha disclaimer" FontSize="13" FontWeight="Bold" Foreground="{DynamicResource Text0}" VerticalAlignment="Center"/>
+                                <ToggleButton x:Name="ShowDisclaimerToggle" Grid.Column="1" Style="{StaticResource AppToggle}" VerticalAlignment="Center" Click="ShowDisclaimerToggle_Click"/>
+                            </Grid>
+                        </Border>
+                        <Border Style="{StaticResource SettingsRow}">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <StackPanel VerticalAlignment="Center">
+                                    <TextBlock Text="Disable audio cues" FontSize="13" FontWeight="Bold" Foreground="{DynamicResource Text0}"/>
+                                    <TextBlock Text="Mutes chimes when recordings or clips are saved." FontSize="11" Foreground="{DynamicResource Text2}" Margin="0,3,0,0" TextWrapping="Wrap"/>
+                                </StackPanel>
+                                <ToggleButton x:Name="DisableAudioCuesToggle" Grid.Column="1" Style="{StaticResource AppToggle}" VerticalAlignment="Center" Click="DisableAudioCuesToggle_Click"/>
+                            </Grid>
+                        </Border>
+                        <Border Style="{StaticResource SettingsRow}">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="Quit Backtrack" FontSize="13" FontWeight="Bold" Foreground="{DynamicResource Text0}" VerticalAlignment="Center"/>
+                                <Button Grid.Column="1" Content="Quit" Style="{StaticResource FlatButton}" VerticalAlignment="Center" Click="QuitApp_Click"/>
+                            </Grid>
+                        </Border>
 
-                        <StackPanel x:Name="RemotePluginSection" Visibility="Collapsed" Margin="0,0,0,4">
+                        <!-- 2. CLIPS -->
+                        <TextBlock Text="CLIPS" Style="{StaticResource SettingsSectionHeader}" Margin="0,20,0,10"/>
+                        <Border Style="{StaticResource SettingsRow}" BorderThickness="0">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <StackPanel VerticalAlignment="Center">
+                                    <TextBlock Text="Save location" FontSize="13" FontWeight="Bold" Foreground="{DynamicResource Text0}"/>
+                                    <TextBlock x:Name="ClipsFolderText" FontSize="11" Foreground="{DynamicResource Text2}" Margin="0,3,0,0"/>
+                                </StackPanel>
+                                <Button Grid.Column="1" Content="Change" Style="{StaticResource FlatButton}" VerticalAlignment="Center" Click="ChangeClipsFolder_Click"/>
+                            </Grid>
+                        </Border>
+                        <Border Style="{StaticResource SettingsRow}" BorderThickness="0">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <StackPanel VerticalAlignment="Center">
+                                    <TextBlock Text="Storage limit" FontSize="13" FontWeight="Bold" Foreground="{DynamicResource Text0}"/>
+                                    <TextBlock x:Name="StorageLimitStatusText" Text="Off - no limit" FontSize="11" Foreground="{DynamicResource Text2}" Margin="0,3,0,0" TextWrapping="Wrap"/>
+                                </StackPanel>
+                                <ToggleButton x:Name="StorageLimitToggle" Grid.Column="1" Style="{StaticResource AppToggle}" VerticalAlignment="Center" Click="StorageLimitToggle_Click"/>
+                            </Grid>
+                        </Border>
+                        <StackPanel x:Name="StorageLimitFields" Visibility="Collapsed" Margin="0,10,0,10">
+                            <TextBlock Text="Stops you from starting a new recording or saving a replay once your clips folder reaches this size. Nothing gets deleted automatically - free up space, delete clips yourself, or raise this to keep going."
+                                       FontSize="11" Foreground="{DynamicResource Text2}" TextWrapping="Wrap" Margin="0,0,0,8"/>
+                            <Grid Margin="0,0,0,10">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="80"/>
+                                    <ColumnDefinition Width="8"/>
+                                    <ColumnDefinition/>
+                                </Grid.ColumnDefinitions>
+                                <TextBox x:Name="StorageLimitGbBox" Background="{DynamicResource RowBg}" Foreground="{DynamicResource Text0}" CaretBrush="{DynamicResource Text0}" BorderThickness="0" Padding="10,8" TextAlignment="Center"/>
+                                <TextBlock Grid.Column="2" Text="GB" FontSize="12" Foreground="{DynamicResource Text2}" VerticalAlignment="Center"/>
+                            </Grid>
+                            <Button Content="Save &amp; apply" Style="{StaticResource FlatButton}" HorizontalAlignment="Left" Click="ApplyStorageLimit_Click"/>
+                        </StackPanel>
+                        <Border Style="{StaticResource SettingsRow}" BorderThickness="0" Margin="0,10,0,0">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <StackPanel VerticalAlignment="Center">
+                                    <TextBlock Text="Auto-delete old clips" FontSize="13" FontWeight="Bold" Foreground="{DynamicResource Text0}"/>
+                                    <TextBlock Text="Sends clips older than the age below to the Recycle Bin automatically, checked every few hours."
+                                               FontSize="11" Foreground="{DynamicResource Text2}" Margin="0,3,0,0" TextWrapping="Wrap"/>
+                                </StackPanel>
+                                <ToggleButton x:Name="AutoDeleteOldClipsToggle" Grid.Column="1" Style="{StaticResource AppToggle}" VerticalAlignment="Center" Click="AutoDeleteOldClipsToggle_Click"/>
+                            </Grid>
+                        </Border>
+                        <StackPanel x:Name="AutoDeleteOldClipsFields" Visibility="Collapsed" Margin="0,10,0,10">
+                            <Grid Margin="0,0,0,10">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="80"/>
+                                    <ColumnDefinition Width="8"/>
+                                    <ColumnDefinition/>
+                                </Grid.ColumnDefinitions>
+                                <TextBox x:Name="AutoDeleteOldClipsDaysBox" Background="{DynamicResource RowBg}" Foreground="{DynamicResource Text0}" CaretBrush="{DynamicResource Text0}" BorderThickness="0" Padding="10,8" TextAlignment="Center"/>
+                                <TextBlock Grid.Column="2" Text="days" FontSize="12" Foreground="{DynamicResource Text2}" VerticalAlignment="Center"/>
+                            </Grid>
+                            <Button Content="Save &amp; apply" Style="{StaticResource FlatButton}" HorizontalAlignment="Left" Click="ApplyAutoDeleteOldClips_Click"/>
+                        </StackPanel>
+                        <Border Style="{StaticResource SettingsRow}" BorderThickness="0">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="Replay buffer length" FontSize="13" FontWeight="Bold" Foreground="{DynamicResource Text0}" VerticalAlignment="Center"/>
+                                <TextBlock x:Name="BufferDurationValueText" Grid.Column="1" Text="30:00" FontSize="11" Foreground="{DynamicResource Text2}" VerticalAlignment="Center"/>
+                            </Grid>
+                        </Border>
+                        <StackPanel Margin="0,0,0,10">
+                            <TextBlock Text="How much footage each Source Record filter keeps armed and writes to disk on every save (not the trimmed clip length below). 30 min is a safe default; raise it if your storage and encoder bitrate can keep up."
+                                       FontSize="11" Foreground="{DynamicResource Text2}" TextWrapping="Wrap" Margin="0,0,0,8"/>
+                            <Slider x:Name="BufferDurationSlider" Minimum="1" Maximum="60" TickFrequency="1" IsSnapToTickEnabled="True" ValueChanged="BufferDurationSlider_ValueChanged"/>
+                            <TextBlock x:Name="BufferDurationWarningText" FontSize="10.5" Foreground="{DynamicResource Rec}" TextWrapping="Wrap" Visibility="Collapsed" Margin="0,6,0,0"/>
+                            <Button Content="Save &amp; apply" Style="{StaticResource FlatButton}" HorizontalAlignment="Left" Margin="0,10,0,0" Click="ApplyBufferDuration_Click"/>
+                        </StackPanel>
+                        <Border Style="{StaticResource SettingsRow}" BorderThickness="0">
+                            <StackPanel>
+                                <TextBlock Text="Default audio track" FontSize="13" FontWeight="Bold" Foreground="{DynamicResource Text0}"/>
+                                <TextBlock Text="Which track the Player opens a clip on by default. Only matters if your real audio (mic, desktop, etc.) doesn't land on Track 1 in your own OBS audio routing."
+                                           FontSize="11" Foreground="{DynamicResource Text2}" Margin="0,3,0,10" TextWrapping="Wrap"/>
+                                <ComboBox x:Name="DefaultAudioTrackSelector" Width="140" HorizontalAlignment="Left" Style="{StaticResource ModernComboBox}"
+                                          SelectionChanged="DefaultAudioTrackSelector_SelectionChanged">
+                                    <ComboBoxItem Content="Automatic" Tag="0"/>
+                                    <ComboBoxItem Content="Track 1" Tag="1"/>
+                                    <ComboBoxItem Content="Track 2" Tag="2"/>
+                                    <ComboBoxItem Content="Track 3" Tag="3"/>
+                                    <ComboBoxItem Content="Track 4" Tag="4"/>
+                                    <ComboBoxItem Content="Track 5" Tag="5"/>
+                                    <ComboBoxItem Content="Track 6" Tag="6"/>
+                                </ComboBox>
+                            </StackPanel>
+                        </Border>
+
+                        <!-- 3. OVERLAY & HOTKEYS -->
+                        <TextBlock Text="OVERLAY &amp; HOTKEYS" Style="{StaticResource SettingsSectionHeader}" Margin="0,20,0,10"/>
+                        <Border Style="{StaticResource SettingsRow}" BorderThickness="0">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <StackPanel VerticalAlignment="Center">
+                                    <TextBlock Text="Toggle hotkey" FontSize="13" FontWeight="Bold" Foreground="{DynamicResource Text0}"/>
+                                    <TextBlock Text="Click, then press the new key combo" FontSize="11" Foreground="{DynamicResource Text2}" Margin="0,3,0,0"/>
+                                </StackPanel>
+                                <Button x:Name="HotkeyCaptureButton" Grid.Column="1" Content="Ctrl+Alt+G" Style="{StaticResource FlatButton}" VerticalAlignment="Center" Click="HotkeyCaptureButton_Click"/>
+                            </Grid>
+                        </Border>
+                        <Border Style="{StaticResource SettingsRow}" BorderThickness="0">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <StackPanel VerticalAlignment="Center">
+                                    <TextBlock Text="Cancel recording hotkey" FontSize="13" FontWeight="Bold" Foreground="{DynamicResource Text0}"/>
+                                    <TextBlock Text="Stops and discards the active recording file" FontSize="11" Foreground="{DynamicResource Text2}" Margin="0,3,0,0"/>
+                                </StackPanel>
+                                <Button x:Name="CancelRecordHotkeyCaptureButton" Grid.Column="1" Content="(unbound)" Style="{StaticResource FlatButton}" VerticalAlignment="Center" Click="CancelRecordHotkeyCaptureButton_Click"/>
+                            </Grid>
+                        </Border>
+                        <Border Style="{StaticResource SettingsRow}" BorderThickness="0">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <StackPanel VerticalAlignment="Center">
+                                    <TextBlock Text="Show recent clips" FontSize="13" FontWeight="Bold" Foreground="{DynamicResource Text0}"/>
+                                    <TextBlock Text="A small floating, draggable strip showing your last few clips. Click one to open it, right-click for the same options as Gallery."
+                                               FontSize="11" Foreground="{DynamicResource Text2}" Margin="0,3,0,0" TextWrapping="Wrap"/>
+                                </StackPanel>
+                                <ToggleButton x:Name="ShowRecentClipsToggle" Grid.Column="1" Style="{StaticResource AppToggle}" VerticalAlignment="Center" Click="ShowRecentClipsToggle_Click"/>
+                            </Grid>
+                        </Border>
+                        <Border Style="{StaticResource SettingsRow}" BorderThickness="0" Padding="0,7">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="Show status indicator" FontSize="13" FontWeight="Bold" Foreground="{DynamicResource Text0}" VerticalAlignment="Center"/>
+                                <ToggleButton x:Name="ShowStatusIndicatorToggle" Grid.Column="1" Style="{StaticResource AppToggle}" VerticalAlignment="Center" Click="ShowStatusIndicatorToggle_Click"/>
+                            </Grid>
+                        </Border>
+                        <Border Style="{StaticResource SettingsRow}" BorderThickness="0" Padding="0,7">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="Orientation" FontSize="13" FontWeight="Bold" Foreground="{DynamicResource Text0}" VerticalAlignment="Center"/>
+                                <ComboBox x:Name="StatusIndicatorOrientationSelector" Grid.Column="1" Width="140" Style="{StaticResource ModernComboBox}"
+                                          SelectionChanged="StatusIndicatorOrientationSelector_SelectionChanged">
+                                    <ComboBoxItem Content="Horizontal" Tag="Horizontal"/>
+                                    <ComboBoxItem Content="Vertical" Tag="Vertical"/>
+                                </ComboBox>
+                            </Grid>
+                        </Border>
+                        <Border Style="{StaticResource SettingsRow}" BorderThickness="0" Padding="0,7">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="Location" FontSize="13" FontWeight="Bold" Foreground="{DynamicResource Text0}" VerticalAlignment="Center"/>
+                                <ComboBox x:Name="StatusIndicatorLocationSelector" Grid.Column="1" Width="140" Style="{StaticResource ModernComboBox}"
+                                          SelectionChanged="StatusIndicatorLocationSelector_SelectionChanged">
+                                    <ComboBoxItem Content="Top left" Tag="TopLeft"/>
+                                    <ComboBoxItem Content="Top right" Tag="TopRight"/>
+                                    <ComboBoxItem Content="Bottom left" Tag="BottomLeft"/>
+                                    <ComboBoxItem Content="Bottom right" Tag="BottomRight"/>
+                                </ComboBox>
+                            </Grid>
+                        </Border>
+                        <Border Style="{StaticResource SettingsRow}" BorderThickness="0">
+                            <StackPanel>
+                                <TextBlock Text="Preview" FontSize="13" FontWeight="Bold" Foreground="{DynamicResource Text0}" Margin="0,0,0,10"/>
+                                <Border x:Name="StatusIndicatorPreviewBorder" Background="{DynamicResource ThumbnailBg}" BorderBrush="{DynamicResource Hairline}" BorderThickness="1"
+                                        SizeChanged="StatusIndicatorPreviewBorder_SizeChanged">
+                                    <Viewbox Stretch="Uniform">
+                                        <Grid Width="800" Height="450" ClipToBounds="True">
+                                            <StackPanel x:Name="StatusIndicatorPreviewPanel" Orientation="Horizontal" Margin="6">
+                                                <Border Width="27" Height="27" Background="{DynamicResource BadgeBg}" BorderBrush="{DynamicResource BadgeBorder}" BorderThickness="1">
+                                                    <Path Fill="{DynamicResource Rec}" Stretch="Uniform" Width="15" Height="15"
+                                                          Data="F1 M256 32c14.2 0 27.3 7.5 34.5 19.8l216 368c7.3 12.4 7.3 27.7 .2 40.1S486.3 480 472 480L40 480c-14.3 0-27.6-7.7-34.7-20.1s-7-27.8 .2-40.1l216-368C228.7 39.5 241.8 32 256 32zm0 128c-13.3 0-24 10.7-24 24l0 112c0 13.3 10.7 24 24 24s24-10.7 24-24l0-112c0-13.3-10.7-24-24-24zm32 224a32 32 0 1 0 -64 0 32 32 0 1 0 64 0z"/>
+                                                </Border>
+                                                <Border Width="27" Height="27" Background="{DynamicResource BadgeBg}" BorderBrush="{DynamicResource BadgeBorder}" BorderThickness="1" Margin="5,0,0,0">
+                                                    <Ellipse Width="10" Height="10" Fill="{DynamicResource Rec}" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                                </Border>
+                                                <Border Width="27" Height="27" Background="{DynamicResource BadgeBg}" BorderBrush="{DynamicResource BadgeBorder}" BorderThickness="1" Margin="5,0,0,0">
+                                                    <Ellipse Width="10" Height="10" Fill="{DynamicResource Stream}" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                                </Border>
+                                                <Border Width="27" Height="27" Background="{DynamicResource BadgeBg}" BorderBrush="{DynamicResource BadgeBorder}" BorderThickness="1" Margin="5,0,0,0">
+                                                    <Path Fill="{DynamicResource Green}" Stretch="Uniform" Width="13" Height="13"
+                                                          Data="M0 128C0 92.7 28.7 64 64 64l256 0c35.3 0 64 28.7 64 64l0 256c0 35.3-28.7 64-64 64L64 448c-35.3 0-64-28.7-64-64L0 128zM559.1 99.8c10.4 5.6 16.9 16.4 16.9 28.2l0 256c0 11.8-6.5 22.6-16.9 28.2s-23 5-32.9-1.6l-96-64L416 337.1l0-17.1 0-128 0-17.1 14.2-9.5 96-64c9.8-6.5 22.4-7.2 32.9-1.6z"/>
+                                                </Border>
+                                                <Border Width="27" Height="27" Background="{DynamicResource BadgeBg}" BorderBrush="{DynamicResource BadgeBorder}" BorderThickness="1" Margin="5,0,0,0">
+                                                    <TextBlock Text="&#8635;" FontSize="16" FontWeight="Bold" Foreground="{DynamicResource Green}" HorizontalAlignment="Center" VerticalAlignment="Center" Margin="0,-2,0,0"/>
+                                                </Border>
+                                                <Border Width="27" Height="27" Background="{DynamicResource BadgeBg}" BorderBrush="{DynamicResource BadgeBorder}" BorderThickness="1" Margin="5,0,0,0">
+                                                    <Path Fill="{DynamicResource Rec}" Stretch="Uniform" Width="12" Height="12"
+                                                          Data="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z
+                                                                M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"/>
+                                                </Border>
+                                            </StackPanel>
+                                        </Grid>
+                                    </Viewbox>
+                                </Border>
+                            </StackPanel>
+                        </Border>
+
+                        <!-- 4. OBS -->
+                        <TextBlock Text="OBS" Style="{StaticResource SettingsSectionHeader}" Margin="0,20,0,10"/>
+                        <Border Style="{StaticResource SettingsRow}" BorderThickness="0">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <StackPanel VerticalAlignment="Center" Margin="0,0,16,0">
+                                    <TextBlock Text="OBS is on a different PC" FontSize="13" FontWeight="Bold" Foreground="{DynamicResource Text0}"/>
+                                    <TextBlock Text="e.g. a separate stream/broadcast PC. Off means OBS runs on this PC." FontSize="11" Foreground="{DynamicResource Text2}" TextWrapping="Wrap" Margin="0,3,0,0"/>
+                                </StackPanel>
+                                <ToggleButton x:Name="ObsRemoteToggle" Grid.Column="1" Style="{StaticResource AppToggle}" VerticalAlignment="Center" Click="ObsRemoteToggle_Click"/>
+                            </Grid>
+                        </Border>
+                        <StackPanel x:Name="ObsRemoteFields" Visibility="Collapsed" Margin="0,14,0,6">
+                            <TextBlock Text="Stream PC address" FontSize="11" FontWeight="Bold" Foreground="{DynamicResource Text1}" Margin="0,0,0,6"/>
+                            <Grid Margin="0,0,0,10">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition/>
+                                    <ColumnDefinition Width="75"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBox x:Name="ObsHostBox" Background="{DynamicResource RowBg}" Foreground="{DynamicResource Text0}" CaretBrush="{DynamicResource Text0}" BorderThickness="0" Padding="10,8"/>
+                                <TextBox x:Name="ObsPortBox" Grid.Column="1" Background="{DynamicResource RowBg}" Foreground="{DynamicResource Text0}" CaretBrush="{DynamicResource Text0}" BorderThickness="0" Padding="10,8" Margin="8,0,0,0"/>
+                            </Grid>
+                            <TextBlock Text="Password (from that PC's OBS: Tools > WebSocket Server Settings > Show Connect Info)" FontSize="11" FontWeight="Bold" Foreground="{DynamicResource Text1}" Margin="0,0,0,6" TextWrapping="Wrap"/>
+                            <PasswordBox x:Name="ObsPasswordBox" Background="{DynamicResource RowBg}" Foreground="{DynamicResource Text0}" CaretBrush="{DynamicResource Text0}" BorderThickness="0" Padding="10,8" Margin="0,0,0,10"/>
+                            <Button Content="Save &amp; reconnect" Style="{StaticResource FlatButton}" HorizontalAlignment="Left" Click="ApplyObsConnection_Click"/>
+                        </StackPanel>
+                        <StackPanel x:Name="RemotePluginSection" Visibility="Collapsed" Margin="0,6,0,4">
                             <Border Style="{StaticResource SettingsRow}">
                                 <StackPanel>
                                     <Grid>
@@ -1273,189 +1534,29 @@
                                 </StackPanel>
                             </Border>
                         </StackPanel>
-
-                        <Border Style="{StaticResource SettingsRow}" BorderThickness="0">
-                            <Grid>
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition/>
-                                    <ColumnDefinition Width="Auto"/>
-                                </Grid.ColumnDefinitions>
-                                <TextBlock Text="Launch with Windows" FontSize="13" FontWeight="Bold" Foreground="{DynamicResource Text0}" VerticalAlignment="Center"/>
-                                <ToggleButton x:Name="LaunchWithWindowsToggle" Grid.Column="1" Style="{StaticResource AppToggle}" VerticalAlignment="Center" Click="LaunchWithWindowsToggle_Click"/>
-                            </Grid>
-                        </Border>
-                        <Border Style="{StaticResource SettingsRow}">
-                            <Grid>
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition/>
-                                    <ColumnDefinition Width="Auto"/>
-                                </Grid.ColumnDefinitions>
-                                <TextBlock Text="Show alpha disclaimer" FontSize="13" FontWeight="Bold" Foreground="{DynamicResource Text0}" VerticalAlignment="Center"/>
-                                <ToggleButton x:Name="ShowDisclaimerToggle" Grid.Column="1" Style="{StaticResource AppToggle}" VerticalAlignment="Center" Click="ShowDisclaimerToggle_Click"/>
-                            </Grid>
-                        </Border>
-
-                        <Border Style="{StaticResource SettingsRow}">
-                            <Grid>
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition/>
-                                    <ColumnDefinition Width="Auto"/>
-                                </Grid.ColumnDefinitions>
-                                <TextBlock Text="Quit Backtrack" FontSize="13" FontWeight="Bold" Foreground="{DynamicResource Text0}" VerticalAlignment="Center"/>
-                                <Button Grid.Column="1" Content="Quit" Style="{StaticResource FlatButton}" VerticalAlignment="Center" Click="QuitApp_Click"/>
-                            </Grid>
-                        </Border>
-
-                        <TextBlock Text="CLIPS" Style="{StaticResource SettingsSectionHeader}"/>
-                        <Border Style="{StaticResource SettingsRow}" BorderThickness="0">
-                            <Grid>
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition/>
-                                    <ColumnDefinition Width="Auto"/>
-                                </Grid.ColumnDefinitions>
-                                <StackPanel VerticalAlignment="Center">
-                                    <TextBlock Text="Save location" FontSize="13" FontWeight="Bold" Foreground="{DynamicResource Text0}"/>
-                                    <TextBlock x:Name="ClipsFolderText" FontSize="11" Foreground="{DynamicResource Text2}" Margin="0,3,0,0"/>
+                        <StackPanel x:Name="BuffersSection">
+                            <Border Style="{StaticResource SettingsRow}" BorderThickness="0">
+                                <StackPanel>
+                                    <TextBlock Text="Replay Buffers" FontSize="13" FontWeight="Bold" Foreground="{DynamicResource Text0}"/>
+                                    <TextBlock Text="Enable or disable a buffer, and set its destination folder."
+                                               FontSize="11" Foreground="{DynamicResource Text2}" TextWrapping="Wrap" Margin="0,3,0,10"/>
+                                    <StackPanel x:Name="BufferVisibilityPanel"/>
                                 </StackPanel>
-                                <Button Grid.Column="1" Content="Change" Style="{StaticResource FlatButton}" VerticalAlignment="Center" Click="ChangeClipsFolder_Click"/>
-                            </Grid>
-                        </Border>
-
-                        <Border Style="{StaticResource SettingsRow}" BorderThickness="0">
-                            <Grid>
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition/>
-                                    <ColumnDefinition Width="Auto"/>
-                                </Grid.ColumnDefinitions>
-                                <StackPanel VerticalAlignment="Center">
-                                    <TextBlock Text="Storage limit" FontSize="13" FontWeight="Bold" Foreground="{DynamicResource Text0}"/>
-                                    <TextBlock x:Name="StorageLimitStatusText" Text="Off - no limit" FontSize="11" Foreground="{DynamicResource Text2}" Margin="0,3,0,0" TextWrapping="Wrap"/>
+                            </Border>
+                        </StackPanel>
+                        <StackPanel x:Name="RecordingsSection">
+                            <Border Style="{StaticResource SettingsRow}" BorderThickness="0">
+                                <StackPanel>
+                                    <TextBlock Text="Recordings" FontSize="13" FontWeight="Bold" Foreground="{DynamicResource Text0}"/>
+                                    <TextBlock Text="Enable or disable a recording source, and set its destination folder."
+                                               FontSize="11" Foreground="{DynamicResource Text2}" TextWrapping="Wrap" Margin="0,3,0,10"/>
+                                    <StackPanel x:Name="RecordFolderPanel"/>
                                 </StackPanel>
-                                <ToggleButton x:Name="StorageLimitToggle" Grid.Column="1" Style="{StaticResource AppToggle}" VerticalAlignment="Center" Click="StorageLimitToggle_Click"/>
-                            </Grid>
-                        </Border>
-                        <StackPanel x:Name="StorageLimitFields" Visibility="Collapsed" Margin="0,10,0,10">
-                            <TextBlock Text="Stops you from starting a new recording or saving a replay once your clips folder reaches this size. Nothing gets deleted automatically - free up space, delete clips yourself, or raise this to keep going."
-                                       FontSize="11" Foreground="{DynamicResource Text2}" TextWrapping="Wrap" Margin="0,0,0,8"/>
-                            <Grid Margin="0,0,0,10">
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="80"/>
-                                    <ColumnDefinition Width="8"/>
-                                    <ColumnDefinition/>
-                                </Grid.ColumnDefinitions>
-                                <TextBox x:Name="StorageLimitGbBox" Background="{DynamicResource RowBg}" Foreground="{DynamicResource Text0}" CaretBrush="{DynamicResource Text0}" BorderThickness="0" Padding="10,8" TextAlignment="Center"/>
-                                <TextBlock Grid.Column="2" Text="GB" FontSize="12" Foreground="{DynamicResource Text2}" VerticalAlignment="Center"/>
-                            </Grid>
-                            <Button Content="Save &amp; apply" Style="{StaticResource FlatButton}" HorizontalAlignment="Left" Click="ApplyStorageLimit_Click"/>
+                            </Border>
                         </StackPanel>
 
-                        <Border Style="{StaticResource SettingsRow}" BorderThickness="0" Margin="0,10,0,0">
-                            <Grid>
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition/>
-                                    <ColumnDefinition Width="Auto"/>
-                                </Grid.ColumnDefinitions>
-                                <StackPanel VerticalAlignment="Center">
-                                    <TextBlock Text="Auto-delete old clips" FontSize="13" FontWeight="Bold" Foreground="{DynamicResource Text0}"/>
-                                    <TextBlock Text="Sends clips older than the age below to the Recycle Bin automatically, checked every few hours."
-                                               FontSize="11" Foreground="{DynamicResource Text2}" Margin="0,3,0,0" TextWrapping="Wrap"/>
-                                </StackPanel>
-                                <ToggleButton x:Name="AutoDeleteOldClipsToggle" Grid.Column="1" Style="{StaticResource AppToggle}" VerticalAlignment="Center" Click="AutoDeleteOldClipsToggle_Click"/>
-                            </Grid>
-                        </Border>
-                        <StackPanel x:Name="AutoDeleteOldClipsFields" Visibility="Collapsed" Margin="0,10,0,10">
-                            <Grid Margin="0,0,0,10">
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="80"/>
-                                    <ColumnDefinition Width="8"/>
-                                    <ColumnDefinition/>
-                                </Grid.ColumnDefinitions>
-                                <TextBox x:Name="AutoDeleteOldClipsDaysBox" Background="{DynamicResource RowBg}" Foreground="{DynamicResource Text0}" CaretBrush="{DynamicResource Text0}" BorderThickness="0" Padding="10,8" TextAlignment="Center"/>
-                                <TextBlock Grid.Column="2" Text="days" FontSize="12" Foreground="{DynamicResource Text2}" VerticalAlignment="Center"/>
-                            </Grid>
-                            <Button Content="Save &amp; apply" Style="{StaticResource FlatButton}" HorizontalAlignment="Left" Click="ApplyAutoDeleteOldClips_Click"/>
-                        </StackPanel>
-
-                        <Border Style="{StaticResource SettingsRow}" BorderThickness="0">
-                            <Grid>
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition/>
-                                    <ColumnDefinition Width="Auto"/>
-                                </Grid.ColumnDefinitions>
-                                <TextBlock Text="Replay buffer length" FontSize="13" FontWeight="Bold" Foreground="{DynamicResource Text0}" VerticalAlignment="Center"/>
-                                <TextBlock x:Name="BufferDurationValueText" Grid.Column="1" Text="30:00" FontSize="11" Foreground="{DynamicResource Text2}" VerticalAlignment="Center"/>
-                            </Grid>
-                        </Border>
-                        <StackPanel Margin="0,0,0,10">
-                            <TextBlock Text="How much footage each Source Record filter keeps armed and writes to disk on every save (not the trimmed clip length below). 30 min is a safe default; raise it if your storage and encoder bitrate can keep up."
-                                       FontSize="11" Foreground="{DynamicResource Text2}" TextWrapping="Wrap" Margin="0,0,0,8"/>
-                            <Slider x:Name="BufferDurationSlider" Minimum="1" Maximum="60" TickFrequency="1" IsSnapToTickEnabled="True" ValueChanged="BufferDurationSlider_ValueChanged"/>
-                            <TextBlock x:Name="BufferDurationWarningText" FontSize="10.5" Foreground="{DynamicResource Rec}" TextWrapping="Wrap" Visibility="Collapsed" Margin="0,6,0,0"/>
-                            <Button Content="Save &amp; apply" Style="{StaticResource FlatButton}" HorizontalAlignment="Left" Margin="0,10,0,0" Click="ApplyBufferDuration_Click"/>
-                        </StackPanel>
-
-                        <TextBlock Text="PLAYER" Style="{StaticResource SettingsSectionHeader}"/>
-                        <Border Style="{StaticResource SettingsRow}" BorderThickness="0">
-                            <StackPanel>
-                                <TextBlock Text="Default audio track" FontSize="13" FontWeight="Bold" Foreground="{DynamicResource Text0}"/>
-                                <TextBlock Text="Which track the Player opens a clip on by default. Only matters if your real audio (mic, desktop, etc.) doesn't land on Track 1 in your own OBS audio routing."
-                                           FontSize="11" Foreground="{DynamicResource Text2}" Margin="0,3,0,10" TextWrapping="Wrap"/>
-                                <ComboBox x:Name="DefaultAudioTrackSelector" Width="140" HorizontalAlignment="Left" Style="{StaticResource ModernComboBox}"
-                                          SelectionChanged="DefaultAudioTrackSelector_SelectionChanged">
-                                    <ComboBoxItem Content="Automatic" Tag="0"/>
-                                    <ComboBoxItem Content="Track 1" Tag="1"/>
-                                    <ComboBoxItem Content="Track 2" Tag="2"/>
-                                    <ComboBoxItem Content="Track 3" Tag="3"/>
-                                    <ComboBoxItem Content="Track 4" Tag="4"/>
-                                    <ComboBoxItem Content="Track 5" Tag="5"/>
-                                    <ComboBoxItem Content="Track 6" Tag="6"/>
-                                </ComboBox>
-                            </StackPanel>
-                        </Border>
-
-                        <TextBlock Text="BUFFERS" Style="{StaticResource SettingsSectionHeader}"/>
-                        <StackPanel Margin="0,0,0,10">
-                            <TextBlock Text="Enable or disable a buffer, and set its destination folder."
-                                       FontSize="11" Foreground="{DynamicResource Text2}" TextWrapping="Wrap" Margin="0,0,0,10"/>
-                            <StackPanel x:Name="BufferVisibilityPanel"/>
-                        </StackPanel>
-                        <TextBlock Text="RECORDINGS" Style="{StaticResource SettingsSectionHeader}"/>
-                        <StackPanel Margin="0,0,0,10">
-                            <TextBlock Text="Enable or disable a recording source, and set its destination folder."
-                                       FontSize="11" Foreground="{DynamicResource Text2}" TextWrapping="Wrap" Margin="0,0,0,10"/>
-                            <StackPanel x:Name="RecordFolderPanel"/>
-                        </StackPanel>
-
-                        <TextBlock Text="OBS" Style="{StaticResource SettingsSectionHeader}"/>
-                        <Border Style="{StaticResource SettingsRow}" BorderThickness="0">
-                            <Grid>
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition/>
-                                    <ColumnDefinition Width="Auto"/>
-                                </Grid.ColumnDefinitions>
-                                <StackPanel VerticalAlignment="Center" Margin="0,0,16,0">
-                                    <TextBlock Text="OBS is on a different PC" FontSize="13" FontWeight="Bold" Foreground="{DynamicResource Text0}"/>
-                                    <TextBlock Text="e.g. a separate stream/broadcast PC. Off means OBS runs on this PC." FontSize="11" Foreground="{DynamicResource Text2}" TextWrapping="Wrap" Margin="0,3,0,0"/>
-                                </StackPanel>
-                                <ToggleButton x:Name="ObsRemoteToggle" Grid.Column="1" Style="{StaticResource AppToggle}" VerticalAlignment="Center" Click="ObsRemoteToggle_Click"/>
-                            </Grid>
-                        </Border>
-                        <StackPanel x:Name="ObsRemoteFields" Visibility="Collapsed" Margin="0,14,0,6">
-                            <TextBlock Text="Stream PC address" FontSize="11" FontWeight="Bold" Foreground="{DynamicResource Text1}" Margin="0,0,0,6"/>
-                            <Grid Margin="0,0,0,10">
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition/>
-                                    <ColumnDefinition Width="75"/>
-                                </Grid.ColumnDefinitions>
-                                <TextBox x:Name="ObsHostBox" Background="{DynamicResource RowBg}" Foreground="{DynamicResource Text0}" CaretBrush="{DynamicResource Text0}" BorderThickness="0" Padding="10,8"/>
-                                <TextBox x:Name="ObsPortBox" Grid.Column="1" Background="{DynamicResource RowBg}" Foreground="{DynamicResource Text0}" CaretBrush="{DynamicResource Text0}" BorderThickness="0" Padding="10,8" Margin="8,0,0,0"/>
-                            </Grid>
-                            <TextBlock Text="Password (from that PC's OBS: Tools > WebSocket Server Settings > Show Connect Info)" FontSize="11" FontWeight="Bold" Foreground="{DynamicResource Text1}" Margin="0,0,0,6" TextWrapping="Wrap"/>
-                            <PasswordBox x:Name="ObsPasswordBox" Background="{DynamicResource RowBg}" Foreground="{DynamicResource Text0}" CaretBrush="{DynamicResource Text0}" BorderThickness="0" Padding="10,8" Margin="0,0,0,10"/>
-                            <Button Content="Save &amp; reconnect" Style="{StaticResource FlatButton}" HorizontalAlignment="Left" Click="ApplyObsConnection_Click"/>
-                        </StackPanel>
-
-                        <TextBlock Text="SHARING" Style="{StaticResource SettingsSectionHeader}"/>
+                        <!-- 5. SHARING -->
+                        <TextBlock Text="SHARING" Style="{StaticResource SettingsSectionHeader}" Margin="0,20,0,10"/>
                         <Border Style="{StaticResource SettingsRow}" BorderThickness="0">
                             <Grid>
                                 <Grid.ColumnDefinitions>
@@ -1469,8 +1570,6 @@
                                 <ToggleButton x:Name="ShareClipsToggle" Grid.Column="1" Style="{StaticResource AppToggle}" VerticalAlignment="Center" Click="ShareClipsToggle_Click"/>
                             </Grid>
                         </Border>
-                        <!-- Collapsed whenever no device is currently authorized to pull clips
-                             from this PC; RefreshShareClipsUi is what shows/hides this. -->
                         <Border x:Name="AuthorizedDeviceRow" Style="{StaticResource SettingsRow}" BorderThickness="0" Visibility="Collapsed">
                             <Grid>
                                 <Grid.ColumnDefinitions>
@@ -1516,160 +1615,17 @@
                             </StackPanel>
                         </Border>
 
-                        <TextBlock Text="OVERLAY" Style="{StaticResource SettingsSectionHeader}"/>
-                        <Border Style="{StaticResource SettingsRow}" BorderThickness="0">
-                            <Grid>
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition/>
-                                    <ColumnDefinition Width="Auto"/>
-                                </Grid.ColumnDefinitions>
-                                <StackPanel VerticalAlignment="Center">
-                                    <TextBlock Text="Toggle hotkey" FontSize="13" FontWeight="Bold" Foreground="{DynamicResource Text0}"/>
-                                    <TextBlock Text="Click, then press the new key combo" FontSize="11" Foreground="{DynamicResource Text2}" Margin="0,3,0,0"/>
-                                </StackPanel>
-                                <Button x:Name="HotkeyCaptureButton" Grid.Column="1" Content="Ctrl+Alt+G" Style="{StaticResource FlatButton}" VerticalAlignment="Center" Click="HotkeyCaptureButton_Click"/>
-                            </Grid>
-                        </Border>
-                        <Border Style="{StaticResource SettingsRow}" BorderThickness="0">
-                            <Grid>
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition/>
-                                    <ColumnDefinition Width="Auto"/>
-                                </Grid.ColumnDefinitions>
-                                <StackPanel VerticalAlignment="Center">
-                                    <TextBlock Text="Show recent clips" FontSize="13" FontWeight="Bold" Foreground="{DynamicResource Text0}"/>
-                                    <TextBlock Text="A small floating, draggable strip showing your last few clips. Click one to open it, right-click for the same options as Gallery."
-                                               FontSize="11" Foreground="{DynamicResource Text2}" Margin="0,3,0,0" TextWrapping="Wrap"/>
-                                </StackPanel>
-                                <ToggleButton x:Name="ShowRecentClipsToggle" Grid.Column="1" Style="{StaticResource AppToggle}" VerticalAlignment="Center" Click="ShowRecentClipsToggle_Click"/>
-                            </Grid>
-                        </Border>
+                        <!-- Visual Divider before Experimental and Maintenance -->
+                        <Border BorderBrush="{DynamicResource Hairline}" BorderThickness="0,1,0,0" Margin="0,28,0,4"/>
 
-                        <TextBlock Text="STATUS INDICATORS" Style="{StaticResource SettingsSectionHeader}"/>
-                        <!-- Local Padding override on these three rows only (SettingsRow's own
-                             default is 0,14, shared by every settings row app-wide, so tightened
-                             HERE rather than in the style itself): these three read as one related
-                             on/off-plus-two-dropdowns group, not separate settings, so the normal
-                             14px gap between EVERY row elsewhere read as too spread out for them
-                             specifically. -->
-                        <Border Style="{StaticResource SettingsRow}" BorderThickness="0" Padding="0,7">
-                            <Grid>
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition/>
-                                    <ColumnDefinition Width="Auto"/>
-                                </Grid.ColumnDefinitions>
-                                <TextBlock Text="Show status indicator" FontSize="13" FontWeight="Bold" Foreground="{DynamicResource Text0}" VerticalAlignment="Center"/>
-                                <ToggleButton x:Name="ShowStatusIndicatorToggle" Grid.Column="1" Style="{StaticResource AppToggle}" VerticalAlignment="Center" Click="ShowStatusIndicatorToggle_Click"/>
-                            </Grid>
-                        </Border>
-                        <Border Style="{StaticResource SettingsRow}" BorderThickness="0" Padding="0,7">
-                            <Grid>
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition/>
-                                    <ColumnDefinition Width="Auto"/>
-                                </Grid.ColumnDefinitions>
-                                <TextBlock Text="Orientation" FontSize="13" FontWeight="Bold" Foreground="{DynamicResource Text0}" VerticalAlignment="Center"/>
-                                <ComboBox x:Name="StatusIndicatorOrientationSelector" Grid.Column="1" Width="140" Style="{StaticResource ModernComboBox}"
-                                          SelectionChanged="StatusIndicatorOrientationSelector_SelectionChanged">
-                                    <ComboBoxItem Content="Horizontal" Tag="Horizontal"/>
-                                    <ComboBoxItem Content="Vertical" Tag="Vertical"/>
-                                </ComboBox>
-                            </Grid>
-                        </Border>
-                        <Border Style="{StaticResource SettingsRow}" BorderThickness="0" Padding="0,7">
-                            <Grid>
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition/>
-                                    <ColumnDefinition Width="Auto"/>
-                                </Grid.ColumnDefinitions>
-                                <TextBlock Text="Location" FontSize="13" FontWeight="Bold" Foreground="{DynamicResource Text0}" VerticalAlignment="Center"/>
-                                <ComboBox x:Name="StatusIndicatorLocationSelector" Grid.Column="1" Width="140" Style="{StaticResource ModernComboBox}"
-                                          SelectionChanged="StatusIndicatorLocationSelector_SelectionChanged">
-                                    <ComboBoxItem Content="Top left" Tag="TopLeft"/>
-                                    <ComboBoxItem Content="Top right" Tag="TopRight"/>
-                                    <ComboBoxItem Content="Bottom left" Tag="BottomLeft"/>
-                                    <ComboBoxItem Content="Bottom right" Tag="BottomRight"/>
-                                </ComboBox>
-                            </Grid>
-                        </Border>
-                        <Border Style="{StaticResource SettingsRow}" BorderThickness="0">
-                            <StackPanel>
-                                <TextBlock Text="Preview" FontSize="13" FontWeight="Bold" Foreground="{DynamicResource Text0}" Margin="0,0,0,10"/>
-                                <!-- Stretches to the row's full width (no fixed Width on the Border);
-                                     Height is kept in lockstep with the actual measured width at a true
-                                     16:9 ratio via StatusIndicatorPreviewBorder_SizeChanged (a flat fixed
-                                     Height here didn't match the Viewbox content's real 16:9 shape, which
-                                     just meant invisible letterboxing against the same background color:
-                                     technically proportionate inside, but the visible BOX itself wasn't
-                                     16:9 at all). The Viewbox then uniformly scales a fixed 640x360
-                                     (same shape as 1920x1080) canvas to exactly fill that correctly-shaped
-                                     box with zero letterboxing. Badges are always drawn regardless of
-                                     what's actually recording/streaming/etc. right now: this previews the
-                                     LAYOUT (orientation + corner), not live status. -->
-                                <Border x:Name="StatusIndicatorPreviewBorder" Background="{DynamicResource ThumbnailBg}" BorderBrush="{DynamicResource Hairline}" BorderThickness="1"
-                                        SizeChanged="StatusIndicatorPreviewBorder_SizeChanged">
-                                    <!-- Badges below are the exact same 27px boxes (10px ellipse, 16pt
-                                         glyph, 12px mic path) and 5px gap StatusOverlay.xaml's real ones
-                                         use. The canvas itself is a 16:9 800x450, not a literal 1920x1080:
-                                         true 1:1 scale (badges at 27px against a full 1920-wide canvas)
-                                         rendered as barely-visible specks once shrunk to fit this box,
-                                         all correct proportion and no actual use as a preview. This canvas
-                                         size is picked so the SAME real badge pixels land legibly large
-                                         instead, at roughly a ~2.4x exaggeration versus true scale, still
-                                         real badge geometry (nothing hand-inflated per-badge), just a
-                                         smaller reference screen underneath it. -->
-                                    <Viewbox Stretch="Uniform">
-                                        <Grid Width="800" Height="450" ClipToBounds="True">
-                                            <StackPanel x:Name="StatusIndicatorPreviewPanel" Orientation="Horizontal" Margin="6">
-                                                <!-- Encoder-overload badge: same glyph as StatusOverlay's real
-                                                     EncoderOverloadBadge, but Fill is a plain static DynamicResource
-                                                     here since this preview is a still mockup; the real one flashes
-                                                     dark-red/light-red on a loop from code-behind (see
-                                                     StatusOverlay.SetEncoderOverloaded's own comment). -->
-                                                <Border Width="27" Height="27" Background="{DynamicResource BadgeBg}" BorderBrush="{DynamicResource BadgeBorder}" BorderThickness="1">
-                                                    <Path Fill="{DynamicResource Rec}" Stretch="Uniform" Width="15" Height="15"
-                                                          Data="F1 M256 32c14.2 0 27.3 7.5 34.5 19.8l216 368c7.3 12.4 7.3 27.7 .2 40.1S486.3 480 472 480L40 480c-14.3 0-27.6-7.7-34.7-20.1s-7-27.8 .2-40.1l216-368C228.7 39.5 241.8 32 256 32zm0 128c-13.3 0-24 10.7-24 24l0 112c0 13.3 10.7 24 24 24s24-10.7 24-24l0-112c0-13.3-10.7-24-24-24zm32 224a32 32 0 1 0 -64 0 32 32 0 1 0 64 0z"/>
-                                                </Border>
-                                                <Border Width="27" Height="27" Background="{DynamicResource BadgeBg}" BorderBrush="{DynamicResource BadgeBorder}" BorderThickness="1" Margin="5,0,0,0">
-                                                    <Ellipse Width="10" Height="10" Fill="{DynamicResource Rec}" HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                                                </Border>
-                                                <Border Width="27" Height="27" Background="{DynamicResource BadgeBg}" BorderBrush="{DynamicResource BadgeBorder}" BorderThickness="1" Margin="5,0,0,0">
-                                                    <Ellipse Width="10" Height="10" Fill="{DynamicResource Stream}" HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                                                </Border>
-                                                <!-- Virtual Camera badge: same glyph as StatusOverlay's real
-                                                     VirtualCamBadge (Font Awesome solid "video", CC BY 4.0). -->
-                                                <Border Width="27" Height="27" Background="{DynamicResource BadgeBg}" BorderBrush="{DynamicResource BadgeBorder}" BorderThickness="1" Margin="5,0,0,0">
-                                                    <Path Fill="{DynamicResource Green}" Stretch="Uniform" Width="13" Height="13"
-                                                          Data="M0 128C0 92.7 28.7 64 64 64l256 0c35.3 0 64 28.7 64 64l0 256c0 35.3-28.7 64-64 64L64 448c-35.3 0-64-28.7-64-64L0 128zM559.1 99.8c10.4 5.6 16.9 16.4 16.9 28.2l0 256c0 11.8-6.5 22.6-16.9 28.2s-23 5-32.9-1.6l-96-64L416 337.1l0-17.1 0-128 0-17.1 14.2-9.5 96-64c9.8-6.5 22.4-7.2 32.9-1.6z"/>
-                                                </Border>
-                                                <Border Width="27" Height="27" Background="{DynamicResource BadgeBg}" BorderBrush="{DynamicResource BadgeBorder}" BorderThickness="1" Margin="5,0,0,0">
-                                                    <TextBlock Text="&#8635;" FontSize="16" FontWeight="Bold" Foreground="{DynamicResource Green}" HorizontalAlignment="Center" VerticalAlignment="Center" Margin="0,-2,0,0"/>
-                                                </Border>
-                                                <Border Width="27" Height="27" Background="{DynamicResource BadgeBg}" BorderBrush="{DynamicResource BadgeBorder}" BorderThickness="1" Margin="5,0,0,0">
-                                                    <Path Fill="{DynamicResource Rec}" Stretch="Uniform" Width="12" Height="12"
-                                                          Data="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z
-                                                                M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"/>
-                                                </Border>
-                                            </StackPanel>
-                                        </Grid>
-                                    </Viewbox>
-                                </Border>
-                            </StackPanel>
-                        </Border>
-
-                        <!-- Collapsed by default, and kept last: this is the RAM disk stuff, which most
-                             people never need to touch and shouldn't have to scroll past to reach the
-                             settings they actually came here for. -->
-                        <Border x:Name="ExperimentalHeader" Margin="0,24,0,0"
+                        <!-- 6. EXPERIMENTAL (Collapsible in Red) -->
+                        <Border x:Name="ExperimentalHeader" Margin="0,16,0,0"
                                 Background="Transparent" Cursor="Hand" MouseLeftButtonUp="ExperimentalHeader_Click">
                             <TextBlock x:Name="ExperimentalHeaderText" Text="▸ EXPERIMENTAL" FontSize="11" FontWeight="Bold" Foreground="{DynamicResource Rec}"/>
                         </Border>
                         <StackPanel x:Name="ExperimentalContent" Visibility="Collapsed" Margin="0,10,0,0">
-                            <TextBlock Text="RAM DISK" FontSize="11" FontWeight="Bold" Foreground="{DynamicResource Text1}" Margin="0,0,0,10"/>
-                            <TextBlock x:Name="RamDiskRemoteNotice" Visibility="Collapsed"
-                                       Text="OBS is on a different PC right now, so a RAM disk mounted here wouldn't be the one OBS actually writes to. This section is disabled; use &quot;Transmitter's RAM disk&quot; below instead, which controls it on the PC that's actually running OBS."
-                                       FontSize="11" Foreground="{DynamicResource Rec}" TextWrapping="Wrap" Margin="0,0,0,10"/>
                             <StackPanel x:Name="LocalRamDiskSection">
+                                <TextBlock Text="RAM DISK" FontSize="11" FontWeight="Bold" Foreground="{DynamicResource Text1}" Margin="0,0,0,10"/>
                                 <Border Style="{StaticResource SettingsRow}" BorderThickness="0">
                                     <Grid>
                                         <Grid.ColumnDefinitions>
@@ -1712,7 +1668,7 @@
                             </StackPanel>
 
                             <StackPanel x:Name="RemoteRamDiskSection" Visibility="Collapsed" Margin="0,0,0,10">
-                                <TextBlock Text="TRANSMITTER'S RAM DISK" FontSize="11" FontWeight="Bold" Foreground="{DynamicResource Text1}" Margin="0,24,0,10"/>
+                                <TextBlock Text="TRANSMITTER'S RAM DISK" FontSize="11" FontWeight="Bold" Foreground="{DynamicResource Text1}" Margin="0,0,0,10"/>
                                 <TextBlock x:Name="RemoteRamDiskStatusText" Text="Not paired with a transmitter PC yet." FontSize="11" Foreground="{DynamicResource Text2}" TextWrapping="Wrap" Margin="0,0,0,10"/>
                                 <StackPanel x:Name="RemoteRamDiskFields" Visibility="Collapsed">
                                     <Grid Margin="0,0,0,6">
@@ -1733,8 +1689,6 @@
                                         <TextBox x:Name="RemoteRamDiskDriveBox" Background="{DynamicResource RowBg}" Foreground="{DynamicResource Text0}" CaretBrush="{DynamicResource Text0}" BorderThickness="0" Padding="10,8" MaxLength="1" TextAlignment="Center"/>
                                         <TextBox x:Name="RemoteRamDiskSizeBox" Grid.Column="2" Background="{DynamicResource RowBg}" Foreground="{DynamicResource Text0}" CaretBrush="{DynamicResource Text0}" BorderThickness="0" Padding="10,8"/>
                                     </Grid>
-                                    <!-- One shared "apply everything at once" button, unlike the local section's
-                                         immediate-toggle: avoids a second round-trip just for the enabled flag. -->
                                     <Button Content="Save &amp; apply on transmitter" Style="{StaticResource FlatButton}" HorizontalAlignment="Left" Click="ApplyRemoteRamDiskSettings_Click"/>
                                 </StackPanel>
                             </StackPanel>
@@ -1832,18 +1786,16 @@
                             </Border>
                         </StackPanel>
 
-                        <!-- Collapsed by default, and kept after Experimental: these are
-                             one-way, irreversible actions (uninstalling Backtrack itself
-                             included), so they get their own gate instead of sitting loose
-                             at the bottom of Experimental where a stray click is cheaper. -->
-                        <Border x:Name="DestructiveHeader" Margin="0,24,0,0"
+                        <!-- 7. MAINTENANCE (Collapsible in Red) -->
+                        <Border x:Name="DestructiveHeader" Margin="0,20,0,0"
                                 Background="Transparent" Cursor="Hand" MouseLeftButtonUp="DestructiveHeader_Click">
-                            <TextBlock x:Name="DestructiveHeaderText" Text="▸ DESTRUCTIVE" FontSize="11" FontWeight="Bold" Foreground="{DynamicResource Rec}"/>
+                            <TextBlock x:Name="DestructiveHeaderText" Text="▸ MAINTENANCE" FontSize="11" FontWeight="Bold" Foreground="{DynamicResource Rec}"/>
                         </Border>
                         <StackPanel x:Name="DestructiveContent" Visibility="Collapsed" Margin="0,10,0,0">
                             <TextBlock Text="These can't be undone. Each one asks you to confirm first."
                                        FontSize="11" Foreground="{DynamicResource Text2}" TextWrapping="Wrap" Margin="0,0,0,14"/>
 
+                            <TextBlock Text="DATA &amp; RESET" FontSize="11" FontWeight="Bold" Foreground="{DynamicResource Text1}" Margin="0,0,0,10"/>
                             <Border Style="{StaticResource SettingsRow}" BorderThickness="0">
                                 <Grid>
                                     <Grid.ColumnDefinitions>
@@ -1874,7 +1826,8 @@
                                 </Grid>
                             </Border>
 
-                            <Border Style="{StaticResource SettingsRow}" BorderThickness="0" Margin="0,10,0,0">
+                            <TextBlock Text="UNINSTALL" FontSize="11" FontWeight="Bold" Foreground="{DynamicResource Text1}" Margin="0,20,0,10"/>
+                            <Border Style="{StaticResource SettingsRow}" BorderThickness="0">
                                 <Grid>
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition/>

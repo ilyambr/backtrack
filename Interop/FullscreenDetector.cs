@@ -150,6 +150,7 @@ public static class FullscreenDetector
     private static readonly HashSet<string> ExplorerShellWindowClasses = new(StringComparer.OrdinalIgnoreCase)
     {
         "XamlExplorerHostIslandWindow",
+        "XamlExplorerHostIslandWindow_WASDK",
         "Progman",
         "WorkerW",
         "Shell_TrayWnd",
@@ -168,9 +169,9 @@ public static class FullscreenDetector
     };
 
     // Edge-triggered ("only when it actually changes") diagnostic logging,
-    // same shape as the old version's -- Settings > Experimental >
-    // Diagnostics > Open Diagnostic Log.
-    private static string? _lastLoggedState;
+    // separated by detector method so they don't overwrite each other's cache key on every tick.
+    private static string? _lastLoggedShellState;
+    private static string? _lastLoggedFullscreenState;
 
     /// <summary>
     /// True when the taskbar is set to auto-hide at all (a static setting,
@@ -234,7 +235,7 @@ public static class FullscreenDetector
             // different monitor than this one) isn't the taskbar.
             if (processName.Equals("explorer", StringComparison.OrdinalIgnoreCase) && !ExplorerShellWindowClasses.Contains(className))
             {
-                LogStateIfChanged($"ignoring ordinary explorer.exe window (not a shell surface): class=\"{className}\" title=\"{title}\"");
+                LogShellStateIfChanged($"ignoring ordinary explorer.exe window (not a shell surface): class=\"{className}\" title=\"{title}\"");
                 return false;
             }
 
@@ -248,11 +249,11 @@ public static class FullscreenDetector
             // menu does.
             if (title == "Task Switching")
             {
-                LogStateIfChanged($"ignoring Alt+Tab switcher (not a real taskbar surface): process={processName}");
+                LogShellStateIfChanged($"ignoring Alt+Tab switcher (not a real taskbar surface): process={processName}");
                 return false;
             }
 
-            LogStateIfChanged($"shell surface active: class=\"{className}\" title=\"{title}\" process={processName}");
+            LogShellStateIfChanged($"shell surface active: class=\"{className}\" title=\"{title}\" process={processName}");
             return true;
         }
         catch
@@ -340,12 +341,12 @@ public static class FullscreenDetector
 
                 var titleBuffer = new StringBuilder(128);
                 GetWindowText(hWnd, titleBuffer, titleBuffer.Capacity);
-                LogStateIfChanged($"topmost on monitor {monitorInfo.szDevice}: class=\"{className}\" title=\"{titleBuffer}\" process={processName} coversMonitor={coversMonitor}");
+                LogFullscreenStateIfChanged($"topmost on monitor {monitorInfo.szDevice}: class=\"{className}\" title=\"{titleBuffer}\" process={processName} coversMonitor={coversMonitor}");
                 return false; // stop -- found the topmost real window on this monitor
             }, 0);
 
             if (coversMonitor is null)
-                LogStateIfChanged($"nothing real found on monitor {deviceName}");
+                LogFullscreenStateIfChanged($"nothing real found on monitor {deviceName}");
 
             return coversMonitor ?? false;
         }
@@ -355,11 +356,19 @@ public static class FullscreenDetector
         }
     }
 
-    private static void LogStateIfChanged(string state)
+    private static void LogShellStateIfChanged(string state)
     {
-        if (state == _lastLoggedState)
+        if (state == _lastLoggedShellState)
             return;
-        _lastLoggedState = state;
+        _lastLoggedShellState = state;
+        AppLog.Write($"FullscreenDetector: {state}");
+    }
+
+    private static void LogFullscreenStateIfChanged(string state)
+    {
+        if (state == _lastLoggedFullscreenState)
+            return;
+        _lastLoggedFullscreenState = state;
         AppLog.Write($"FullscreenDetector: {state}");
     }
 

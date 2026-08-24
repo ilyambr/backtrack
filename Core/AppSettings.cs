@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Text.Json;
@@ -69,6 +69,10 @@ public sealed class AppSettings
     public int HotkeyModifiers { get; set; } = 0x1 | 0x2; // Alt | Control
     public int HotkeyVirtualKey { get; set; } = 'G';
 
+    // Global hotkey to cancel in-progress recording and discard the recorded file.
+    public int CancelRecordHotkeyModifiers { get; set; } = 0;
+    public int CancelRecordHotkeyVirtualKey { get; set; } = 0;
+
     public bool ShowDisclaimer { get; set; } = true;
 
     // Mirrors the tray icon's own "Hide Status Overlay"/"Show Status Overlay"
@@ -92,6 +96,9 @@ public sealed class AppSettings
     // to happen unattended, not about losing the ability to trigger it.
     public bool DisableBacktrackAutoUpdate { get; set; }
     public bool DisablePluginAutoUpdate { get; set; }
+
+    // Audio chimes played when recordings or clips are saved (opt-out, enabled by default).
+    public bool DisableAudioCues { get; set; }
 
     // See ThemeIdConverter's own comment for why this needs a custom
     // converter: an existing settings.json's stored value predates this
