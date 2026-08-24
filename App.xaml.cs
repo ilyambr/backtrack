@@ -77,8 +77,8 @@ public partial class App : Application
         bool isPrimary;
         try
         {
-            _appMutex = new Mutex(false, @"Local\Backtrack_SingleInstance_Mutex_v3");
-            isPrimary = _appMutex.WaitOne(TimeSpan.Zero, false);
+            _appMutex = new Mutex(true, @"Local\Backtrack_SingleInstance_Mutex_v3", out bool createdNew);
+            isPrimary = createdNew;
         }
         catch (AbandonedMutexException)
         {

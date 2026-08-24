@@ -159,6 +159,7 @@ public partial class MainWindow : Window
     private const int CancelRecordHotkeyId = 0x9002;
     private GlobalHotkey? _hotkey;
     private GlobalHotkey? _cancelRecordHotkey;
+    private readonly List<GlobalHotkey> _remoteRowHotkeys = new();
     private bool _capturingCancelRecordHotkey;
     private bool _cancellingMainRecording;
     private string? _cancellingMainRecordingDuration;
@@ -304,6 +305,20 @@ public partial class MainWindow : Window
 
         _pairing = new PairingService(_settings);
         _remoteStreamServer = new RemoteClipStreamServer(_pairing);
+        _remoteStreamServer.StreamStarted += (token, totalBytes) => Dispatcher.BeginInvoke(() =>
+        {
+            if (_currentStreamToken == token && totalBytes > 0)
+            {
+                _remoteStreamTotalBytes = totalBytes;
+                StatSize.Text = $"{totalBytes / 1024.0 / 1024.0:0.#} MB";
+                long durMs = _vlcPlayer?.Length ?? 0;
+                if (durMs > 0)
+                {
+                    long kbps = (long)((totalBytes * 8.0) / (durMs / 1000.0) / 1000.0);
+                    StatBitrate.Text = $"{kbps:N0} kbps";
+                }
+            }
+        });
         _pairing.PairingRequested += (deviceName, code, requestId) => Dispatcher.BeginInvoke(() =>
         {
             _pairingRequestOverlay.ShowRequest(deviceName, code,
@@ -476,6 +491,13 @@ public partial class MainWindow : Window
         // it always used to for every trigger, not just a hotkey one.
         _obs.ReplaySaving += key => Dispatcher.BeginInvoke(async () =>
         {
+            var replayRows = await _obs.ListReplayRowsAsync();
+            var match = replayRows.FirstOrDefault(r => r.Key == key);
+            if (match is not null && match.Status == 0)
+            {
+                // Inactive buffer (Status == 0, grey dot) -- do not show processing toast
+                return;
+            }
             string label = await ResolveRowLabelAsync(key);
             _toastOverlay.ShowProcessingClip(key, label);
         });
@@ -2578,11 +2600,259 @@ public partial class MainWindow : Window
         {
             foreach (ReplayRow row in await _obs.ListReplayRowsAsync())
                 _rowLabels[row.Key] = row.Label;
+
+            await RefreshRemoteRowHotkeysAsync();
         }
         catch
         {
             // Fine -- the toast just falls back to showing the row key instead of its label.
         }
+    }
+
+    /// <summary>
+    /// When OBS is remote, the streaming PC's OBS instance never receives keystrokes from this
+    /// gaming PC. Backtrack intercepts the row hotkeys configured in OBS on this machine, and
+    /// forwards the save/record triggers over obs-websocket.
+    /// When OBS is local, OBS handles hotkeys itself directly, so this is disabled.
+    /// </summary>
+    private async Task RefreshRemoteRowHotkeysAsync()
+    {
+        foreach (var hk in _remoteRowHotkeys)
+        {
+            try { hk.Dispose(); } catch { }
+        }
+        _remoteRowHotkeys.Clear();
+
+        if (!_settings.ObsIsRemote || !_obs.IsConnected)
+            return;
+
+        try
+        {
+            var replayRows = await _obs.ListReplayRowsAsync();
+            var recordRows = await _obs.ListRecordRowsAsync();
+
+            var hotkeyActions = new Dictionary<(GlobalHotkey.Modifiers, uint), List<Func<Task>>>();
+
+            foreach (var row in replayRows)
+            {
+                if (TryParseHotkeyString(row.Hotkey, out var mods, out var vk))
+                {
+                    if (!hotkeyActions.TryGetValue((mods, vk), out var list))
+                    {
+                        list = new List<Func<Task>>();
+                        hotkeyActions[(mods, vk)] = list;
+                    }
+                    string rowKey = row.Key;
+                    list.Add(async () =>
+                    {
+                        var freshRows = await _obs.ListReplayRowsAsync();
+                        var match = freshRows.FirstOrDefault(r => r.Key == rowKey);
+                        if (match is not null && match.Status == 0)
+                        {
+                            AppLog.Write($"[hotkey] Inactive replay buffer '{rowKey}' ignored");
+                            return;
+                        }
+                        if (TryBlockForStorageLimit(out string? blockMessage))
+                        {
+                            _toastOverlay.ShowStorageLimitWarning(blockMessage);
+                            return;
+                        }
+                        await _obs.SaveReplayRowAsync(rowKey);
+                    });
+                }
+            }
+
+            foreach (var row in recordRows)
+            {
+                if (TryParseHotkeyString(row.Hotkey, out var mods, out var vk))
+                {
+                    if (!hotkeyActions.TryGetValue((mods, vk), out var list))
+                    {
+                        list = new List<Func<Task>>();
+                        hotkeyActions[(mods, vk)] = list;
+                    }
+                    string rowKey = row.Key;
+                    list.Add(async () =>
+                    {
+                        try
+                        {
+                            var freshRows = await _obs.ListRecordRowsAsync();
+                            var match = freshRows.FirstOrDefault(r => r.Key == rowKey);
+                            if (match is not null)
+                            {
+                                if (match.Status == RecordStatusRecording)
+                                {
+                                    await _obs.StopRecordRowAsync(rowKey);
+                                }
+                                else if (match.Status == RecordStatusStopped)
+                                {
+                                    if (TryBlockForStorageLimit(out string? blockMessage))
+                                    {
+                                        _toastOverlay.ShowStorageLimitWarning(blockMessage);
+                                        return;
+                                    }
+                                    await _obs.StartRecordRowAsync(rowKey);
+                                }
+                            }
+                            await RefreshStatusAsync();
+                        }
+                        catch (Exception ex)
+                        {
+                            AppLog.Write($"Remote record hotkey error for {rowKey}: {ex.Message}");
+                        }
+                    });
+                }
+            }
+
+            int hotkeyId = 0x9200;
+            foreach (var (combo, actions) in hotkeyActions)
+            {
+                try
+                {
+                    var hk = new GlobalHotkey(this, combo.Item1, combo.Item2, id: hotkeyId++);
+                    hk.Pressed += () => Dispatcher.Invoke(async () =>
+                    {
+                        foreach (var action in actions)
+                        {
+                            try { await action(); } catch (Exception ex) { AppLog.Write($"Remote hotkey action error: {ex.Message}"); }
+                        }
+                    });
+                    _remoteRowHotkeys.Add(hk);
+                    AppLog.Write($"Registered remote OBS hotkey: {combo.Item1}+{combo.Item2}");
+                }
+                catch (Exception ex)
+                {
+                    AppLog.Write($"Could not register remote OBS hotkey for {combo.Item1}+{combo.Item2}: {ex.Message}");
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            AppLog.Write($"RefreshRemoteRowHotkeysAsync failed: {ex.Message}");
+        }
+    }
+
+    private static bool TryParseHotkeyString(string hotkeyStr, out GlobalHotkey.Modifiers modifiers, out uint virtualKey)
+    {
+        modifiers = 0;
+        virtualKey = 0;
+
+        if (string.IsNullOrWhiteSpace(hotkeyStr) || hotkeyStr.Equals("(unbound)", StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        string[] parts = hotkeyStr.Split('+', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (parts.Length == 0)
+            return false;
+
+        string mainKeyPart = parts[^1];
+
+        for (int i = 0; i < parts.Length - 1; i++)
+        {
+            string p = parts[i].ToLowerInvariant();
+            if (p is "ctrl" or "control")
+                modifiers |= GlobalHotkey.Modifiers.Control;
+            else if (p is "alt" or "menu")
+                modifiers |= GlobalHotkey.Modifiers.Alt;
+            else if (p is "shift")
+                modifiers |= GlobalHotkey.Modifiers.Shift;
+            else if (p is "win" or "windows" or "super" or "cmd")
+                modifiers |= GlobalHotkey.Modifiers.Win;
+        }
+
+        string keyClean = mainKeyPart.Trim();
+        string keyLower = keyClean.ToLowerInvariant();
+
+        if (keyLower.StartsWith("f") && int.TryParse(keyLower[1..], out int fNum) && fNum >= 1 && fNum <= 24)
+        {
+            virtualKey = (uint)(0x70 + (fNum - 1));
+            return true;
+        }
+
+        if (keyClean.Length == 1)
+        {
+            char c = char.ToUpperInvariant(keyClean[0]);
+            if (c >= 'A' && c <= 'Z')
+            {
+                virtualKey = c;
+                return true;
+            }
+            if (c >= '0' && c <= '9')
+            {
+                virtualKey = c;
+                return true;
+            }
+            virtualKey = c switch
+            {
+                ';' => 186,
+                '=' or '+' => 187,
+                ',' => 188,
+                '-' => 189,
+                '.' => 190,
+                '/' => 191,
+                '`' or '~' => 192,
+                '[' => 219,
+                '\\' => 220,
+                ']' => 221,
+                '\'' => 222,
+                _ => 0
+            };
+            if (virtualKey != 0)
+                return true;
+        }
+
+        virtualKey = keyLower switch
+        {
+            "space" or "spacebar" => 0x20,
+            "tab" => 0x09,
+            "enter" or "return" => 0x0D,
+            "esc" or "escape" => 0x1B,
+            "backspace" or "back" => 0x08,
+            "del" or "delete" => 0x2E,
+            "ins" or "insert" => 0x2D,
+            "home" => 0x24,
+            "end" => 0x23,
+            "page up" or "pageup" or "pgup" => 0x21,
+            "page down" or "pagedown" or "pgdn" => 0x22,
+            "up" or "arrow up" or "arrowup" => 0x26,
+            "down" or "arrow down" or "arrowdown" => 0x28,
+            "left" or "arrow left" or "arrowleft" => 0x25,
+            "right" or "arrow right" or "arrowright" => 0x27,
+            "caps lock" or "capslock" or "caps" => 0x14,
+            "scroll lock" or "scrolllock" => 0x91,
+            "num lock" or "numlock" => 0x90,
+            "print screen" or "printscreen" or "prtscn" or "snapshot" => 0x2C,
+            "pause" or "break" => 0x13,
+            "num 0" or "numpad 0" or "numpad0" => 0x60,
+            "num 1" or "numpad 1" or "numpad1" => 0x61,
+            "num 2" or "numpad 2" or "numpad2" => 0x62,
+            "num 3" or "numpad 3" or "numpad3" => 0x63,
+            "num 4" or "numpad 4" or "numpad4" => 0x64,
+            "num 5" or "numpad 5" or "numpad5" => 0x65,
+            "num 6" or "numpad 6" or "numpad6" => 0x66,
+            "num 7" or "numpad 7" or "numpad7" => 0x67,
+            "num 8" or "numpad 8" or "numpad8" => 0x68,
+            "num 9" or "numpad 9" or "numpad9" => 0x69,
+            "period" => 190,
+            "comma" => 188,
+            "minus" => 189,
+            "plus" or "equals" => 187,
+            "slash" => 191,
+            "backslash" => 220,
+            "semicolon" => 186,
+            "quote" or "apostrophe" => 222,
+            _ => 0
+        };
+
+        if (virtualKey != 0)
+            return true;
+
+        if (Enum.TryParse<Key>(keyClean, true, out Key parsedKey) && parsedKey != Key.None)
+        {
+            virtualKey = (uint)KeyInterop.VirtualKeyFromKey(parsedKey);
+            return virtualKey != 0;
+        }
+
+        return false;
     }
 
     /// <summary>
@@ -3365,7 +3635,10 @@ public partial class MainWindow : Window
         // extra cycle was a real regression: a black/grey/black flash right
         // as a clip opens.
         if (screen != Screen.Player)
+        {
             PlayerOverlayPopup.IsOpen = false;
+            PlayerMenuPopup.IsOpen = false;
+        }
 
         // NOT the full StopPlayerPlayback() -- DetachPlayerVideo() already ran
         // up above, before the resize. This is only the slow half (LibVLC's
@@ -3425,9 +3698,8 @@ public partial class MainWindow : Window
         // Sized from the actual video column's width using a 16:9 ratio, not a
         // guessed fraction of screen height: picking the height independently of
         // the video's real aspect ratio was letterboxing it (grey bars either
-        // side) whenever the guess didn't match. The rail column is a fixed 90px
-        // and RootBorder has a 1px border each side.
-        double videoColumnWidth = Width - 90 - 2;
+        // side) whenever the guess didn't match. RootBorder has a 1px border each side.
+        double videoColumnWidth = Width - 2;
         double contentHeight = Math.Max(videoColumnWidth * 9.0 / 16.0, 320);
 
         // Gallery uses the exact same height as the Player's video area, not its
@@ -4310,9 +4582,6 @@ public partial class MainWindow : Window
         _preFullscreenWidth = Width;
         _preFullscreenLeft = Left;
 
-        PlayerSidebar.Visibility = Visibility.Collapsed;
-        PlayerSidebarColumn.Width = new GridLength(0);
-
         // Captured BEFORE reparenting below, while it's still measured from
         // its normal docked position -- its own natural height doesn't
         // depend on which parent hosts it (Auto-sized content throughout),
@@ -4366,51 +4635,23 @@ public partial class MainWindow : Window
         const double transportPillVerticalPadding = 12; // Border's Padding="20,6": 6 top + 6 bottom
         const double transportPillHorizontalPadding = 40; // Border's Padding="20,6": 20 left + 20 right
         PlayerFullscreenTransportBorder.Width = videoWidth - transportPillSideInset;
-        // Also tried forcing PlayerTransportRow.Width (the Grid the seek
-        // track's own "*" column lives in) explicitly, cascading this same
-        // approach one level deeper -- reverted, see
-        // ReopenPlayerFullscreenTransportPopup's own comment: playback got
-        // stuck at end-of-clip (stuck play button, seeking backward stopped
-        // working) right after that change, not root-caused yet. Left at
-        // just PlayerTransportBar's own explicit Width for now.
         PlayerTransportBar.Width = PlayerFullscreenTransportBorder.Width - transportPillHorizontalPadding;
         PlayerFullscreenTransportPopup.HorizontalOffset = transportPillSideInset / 2;
         PlayerFullscreenTransportPopup.VerticalOffset =
             videoHeight - (transportBarHeight + transportPillVerticalPadding) - transportPillBottomGap;
 
-        // Extra breathing room added as Margin on the popup's own INNER
-        // content, not as more Popup.HorizontalOffset/VerticalOffset -- the
-        // Popup's base 10,10 offset (unchanged, XAML default) is placed
-        // relative to VideoView, an HwndHost, and pushing that number higher
-        // wasn't visibly moving anything, reported live across three
-        // attempts (10->28->40, no visible change each time). Whatever's
-        // going on with Popup-relative-to-HwndHost placement precision,
-        // ordinary Margin on content already inside the (correctly
-        // positioned) popup is plain WPF layout with no HwndHost placement
-        // math involved at all.
-        //
-        // PlayerTitleBarHost (the outer Grid) also needs to grow to match --
-        // its own Height is a fixed 46 in XAML, sized for the pill at its
-        // default (no margin) position; a top margin alone just pushes the
-        // content into that same fixed box and clips it, reported live as
-        // "cropped from the top and the bottom" back when this was 34 (the
-        // pill's own padding wasn't part of the picture yet then).
-        //
-        // On the pill itself (PlayerTitlePill), not the StackPanel inside it
-        // -- margin on the inner content alone would leave the pill's own
-        // background/rounded-corner chip sitting still at the corner while
-        // just its content shifted inside it, visibly detached from its own
-        // backdrop.
-        PlayerTitlePill.Margin = new Thickness(8, 2, 0, 0);
-        PlayerTitleBarHost.Height = 46 + 2;
+        // Top bar gets pushed down slightly in fullscreen (20px vs normal 10px)
+        // and inset from both screen edges (20px vs normal 10px),
+        // matching the transport bar's own floating look.
+        PlayerTitlePill.Margin = new Thickness(10, 10, 0, 0);
+        PlayerMenuPill.Margin = new Thickness(0, 10, 30, 0);
+        PlayerTitleBarHost.Height = 56;
 
-        // This window is about to cover the Scrim's own top-left corner
-        // (where its exit button lives) with the video -- collapse that
-        // button so it can't show through regardless of exact bounds/
-        // z-order; see SetExitButtonVisible's own comment.
+        // Don't show the window-close "X" while in fullscreen -- you can't
+        // close the app from here, only exit fullscreen.
         _scrim.SetExitButtonVisible(false);
 
-        // RootBorder's 1px hairline is right for every other screen (it
+        // Border around the window is a HUD-framing visual in normal mode (it
         // reads as the HUD panel's own edge), but in fullscreen it reads as
         // "this is still just a bordered app window", not actual fullscreen
         // video -- gone for the duration, restored in ExitPlayerFullscreen.
@@ -4428,9 +4669,6 @@ public partial class MainWindow : Window
 
         RootBorder.BorderThickness = new Thickness(1);
 
-        PlayerSidebar.Visibility = Visibility.Visible;
-        PlayerSidebarColumn.Width = new GridLength(90);
-
         PlayerFullscreenTransportPopup.IsOpen = false;
         PlayerFullscreenTransportBorder.Child = null;
         PlayerTransportBar.ClearValue(BackgroundProperty);
@@ -4443,6 +4681,7 @@ public partial class MainWindow : Window
         Left = _preFullscreenLeft;
 
         PlayerTitlePill.Margin = new Thickness(0);
+        PlayerMenuPill.Margin = new Thickness(0, 0, 20, 0);
         PlayerTitleBarHost.Height = 46;
         _scrim.SetExitButtonVisible(true);
 
@@ -5093,13 +5332,6 @@ public partial class MainWindow : Window
             button.IsEnabled = false;
             try
             {
-                // save_row itself returns almost instantly -- it only flushes the
-                // buffer to disk. The actual trim down to this row's clip length
-                // happens afterward, async, on the OBS side (see
-                // ShowProcessingClip's own comment), so this button
-                // re-enabling is NOT the clip being ready.
-                //
-                _toastOverlay.ShowProcessingClip(row.Key, DisplayLabel(row.Label));
                 await _obs.SaveReplayRowAsync(row.Key);
             }
             catch (Exception ex)
@@ -6568,8 +6800,10 @@ public partial class MainWindow : Window
         // No FileInfo at all for a streamed clip -- these come straight from
         // the metadata list_gallery already gave us (RemoteGalleryFile),
         // same info a real download's FileInfo would've reported anyway.
+        _remoteStreamTotalBytes = file.Size;
         StatSize.Text = file.Size > 0 ? $"{file.Size / 1024.0 / 1024.0:0.#} MB" : "";
         StatDate.Text = $"{file.Modified.ToLocalTime():MMM d, yyyy h:mm tt}";
+        StatBitrate.Text = "";
 
         string streamUrl = _remoteStreamServer.PrepareStream(relativePath);
         _currentStreamToken = streamUrl[(streamUrl.LastIndexOf('/') + 1)..];
@@ -6588,6 +6822,7 @@ public partial class MainWindow : Window
     /// fixes that without needing to restart playback over a brand new URL.
     /// </summary>
     private string? _currentStreamToken;
+    private long _remoteStreamTotalBytes;
 
     /// <summary>
     /// Deterministic per-peer local cache path for one remote clip's actual
@@ -6635,6 +6870,7 @@ public partial class MainWindow : Window
         StatDate.Text = "";
         StatResolution.Text = "";
         StatFps.Text = "";
+        StatBitrate.Text = "";
 
         StopPlayerPlayback();
 
@@ -7501,10 +7737,6 @@ public partial class MainWindow : Window
         // second clip in a row ends up stuck at the first clip's position.
         // Deferred to DispatcherPriority.Loaded (after this call's own layout
         // pass, not immediately) since PlayerVideoView's ActualWidth/position
-        // right here isn't necessarily settled yet -- reopening too early
-        // would just cache another stale position instead of fixing anything.
-        // (ReopenPlayerOverlayPopup -- Enter/ExitPlayerFullscreen share this
-        // exact same need, for the exact same reason.)
         ReopenPlayerOverlayPopup();
         ShowPlayerFreezeFrame(file);
 
@@ -7512,6 +7744,7 @@ public partial class MainWindow : Window
         StatDate.Text = $"{file.LastWriteTime:MMM d, yyyy h:mm tt}";
         StatResolution.Text = "";
         StatFps.Text = "";
+        StatBitrate.Text = "";
 
         StopPlayerPlayback();
 
@@ -7547,12 +7780,6 @@ public partial class MainWindow : Window
     /// both targeting the same VideoView HWND. libvlc doesn't queue or fail
     /// loudly when that render target isn't cleanly available -- it just
     /// opens its own floating "VLC (Direct3D11 output)" window instead
-    /// (same fallback already documented on the headless thumbnail player
-    /// above, for the same underlying reason: no explicit render target).
-    /// Waiting for the old teardown to actually finish first closes that gap.
-    ///
-    /// The SAME failure mode also had a second, more direct cause: switching
-    /// clips fast enough queues more than one of these deferred calls before
     /// either runs (see OpenInPlayer's own comment on myToken/Loaded
     /// priority), and this used to just create a brand-new MediaPlayer and
     /// claim VideoView.MediaPlayer unconditionally -- with no dispose of
@@ -7663,6 +7890,14 @@ public partial class MainWindow : Window
                     StatResolution.Text = $"{videoTrack.Width} x {videoTrack.Height}";
                 if (videoTrack.FrameRateDen > 0)
                     StatFps.Text = $"{(double)videoTrack.FrameRateNum / videoTrack.FrameRateDen:0.##} fps";
+
+                long durMs = _vlcPlayer.Length;
+                long fileBytes = _currentPlayerFile?.Length ?? (_remoteStreamTotalBytes > 0 ? _remoteStreamTotalBytes : 0);
+                if (durMs > 0 && fileBytes > 0)
+                {
+                    long kbps = (long)((fileBytes * 8.0) / (durMs / 1000.0) / 1000.0);
+                    StatBitrate.Text = $"{kbps:N0} kbps";
+                }
             }
 
             // Track info isn't known the instant Play() is called -- LibVLC parses the
@@ -8077,18 +8312,17 @@ public partial class MainWindow : Window
         // bleed into whatever gets opened next.
         _freezeFrameTimer.Stop();
         PlayerFreezeFramePopup.IsOpen = false;
+        PlayerMenuPopup.IsOpen = false;
 
         // Reset fullscreen state whenever Player is torn down (this runs on
         // every switch away from Player, per ShowScreen), not just via
-        // ExitPlayerFullscreen -- otherwise the sidebar/column/icon state
+        // ExitPlayerFullscreen -- otherwise the fullscreen state
         // from a fullscreen session would silently carry over into the NEXT
         // time Player opens, even for a totally different clip.
         if (_isPlayerFullscreen)
         {
             _isPlayerFullscreen = false;
             RootBorder.BorderThickness = new Thickness(1);
-            PlayerSidebar.Visibility = Visibility.Visible;
-            PlayerSidebarColumn.Width = new GridLength(90);
             PlayerFullscreenTransportPopup.IsOpen = false;
             PlayerFullscreenTransportBorder.Child = null;
             PlayerTransportBar.ClearValue(BackgroundProperty);
@@ -8096,6 +8330,7 @@ public partial class MainWindow : Window
             DockPanel.SetDock(PlayerTransportBar, Dock.Bottom);
             PlayerVideoColumnDock.Children.Insert(0, PlayerTransportBar);
             PlayerTitlePill.Margin = new Thickness(0);
+            PlayerMenuPill.Margin = new Thickness(0, 0, 20, 0);
             PlayerTitleBarHost.Height = 46;
             _scrim.SetExitButtonVisible(true);
             PlayerFullscreenIcon.Data = Geometry.Parse(FullscreenEnterIcon);
@@ -8194,8 +8429,19 @@ public partial class MainWindow : Window
     /// _lastScreen elsewhere in this file never treating Player as a screen
     /// safe to auto-resume either.
     /// </summary>
+    private void PlayerMenuButton_Click(object sender, RoutedEventArgs e)
+    {
+        PlayerMenuPopup.IsOpen = !PlayerMenuPopup.IsOpen;
+    }
+
+    private void PlayerMenuButton_Click(object sender, MouseButtonEventArgs e)
+    {
+        PlayerMenuPopup.IsOpen = !PlayerMenuPopup.IsOpen;
+    }
+
     private void PlayerFolder_Click(object sender, RoutedEventArgs e)
     {
+        PlayerMenuPopup.IsOpen = false;
         if (_currentPlayerFile is null)
             return;
         RevealInExplorer(_currentPlayerFile.FullName);
@@ -8221,6 +8467,7 @@ public partial class MainWindow : Window
 
     private void PlayerRename_Click(object sender, RoutedEventArgs e)
     {
+        PlayerMenuPopup.IsOpen = false;
         // A streamed clip has no local FileInfo -- rename needs
         // _currentPlayerRemoteOrigin alone, same reasoning as
         // PlayerDelete_Click's own fix.
@@ -8348,6 +8595,7 @@ public partial class MainWindow : Window
 
     private void PlayerDelete_Click(object sender, RoutedEventArgs e)
     {
+        PlayerMenuPopup.IsOpen = false;
         // A streamed clip has no local FileInfo at all -- delete needs
         // _currentPlayerRemoteOrigin alone, not both, or every remote
         // delete during streaming would silently no-op (reported live as
@@ -8464,6 +8712,7 @@ public partial class MainWindow : Window
     /// </summary>
     private void PlayerTrim_Click(object sender, RoutedEventArgs e)
     {
+        PlayerMenuPopup.IsOpen = false;
         bool opening = TrimPanel.Visibility != Visibility.Visible;
         TrimPanel.Visibility = opening ? Visibility.Visible : Visibility.Collapsed;
         PlayerTransportRow.Visibility = opening ? Visibility.Collapsed : Visibility.Visible;
@@ -8987,30 +9236,10 @@ public partial class MainWindow : Window
                 AppLog.Write("[trim_clip] replace not confirmed -- aborted");
                 return;
             }
-
-            // The clip currently STREAMING right now holds a real open read
-            // handle on the transmitter's own copy of this file (see
-            // StreamFileResponseAsync) for as long as playback keeps going --
-            // trim_clip's own final overwrite on that PC needs to WRITE to
-            // that exact file, which a still-open reader blocks outright,
-            // not just briefly. Stopping playback here (same idea as
-            // RunTrimAsync's local path already does before its own export)
-            // is what actually lets that read handle go on the transmitter's
-            // side. Not needed for "save as new" -- that writes a brand new
-            // file, and a second concurrent READ of the original doesn't
-            // conflict with the stream's own read.
-            //
-            // DetachPlayerVideo()+DisposeVlcPlayerAsync(), NOT the plain
-            // StopPlayerPlayback() the local path uses -- that one blocks the
-            // UI thread on _vlcPlayer.Dispose() (see DisposeVlcPlayerSync's
-            // own comment on exactly this), which is fine for a local file
-            // but confirmed live to hang the WHOLE APP ("not responding")
-            // here specifically: disposing a MediaPlayer mid network-stream
-            // took long enough to be a real, visible freeze, not the near-
-            // instant local-file teardown that call was written for.
-            DetachPlayerVideo();
-            DisposeVlcPlayerAsync();
         }
+
+        DetachPlayerVideo();
+        DisposeVlcPlayerAsync();
 
         _isTrimming = true;
         TrimReplaceButton.IsEnabled = false;
@@ -9019,8 +9248,8 @@ public partial class MainWindow : Window
 
         try
         {
-            (bool success, string? error, string? newPath) = await _pairing.TrimRemoteClipAsync(relPath, start, end, replaceOriginal);
-            AppLog.Write(success ? "[trim_clip] RunRemoteTrimAsync: succeeded" : $"[trim_clip] RunRemoteTrimAsync: failed -- {error}");
+            (bool success, string? error, string? newPath, long trimmedSize) = await _pairing.TrimRemoteClipAsync(relPath, start, end, replaceOriginal);
+            AppLog.Write(success ? $"[trim_clip] RunRemoteTrimAsync: succeeded (size {trimmedSize} bytes)" : $"[trim_clip] RunRemoteTrimAsync: failed -- {error}");
             if (!success)
             {
                 MessageBox.Show(this, $"Couldn't trim on {_settings.PairedPeerName}'s PC: {error}", "Backtrack");
@@ -9031,31 +9260,18 @@ public partial class MainWindow : Window
             PlayerTransportRow.Visibility = Visibility.Visible;
             MoveTransportControlsForTrim(intoTrimRow: false);
 
-            string trimDisplayPath = newPath is not null
-                ? $"{_settings.PairedPeerName}: {newPath}"
-                : $"{_settings.PairedPeerName}'s PC";
-            _toastOverlay.ShowTrimSaved(trimDisplayPath);
+            string openedRelPath = newPath ?? relPath;
+            _toastOverlay.ShowTrimSaved(openedRelPath);
 
-            if (replaceOriginal)
-            {
-                StopPlayerPlayback();
-                ShowScreen(Screen.Gallery);
-                LoadGallery();
-                RefreshRecentClipsOverlay();
-            }
-            else
-            {
-                _ = RefreshGalleryCountAsync();
-                if (newPath is not null)
-                {
-                    var remoteFile = new RemoteGalleryFile(
-                        Name: Path.GetFileName(newPath),
-                        Size: 0,
-                        Modified: DateTime.UtcNow
-                    );
-                    OpenRemoteClipStreaming(newPath, remoteFile);
-                }
-            }
+            _ = RefreshGalleryCountAsync();
+            RefreshRecentClipsOverlay();
+
+            var remoteFile = new RemoteGalleryFile(
+                Name: Path.GetFileName(openedRelPath),
+                Size: trimmedSize,
+                Modified: DateTime.UtcNow
+            );
+            OpenRemoteClipStreaming(openedRelPath, remoteFile);
         }
         finally
         {
@@ -9075,7 +9291,7 @@ public partial class MainWindow : Window
     /// local save-as-new path, for the exact same reason: two remote trims
     /// of the same clip shouldn't silently clobber each other.
     /// </summary>
-    private async Task<(bool Success, string? Error, string? NewFileName)> TrimClipForRemoteAsync(string fullPath, double startSeconds, double endSeconds, bool replaceOriginal)
+    private async Task<(bool Success, string? Error, string? NewFileName, long Size)> TrimClipForRemoteAsync(string fullPath, double startSeconds, double endSeconds, bool replaceOriginal)
     {
         var file = new FileInfo(fullPath);
         var start = TimeSpan.FromSeconds(startSeconds);
@@ -9095,7 +9311,7 @@ public partial class MainWindow : Window
             long tempOutSize = File.Exists(tempOut) ? new FileInfo(tempOut).Length : -1;
             AppLog.Write($"[trim_clip] ExportTrim finished -- tempOut {(tempOutSize < 0 ? "does not exist" : $"is {tempOutSize} bytes")}");
             if (tempOutSize <= 0)
-                return (false, "The trim produced no output file (libvlc export failed silently) -- check this PC's own log around ExportTrim for details.", null);
+                return (false, "The trim produced no output file (libvlc export failed silently) -- check this PC's own log around ExportTrim for details.", null, 0);
 
             if (replaceOriginal)
             {
@@ -9110,22 +9326,24 @@ public partial class MainWindow : Window
                 // ApplySelfUpdateAsync's own robocopy step.
                 await CopyWithRetryAsync(tempOut, fullPath, overwrite: true);
                 File.Delete(tempOut);
-                AppLog.Write($"[trim_clip] replaced '{fullPath}' in place");
-                return (true, null, file.Name);
+                long replacedSize = new FileInfo(fullPath).Length;
+                AppLog.Write($"[trim_clip] replaced '{fullPath}' in place (size {replacedSize} bytes)");
+                return (true, null, file.Name, replacedSize);
             }
 
             string newName = GetTrimmedFileName(file.Name, name => File.Exists(Path.Combine(file.DirectoryName!, name)));
             string destPath = Path.Combine(file.DirectoryName!, newName);
             await CopyWithRetryAsync(tempOut, destPath, overwrite: false);
             File.Delete(tempOut);
-            AppLog.Write($"[trim_clip] saved as new file '{destPath}'");
-            return (true, null, newName);
+            long newSize = new FileInfo(destPath).Length;
+            AppLog.Write($"[trim_clip] saved as new file '{destPath}' (size {newSize} bytes)");
+            return (true, null, newName, newSize);
         }
         catch (Exception ex)
         {
             AppLog.WriteError("[trim_clip] TrimClipForRemoteAsync threw", ex);
             try { File.Delete(tempOut); } catch { /* best effort */ }
-            return (false, ex.Message, null);
+            return (false, ex.Message, null, 0);
         }
     }
 
@@ -9811,6 +10029,7 @@ public partial class MainWindow : Window
             (string url, string? password, _serverEnabledAtStartup) = ResolveObsConnection();
             _obs.Reconfigure(url, password);
             _ = RefreshStatusAsync();
+            _ = RefreshRemoteRowHotkeysAsync();
             RefreshRamDiskRemoteGating();
             RefreshPluginStatusRemoteGating();
         }
@@ -10680,6 +10899,11 @@ public partial class MainWindow : Window
         _libVlc?.Dispose();
         _hotkey?.Dispose();
         _cancelRecordHotkey?.Dispose();
+        foreach (var hk in _remoteRowHotkeys)
+        {
+            try { hk.Dispose(); } catch { }
+        }
+        _remoteRowHotkeys.Clear();
         // Tied to this app's own lifetime, not left mounted independent of it --
         // see InitializeRamDiskAsync. No-op if it was never mounted.
         if (_settings.RamDiskEnabled)

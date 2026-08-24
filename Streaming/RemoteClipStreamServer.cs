@@ -49,6 +49,8 @@ public sealed class RemoteClipStreamServer
     // own comment for the real bug that fixed.
     private readonly ConcurrentDictionary<string, string> _sessions = new();
 
+    public event Action<string, long>? StreamStarted;
+
     public RemoteClipStreamServer(PairingService pairing)
     {
         _pairing = pairing;
@@ -157,6 +159,7 @@ public sealed class RemoteClipStreamServer
                 context.Response.Close();
                 return;
             }
+            string token = match.Groups[1].Value;
 
             // libvlc sends "bytes=N-" when it seeks (never a bounded "N-M"
             // range in practice for this kind of open-ended media playback,
@@ -191,6 +194,7 @@ public sealed class RemoteClipStreamServer
             }
 
             long total = offset + remaining;
+            StreamStarted?.Invoke(token, total);
             context.Response.Headers["Accept-Ranges"] = "bytes";
             context.Response.ContentType = "video/mp4";
             context.Response.ContentLength64 = remaining;

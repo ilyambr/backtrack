@@ -66,7 +66,11 @@ public partial class ToastOverlay : Window
 
     public void ShowRecording(bool started, string? resolvedPath)
     {
-        if (!started)
+        if (started)
+        {
+            AudioCues.PlayRecordingStarted();
+        }
+        else
         {
             AudioCues.PlayRecordingSaved();
         }
@@ -84,9 +88,11 @@ public partial class ToastOverlay : Window
             resolvedPath is null ? null : $"Saved at '{resolvedPath}'", truncateSubMessage: true);
     }
 
-    /// <summary>See ObsService.EncoderOverloadDetected -- summary is a plain-English list of what's actually dropping frames right now (already built by the caller, this just displays it).</summary>
     public void ShowEncoderOverload(string summary) =>
         Show(GlyphIcon("⚠", Warning), Warning, "Encoder overloaded", summary);
+
+    public void ShowStorageLimitWarning(string? summary = null) =>
+        Show(GlyphIcon("⚠", Warning), Warning, "Storage limit reached", summary ?? "Free up space or raise the limit in Settings.");
 
     /// <summary>
     /// 10s, not the usual 4s -- this one means "whatever you were about to
@@ -167,6 +173,7 @@ public partial class ToastOverlay : Window
     // rows can share a label in principle (nothing enforces uniqueness on
     // obs-replay-slider's side).
     private readonly Dictionary<string, (Border Toast, Border Fill, DispatcherTimer Timer)> _processingToasts = new();
+    private readonly Dictionary<string, DateTime> _recentlyCompletedProcessing = new();
 
     /// <summary>
     /// Fired the moment a row's Save button is clicked, before the actual work
@@ -189,6 +196,12 @@ public partial class ToastOverlay : Window
     {
         if (_processingToasts.ContainsKey(key))
             return;
+
+        if (_recentlyCompletedProcessing.TryGetValue(key, out DateTime completedAt) &&
+            (DateTime.UtcNow - completedAt).TotalSeconds < 3.0)
+        {
+            return;
+        }
 
         if (!IsVisible)
         {
@@ -285,6 +298,8 @@ public partial class ToastOverlay : Window
     /// </summary>
     public void CompleteProcessingClip(string key, string label, string resolvedPath)
     {
+        _recentlyCompletedProcessing[key] = DateTime.UtcNow;
+
         if (!_processingToasts.Remove(key, out var entry))
         {
             // No processing toast was showing for this key (e.g. an

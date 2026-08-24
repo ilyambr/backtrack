@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
@@ -471,7 +471,7 @@ public sealed class PairingService : IDisposable
     /// the final file's own name (not full path; HandleTrimClipAsync turns
     /// that into a relative path itself) on success.
     /// </summary>
-    public Func<string, double, double, bool, Task<(bool Success, string? Error, string? NewFileName)>>? TrimClipForRemote { get; set; }
+    public Func<string, double, double, bool, Task<(bool Success, string? Error, string? NewFileName, long Size)>>? TrimClipForRemote { get; set; }
 
     /// <summary>
     /// The relative path (forward-slash separated, matching MainWindow's own
@@ -702,7 +702,7 @@ public sealed class PairingService : IDisposable
         }
 
         AppLog.Write($"[trim_clip] resolved to '{fullPath}' -- starting export");
-        (bool success, string? error, string? newFileName) = await TrimClipForRemote(fullPath, startSeconds, endSeconds, replaceOriginal);
+        (bool success, string? error, string? newFileName, long fileSize) = await TrimClipForRemote(fullPath, startSeconds, endSeconds, replaceOriginal);
         if (!success || newFileName is null)
         {
             AppLog.Write($"[trim_clip] TrimClipForRemote FAILED: {error ?? "(no error message)"}");
@@ -710,8 +710,8 @@ public sealed class PairingService : IDisposable
         }
 
         string newRelativePath = WithNewFileName(relativePath, newFileName);
-        AppLog.Write($"[trim_clip] success -- new relative path '{newRelativePath}'");
-        return JsonSerializer.Serialize(new { success = true, path = newRelativePath });
+        AppLog.Write($"[trim_clip] success -- new relative path '{newRelativePath}', size {fileSize} bytes");
+        return JsonSerializer.Serialize(new { success = true, path = newRelativePath, size = fileSize });
     }
 
     /// <summary>
@@ -1166,12 +1166,12 @@ public sealed class PairingService : IDisposable
     /// that made it all the way to a real {success:false} response instead
     /// shows up in the TRANSMITTER's own log, from HandleTrimClipAsync.
     /// </summary>
-    public async Task<(bool Success, string? Error, string? NewPath)> TrimRemoteClipAsync(string relativePath, TimeSpan start, TimeSpan end, bool replaceOriginal)
+    public async Task<(bool Success, string? Error, string? NewPath, long Size)> TrimRemoteClipAsync(string relativePath, TimeSpan start, TimeSpan end, bool replaceOriginal)
     {
         if (string.IsNullOrEmpty(_settings.PairedPeerHost) || string.IsNullOrEmpty(_settings.PairedPeerSecret))
         {
             AppLog.Write("[trim_clip] not sent: not paired with a transmitter PC");
-            return (false, "Not paired with a transmitter PC.", null);
+            return (false, "Not paired with a transmitter PC.", null, 0);
         }
 
         AppLog.Write($"[trim_clip] sending: path='{relativePath}' start={start.TotalSeconds:0.###}s end={end.TotalSeconds:0.###}s replace={replaceOriginal} -> {_settings.PairedPeerHost}:{_settings.PairedPeerPort}");
@@ -1194,7 +1194,7 @@ public sealed class PairingService : IDisposable
             if (responseLine is null)
             {
                 AppLog.Write("[trim_clip] connection closed with no response line at all");
-                return (false, "No response from the transmitter PC.", null);
+                return (false, "No response from the transmitter PC.", null, 0);
             }
             AppLog.Write($"[trim_clip] raw response: {responseLine}");
 
@@ -1202,18 +1202,19 @@ public sealed class PairingService : IDisposable
             bool success = doc.RootElement.TryGetProperty("success", out JsonElement s) && s.GetBoolean();
             string? error = doc.RootElement.TryGetProperty("error", out JsonElement er) ? er.GetString() : null;
             string? path = doc.RootElement.TryGetProperty("path", out JsonElement pt) ? pt.GetString() : null;
-            AppLog.Write(success ? $"[trim_clip] transmitter reported success -- new path '{path}'" : $"[trim_clip] transmitter reported failure: {error}");
-            return (success, success ? null : (error ?? "Trim failed."), path);
+            long size = doc.RootElement.TryGetProperty("size", out JsonElement sz) ? sz.GetInt64() : 0;
+            AppLog.Write(success ? $"[trim_clip] transmitter reported success -- new path '{path}', size {size}" : $"[trim_clip] transmitter reported failure: {error}");
+            return (success, success ? null : (error ?? "Trim failed."), path, size);
         }
         catch (TimeoutException)
         {
             AppLog.Write($"[trim_clip] timed out (connect/send capped at {MutationRequestTimeout.TotalSeconds:0}s, response capped at {TrimRequestTimeout.TotalMinutes:0} min)");
-            return (false, $"{_settings.PairedPeerName ?? "The paired PC"} didn't respond in time -- it may be asleep, unreachable, or frozen.", null);
+            return (false, $"{_settings.PairedPeerName ?? "The paired PC"} didn't respond in time -- it may be asleep, unreachable, or frozen.", null, 0);
         }
         catch (Exception ex)
         {
             AppLog.WriteError("[trim_clip] request threw", ex);
-            return (false, ex.Message, null);
+            return (false, ex.Message, null, 0);
         }
     }
 

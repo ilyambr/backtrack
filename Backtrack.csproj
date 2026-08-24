@@ -14,7 +14,7 @@
          replacements for every Win32-only feature) doesn't exist yet, but
          when it does it versions independently, starting fresh, not from
          this number. -->
-    <Version>0.3.6</Version>
+    <Version>0.3.7</Version>
     <ApplicationIcon>Assets\app.ico</ApplicationIcon>
     <!-- The OBS link itself is still a hand-rolled obs-websocket v5 client over
          System.Net.WebSockets, no package needed. LibVLC below is the one
@@ -46,6 +46,7 @@
     <None Update="Assets\Audio\**">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
+    <EmbeddedResource Include="Assets\Audio\*.wav" />
     <!-- ImDisk Virtual Disk Driver (ltr-data.se), redistributed unmodified per its
          license: used to install/mount the optional RAM disk. Only the amd64
          binaries are actually run (this app only ships x64), but the whole
