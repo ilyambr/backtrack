@@ -100,6 +100,9 @@ public sealed class AppSettings
     // Audio chimes played when recordings or clips are saved (opt-out, enabled by default).
     public bool DisableAudioCues { get; set; }
 
+    // Volume for audio chimes (0 to 100, default 100).
+    public int AudioCueVolume { get; set; } = 100;
+
     // See ThemeIdConverter's own comment for why this needs a custom
     // converter: an existing settings.json's stored value predates this
     // being a string at all.
@@ -287,8 +290,17 @@ public sealed class AppSettings
     // depends entirely on this user's own Advanced Audio Properties routing
     // (e.g. desktop audio on Track 2, mic on Track 1) -- defaulting to
     // "whichever came first" can default to a genuinely silent track for a
-    // routing where that isn't Track 1.
     public int DefaultPlayerAudioTrackIndex { get; set; }
+
+    public HashSet<string> StarredClips { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+
+    public Dictionary<string, List<double>> ClipMarkers { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+
+    public int BookmarkHotkeyModifiers { get; set; } = 0x2 | 0x4; // Control | Shift
+    public int BookmarkHotkeyVirtualKey { get; set; } = 'B';
+
+    public string GallerySortMode { get; set; } = "DateDesc";
+    public bool GalleryStarredOnly { get; set; } = false;
 
     private static string FilePath => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Backtrack", "settings.json");

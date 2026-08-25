@@ -390,22 +390,14 @@
                                         <ColumnDefinition/>
                                         <ColumnDefinition Width="Auto"/>
                                     </Grid.ColumnDefinitions>
-                                    <!-- Bound straight to SelectedItem.Name via an explicit
-                                         DataTemplate, since SelectionBoxItem/DisplayMemberPath
-                                         wasn't actually applying to the closed-box text, only
-                                         to the open dropdown list (which is why the list
-                                         looked right but the closed box showed the raw
-                                         TrackDescription.ToString() instead). -->
-                                    <ContentPresenter Grid.Column="0" Content="{TemplateBinding SelectedItem}" VerticalAlignment="Center">
-                                        <ContentPresenter.ContentTemplate>
-                                            <DataTemplate>
-                                                <TextBlock Text="{Binding Path=., Converter={StaticResource ComboBoxItemTextConverter}}"
-                                                           Foreground="{Binding RelativeSource={RelativeSource AncestorType=ComboBox}, Path=Foreground}"
-                                                           FontSize="{Binding RelativeSource={RelativeSource AncestorType=ComboBox}, Path=FontSize}"
-                                                           FontWeight="{Binding RelativeSource={RelativeSource AncestorType=ComboBox}, Path=FontWeight}"/>
-                                            </DataTemplate>
-                                        </ContentPresenter.ContentTemplate>
-                                    </ContentPresenter>
+                                    <!-- TextBlock bound to SelectionBoxItem using ComboBoxItemTextConverter -->
+                                    <TextBlock Grid.Column="0"
+                                               Text="{Binding Path=SelectionBoxItem, RelativeSource={RelativeSource TemplatedParent}, Converter={StaticResource ComboBoxItemTextConverter}}"
+                                               Foreground="{TemplateBinding Foreground}"
+                                               FontSize="{TemplateBinding FontSize}"
+                                               FontWeight="{TemplateBinding FontWeight}"
+                                               VerticalAlignment="Center"
+                                               TextTrimming="CharacterEllipsis"/>
                                     <TextBlock Grid.Column="1" Text="&#9662;" FontSize="8" Margin="8,0,0,0"
                                                Foreground="{DynamicResource Text2}" VerticalAlignment="Center"/>
                                 </Grid>
@@ -650,32 +642,63 @@
                         </Grid>
                         <TextBlock Text="Gallery" Style="{StaticResource ScreenTitle}"/>
                     </StackPanel>
-                    <!-- Filters the current folder's clips (and subfolder tiles) by name,
-                         live as you type. Not a recursive whole-library search, just this
-                         folder's own view, same scope LoadGallery already renders.
-                         GalleryFilterPlaceholder is a plain overlaid label, not a real
-                         watermark (WPF TextBox has no built-in one); toggled in the
-                         TextChanged handler alongside the actual filtering. -->
-                    <Grid Grid.Column="1" VerticalAlignment="Center">
-                        <TextBox x:Name="GalleryFilterBox" Background="{DynamicResource RowBg}" Foreground="{DynamicResource Text0}"
-                                 CaretBrush="{DynamicResource Text0}" BorderThickness="0" Padding="10,7" TextChanged="GalleryFilterBox_TextChanged"/>
-                        <TextBlock x:Name="GalleryFilterPlaceholder" Text="Search clips..." FontSize="12" Foreground="{DynamicResource Text2}"
-                                   Margin="10,0,0,0" VerticalAlignment="Center" IsHitTestVisible="False"/>
-                    </Grid>
+
+                    <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+                        <!-- Starred Only Filter Toggle -->
+                        <ToggleButton x:Name="GalleryStarredFilterButton" ToolTip="Filter Starred Clips" Margin="0,0,8,0" Padding="10,6"
+                                      Background="{DynamicResource BorderSubtle}" Foreground="{DynamicResource Text1}" BorderThickness="0"
+                                      Cursor="Hand" Focusable="False" Click="GalleryStarredFilter_Click">
+                            <ToggleButton.Template>
+                                <ControlTemplate TargetType="ToggleButton">
+                                    <Border x:Name="Brd" Background="{TemplateBinding Background}" CornerRadius="4" Padding="{TemplateBinding Padding}">
+                                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                            <TextBlock Text="★" FontSize="12" Foreground="#FFD700" Margin="0,0,5,0" VerticalAlignment="Center"/>
+                                            <TextBlock Text="Starred" FontSize="11" FontWeight="Bold" Foreground="{TemplateBinding Foreground}" VerticalAlignment="Center"/>
+                                        </StackPanel>
+                                    </Border>
+                                    <ControlTemplate.Triggers>
+                                        <Trigger Property="IsChecked" Value="True">
+                                            <Setter TargetName="Brd" Property="Background" Value="{DynamicResource BorderMedium}"/>
+                                            <Setter Property="Foreground" Value="{DynamicResource Text0}"/>
+                                        </Trigger>
+                                        <Trigger Property="IsMouseOver" Value="True">
+                                            <Setter TargetName="Brd" Property="Background" Value="{DynamicResource RowHoverBg}"/>
+                                        </Trigger>
+                                    </ControlTemplate.Triggers>
+                                </ControlTemplate>
+                            </ToggleButton.Template>
+                        </ToggleButton>
+
+                        <!-- Sort / Filter Selector -->
+                        <ComboBox x:Name="GallerySortComboBox" Width="140" Margin="0,0,8,0"
+                                  Style="{StaticResource ModernComboBox}" SelectionChanged="GallerySortComboBox_SelectionChanged">
+                            <ComboBoxItem Content="Starred First" Tag="StarredFirst"/>
+                            <ComboBoxItem Content="Starred Only" Tag="StarredOnly"/>
+                            <ComboBoxItem Content="Date (Newest)" Tag="DateDesc" IsSelected="True"/>
+                            <ComboBoxItem Content="Date (Oldest)" Tag="DateAsc"/>
+                            <ComboBoxItem Content="Size (Largest)" Tag="SizeDesc"/>
+                            <ComboBoxItem Content="Size (Smallest)" Tag="SizeAsc"/>
+                            <ComboBoxItem Content="Name (A-Z)" Tag="NameAsc"/>
+                            <ComboBoxItem Content="Name (Z-A)" Tag="NameDesc"/>
+                        </ComboBox>
+
+                        <!-- Filters the current folder's clips by name -->
+                        <Grid Width="170" VerticalAlignment="Center">
+                            <TextBox x:Name="GalleryFilterBox" Background="{DynamicResource RowBg}" Foreground="{DynamicResource Text0}"
+                                     CaretBrush="{DynamicResource Text0}" BorderThickness="0" Padding="10,7" TextChanged="GalleryFilterBox_TextChanged"/>
+                            <TextBlock x:Name="GalleryFilterPlaceholder" Text="Search clips..." FontSize="12" Foreground="{DynamicResource Text2}"
+                                       Margin="10,0,0,0" VerticalAlignment="Center" IsHitTestVisible="False"/>
+                        </Grid>
+                    </StackPanel>
                 </Grid>
 
-                <!-- Only shown at all once paired with a transmitter PC (see
-                     RefreshGallerySourceTabsVisibility); switches LoadGallery
-                     between this PC's own ClipsFolder and the paired PC's, over
-                     the pairing connection (see PairingService's list_gallery/
-                     get_clip). -->
+                <!-- Only shown at all once paired with a transmitter PC -->
                 <StackPanel x:Name="GallerySourceTabs" DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,12" Visibility="Collapsed">
                     <Button x:Name="GalleryLocalTabButton" Content="This PC" Style="{StaticResource FlatButton}" Margin="0,0,8,0" Click="GalleryLocalTab_Click"/>
                     <Button x:Name="GalleryRemoteTabButton" Content="Remote" Style="{StaticResource FlatButton}" Click="GalleryRemoteTab_Click"/>
                 </StackPanel>
 
-                <!-- Folder breadcrumb: collapsed at the clips-folder root, shown once
-                     you've navigated into a subfolder via a folder tile below. -->
+                <!-- Folder breadcrumb -->
                 <StackPanel x:Name="GalleryPathBar" DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,12" Visibility="Collapsed">
                     <Grid Style="{StaticResource BackButtonHost}" MouseLeftButtonUp="GalleryUp_Click" ToolTip="Up one folder">
                         <Ellipse Fill="{DynamicResource BorderSubtle}"/>
@@ -684,8 +707,7 @@
                     <TextBlock x:Name="GalleryPathText" FontSize="11" Foreground="{DynamicResource Text2}" VerticalAlignment="Center"/>
                 </StackPanel>
 
-                <!-- Mass-selection bar: collapsed until at least one clip is selected
-                     via the hover circle (or a click while already in select mode). -->
+                <!-- Mass-selection bar -->
                 <Grid x:Name="GallerySelectionBar" DockPanel.Dock="Top" Margin="0,0,0,12" Visibility="Collapsed">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition/>
@@ -700,16 +722,31 @@
                     </StackPanel>
                 </Grid>
 
+                <!-- Gallery Footer Bar: cumulative folder size & clip count + Storage Space Bar -->
+                <Border DockPanel.Dock="Bottom" Margin="0,10,0,0" Padding="12,8" Background="{DynamicResource RowBg}" CornerRadius="4">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+
+                        <!-- Left: Total clips and size in current folder -->
+                        <TextBlock x:Name="GalleryTotalStatsText" Grid.Column="0" Text="0 clips · 0 MB" FontSize="11" Foreground="{DynamicResource Text2}" VerticalAlignment="Center"/>
+
+                        <!-- Right: Storage Progress Slider / Bar with Free Space or Limit info -->
+                        <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
+                            <!-- Progress Bar Track -->
+                            <Border Width="110" Height="6" Background="{DynamicResource SeekTrackBg}" CornerRadius="3" VerticalAlignment="Center" Margin="0,0,10,0" ClipToBounds="True">
+                                <Border x:Name="GalleryStorageProgressBar" Width="0" Height="6" Background="{DynamicResource Accent}" HorizontalAlignment="Left" CornerRadius="3"/>
+                            </Border>
+                            <!-- Storage Text -->
+                            <TextBlock x:Name="GalleryStorageText" Text="" FontSize="11" FontWeight="Medium" Foreground="{DynamicResource Text1}" VerticalAlignment="Center"/>
+                        </StackPanel>
+                    </Grid>
+                </Border>
+
                 <ScrollViewer x:Name="GalleryScrollHost" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-                    <!-- ItemWidth/ItemHeight, not just each card's own Margin: a plain
-                         WrapPanel sizes every row to its tallest child, so if any card's
-                         title/date text rendered even slightly differently, that row's
-                         gap to the next one would shift; fixing the cell size itself
-                         guarantees every row and column lines up exactly the same.
-                         240 cell width -> 6 columns fit in BigWidth()'s ~1454px usable
-                         content area (1500 max width, minus the panel's 32px margin,
-                         2px border, and the scrollbar's own width) with real gutters
-                         left over, not just barely squeezing in a 6th. -->
                     <WrapPanel x:Name="GalleryGrid" ItemWidth="240" ItemHeight="168"/>
                 </ScrollViewer>
             </DockPanel>
@@ -718,12 +755,6 @@
             <Grid x:Name="PlayerPanel" Visibility="Collapsed">
                 <DockPanel x:Name="PlayerVideoColumnDock">
                     <StackPanel x:Name="PlayerTransportBar" DockPanel.Dock="Bottom" Background="{DynamicResource PanelBg}">
-                        <!-- Trim panel: hidden until "Trim" is pressed on the rail. Editor-style
-                             timeline instead of "Set start"/"Set end" buttons: a ruler row, a
-                             track showing the selected range as a bright band over a dim base
-                             (the standard trim-editor look, not two separate "everything before"/
-                             "everything after" overlays), a live playhead, and two drag handles.
-                             See UpdateTrimTimelineUi's own comment for the layout math. -->
                         <StackPanel x:Name="TrimPanel" Visibility="Collapsed" Margin="16,10,16,16">
                             <Canvas x:Name="TrimRulerCanvas" Height="16"/>
                             <Grid x:Name="TrimTimelineTrack" Height="40" Background="Transparent" Cursor="Hand"
@@ -732,6 +763,7 @@
                                 <Border x:Name="TrimTrackBg" Height="34" CornerRadius="4" Background="{DynamicResource SeekTrackBg}" VerticalAlignment="Center"/>
                                 <Border x:Name="TrimSelectedRange" Height="34" CornerRadius="4" Background="{DynamicResource Accent}" Opacity="0.35"
                                         HorizontalAlignment="Left" VerticalAlignment="Center" Width="0" IsHitTestVisible="False"/>
+                                <Canvas x:Name="TrimMarkerCanvas" Height="40" VerticalAlignment="Center" IsHitTestVisible="False"/>
                                 <Border x:Name="TrimPlayhead" Width="2" Height="40" Background="#FFFFFF"
                                         HorizontalAlignment="Left" VerticalAlignment="Center" IsHitTestVisible="False"/>
                                 <Border x:Name="TrimStartHandle" Width="10" Height="34" CornerRadius="3" Background="{DynamicResource Accent}"
@@ -746,23 +778,6 @@
                                         <DropShadowEffect BlurRadius="6" ShadowDepth="0" Color="#000000" Opacity="0.5"/>
                                     </Border.Effect>
                                 </Border>
-                                <!-- Selection time readout lives INSIDE the track now (left-aligned,
-                                     over the selected band), not as its own row below: frees up a
-                                     whole row of vertical space. Foreground is Text0: tried PanelBg
-                                     first on the theory that "opposite of the text color" would
-                                     contrast best, but that was wrong: PanelBg is near-BLACK in every
-                                     dark theme (Dark/Yami/Amoled), and the actual band color here is
-                                     only a 35%-opacity blend of Accent over SeekTrackBg, not full
-                                     Accent brightness, so it stays a medium tone even in themes (like
-                                     Yami, Accent #718CDC blue) where Accent itself is bright: dark
-                                     PanelBg text on that medium-toned band read poorly. Text0 is each
-                                     theme's own actual "primary readable text" color (light in every
-                                     dark theme, dark in Light), which is the color actually meant to
-                                     work against ordinary medium-toned surfaces like this one. -->
-                                <!-- Margin bumped from 10 to 24: at 10 the text sat flush against
-                                     TrimStartHandle's own right edge (10px wide, starting at X=0 when
-                                     the trim start is at 0:00), reading as overlapping/interfering with
-                                     the drag handle rather than just sitting near it. -->
                                 <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="24,0,0,0" IsHitTestVisible="False">
                                     <TextBlock x:Name="TrimStartText" Text="0:00" FontSize="11.5" FontWeight="Bold" Foreground="{DynamicResource Text0}"/>
                                     <TextBlock Text=" &#8211; " FontSize="11.5" FontWeight="Bold" Foreground="{DynamicResource Text0}"/>
@@ -776,63 +791,32 @@
                                     </Border>
                                 </Popup>
                             </Grid>
-                            <!-- Left: trim actions, all four bare icons (BareIconButton:
-                                 transparent, no pill/background container), each with a plain native
-                                 ToolTip: just the action name, not a sentence, after a 1s hover
-                                 delay. Icon paths are Google Material Icons (Apache 2.0), fetched and
-                                 verified rather than recalled from memory. Right: TrimTransportExtras,
-                                 an initially-empty StackPanel that PlayerTrim_Click reparents the
-                                 audio track/speed/volume/fullscreen controls INTO from
-                                 PlayerTransportRow (moved, not duplicated: WPF can't show the same
-                                 element twice) so those four stay usable even though the whole row
-                                 they used to live on is collapsed. See MoveTransportControlsForTrim's
-                                 own comment. -->
-                            <!-- One row of vertical space fewer above (the selection readout moved
-                                 into the track itself), so this whole row moved up; buttons also get
-                                 more Padding than BareIconButton's own default 4px, for a bigger
-                                 target and more breathing room around each icon now that there's
-                                 space for it. Icon Fill is Text1, matching every OTHER player button
-                                 (PlayerVolumeIcon/PlayerFullscreenIcon etc.): these four were
-                                 accidentally using Text0 (near-white in every theme), reading
-                                 noticeably brighter/whiter than the rest. -->
                             <Grid Margin="0,10,0,0">
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition/>
                                     <ColumnDefinition Width="Auto"/>
                                 </Grid.ColumnDefinitions>
-                                <!-- Order: Play (inserted at index 0 in code by
-                                     MoveTransportControlsForTrim), Replace original, Save as new clip,
-                                     Preview, Cancel. -->
                                 <StackPanel x:Name="TrimActionButtons" Grid.Column="0" Orientation="Horizontal">
                                     <Button x:Name="TrimReplaceButton" Style="{StaticResource BareIconButton}" Padding="8,6" Margin="0,0,4,0" Click="TrimReplace_Click"
                                             ToolTip="Replace original" ToolTipService.InitialShowDelay="1000">
-                                        <!-- Floppy-disk/"save" glyph: overwrites the existing file, distinct from the "Save as new clip" duplicate-page glyph below. -->
                                         <Path Fill="{DynamicResource Text1}" Stretch="Uniform" Width="16" Height="16"
                                               Data="M17,3H5c-1.11,0 -2,0.9 -2,2v14c0,1.1 0.89,2 2,2h14c1.1,0 2,-0.9 2,-2V7l-4,-4zm-5,16c-1.66,0 -3,-1.34 -3,-3s1.34,-3 3,-3 3,1.34 3,3 -1.34,3 -3,3zm3,-10H5V5h10v4z"/>
                                     </Button>
                                     <Button x:Name="TrimSaveNewButton" Style="{StaticResource BareIconButton}" Padding="8,6" Margin="0,0,4,0" Click="TrimSaveNew_Click"
                                             ToolTip="Save as new clip" ToolTipService.InitialShowDelay="1000">
-                                        <!-- Two overlapping pages/"content copy" glyph. -->
                                         <Path Fill="{DynamicResource Text1}" Stretch="Uniform" Width="16" Height="16"
                                               Data="M16,1H4c-1.1,0 -2,0.9 -2,2v14h2V3h12V1zm3,4H8c-1.1,0 -2,0.9 -2,2v14c0,1.1 0.9,2 2,2h11c1.1,0 2,-0.9 2,-2V7c0,-1.1 -0.9,-2 -2,-2zm0,16H8V7h11V21z"/>
                                     </Button>
                                     <Button x:Name="PreviewLoopButton" Style="{StaticResource BareIconButton}" Padding="8,6" Margin="0,0,4,0" Click="PreviewLoopButton_Click"
                                             ToolTip="Preview" ToolTipService.InitialShowDelay="1000">
                                         <Grid Width="16" Height="16">
-                                            <!-- Eye/"visibility" glyph: the default, not-currently-looping state. -->
                                             <Path x:Name="PreviewLoopIcon" Fill="{DynamicResource Text1}" Stretch="Uniform" Width="16" Height="16"
                                                   Data="M12,4.5C7,4.5 2.73,7.61 1,12c1.73,4.39 6,7.5 11,7.5s9.27,-3.11 11,-7.5c-1.73,-4.39 -6,-7.5 -11,-7.5zM12,17c-2.76,0 -5,-2.24 -5,-5s2.24,-5 5,-5 5,2.24 5,5 -2.24,5 -5,5zm0,-8c-1.66,0 -3,1.34 -3,3s1.34,3 3,3 3,-1.34 3,-3 -1.34,-3 -3,-3z"/>
-                                            <!-- Filled square/"stop" glyph, swapped in while looping: see
-                                                 PreviewLoopButton_Click/StopPreviewLoop, which toggle these
-                                                 two Paths' Visibility directly instead of touching Content
-                                                 (a plain "Content = text" assignment, which this used to do,
-                                                 would silently replace this whole icon with a text string). -->
                                             <Rectangle x:Name="PreviewStopIcon" Visibility="Collapsed" Fill="{DynamicResource Text1}" Width="12" Height="12" RadiusX="1.5" RadiusY="1.5"/>
                                         </Grid>
                                     </Button>
                                     <Button x:Name="TrimCancelButton" Style="{StaticResource BareIconButton}" Padding="8,6" Click="TrimCancel_Click"
                                             ToolTip="Cancel" ToolTipService.InitialShowDelay="1000">
-                                        <!-- "Close"/X glyph. -->
                                         <Path Fill="{DynamicResource Text1}" Stretch="Uniform" Width="16" Height="16"
                                               Data="M19,6.41L17.59,5 12,10.59 6.41,5 5,6.41 10.59,12 5,17.59 6.41,19 12,13.41 17.59,19 19,17.59 13.41,12z"/>
                                     </Button>
@@ -841,10 +825,6 @@
                             </Grid>
                         </StackPanel>
 
-                        <!-- Collapsed entirely while trimming (not just the seek bar): Play,
-                             current time/duration, audio track/speed/volume/fullscreen all go away
-                             so the window itself gets shorter, not just visually decluttered. See
-                             PlayerTrim_Click's own comment. -->
                         <Grid x:Name="PlayerTransportRow" Margin="16,10,16,10">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="Auto"/>
@@ -856,10 +836,6 @@
                                 <ColumnDefinition Width="Auto"/>
                                 <ColumnDefinition Width="Auto"/>
                             </Grid.ColumnDefinitions>
-                            <!-- Style is swapped at runtime by MoveTransportControlsForTrim
-                                 (PlayerTransportButton's own filled Ellipse circle normally, plain
-                                 BareIconButton: no circle/container at all, while reparented into
-                                 the trim row), same reasoning as its own Width/Height override there. -->
                             <Button x:Name="PlayPauseButton" Grid.Column="0" Style="{StaticResource PlayerTransportButton}" Click="PlayPauseButton_Click">
                                 <Grid Width="16" Height="16">
                                     <StackPanel x:Name="PauseIcon" Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Center">
@@ -879,6 +855,7 @@
                                 <Border x:Name="PlayerSeekBg" Height="4" CornerRadius="2" Background="{DynamicResource SeekTrackBg}" VerticalAlignment="Center"/>
                                 <Border x:Name="PlayerSeekBuffer" Height="4" CornerRadius="2" Background="{DynamicResource SeekTrackBuffer}" HorizontalAlignment="Left" VerticalAlignment="Center" Width="0"/>
                                 <Border x:Name="PlayerSeekFill" Height="4" CornerRadius="2" Background="{DynamicResource Accent}" HorizontalAlignment="Left" VerticalAlignment="Center" Width="0"/>
+                                <Canvas x:Name="PlayerMarkerCanvas" Height="24" VerticalAlignment="Center" IsHitTestVisible="True"/>
                                 <Border x:Name="PlayerSeekThumb" Width="14" Height="14" CornerRadius="7" Background="#FFFFFF" HorizontalAlignment="Left" VerticalAlignment="Center" Visibility="Collapsed" Margin="-7,0,0,0">
                                     <Border.Effect>
                                         <DropShadowEffect BlurRadius="6" ShadowDepth="0" Color="#000000" Opacity="0.5"/>
@@ -898,12 +875,6 @@
                                     VerticalAlignment="Center" Click="PlayerSpeedButton_Click" ToolTip="Playback speed">
                                 <TextBlock x:Name="PlayerSpeedText" Text="1x" FontSize="12" FontWeight="Bold" Foreground="{DynamicResource Text1}"/>
                             </Button>
-                            <!-- Slider starts Collapsed inside a Popup anchored to this button (same
-                                 Placement="Top" pattern as SeekTooltipPopup above, already proven to
-                                 render correctly above the video from inside this same transport bar);
-                                 opens on hovering either the button or the slider itself, closes on a
-                                 short debounce once the mouse leaves both: PlayerVolumeArea_MouseEnter/
-                                 Leave, wired to both, handles that. -->
                             <Button x:Name="PlayerVolumeButton" Grid.Column="6" Style="{StaticResource TileButton}" Padding="10"
                                     VerticalAlignment="Center" Click="PlayerVolumeButton_Click"
                                     MouseEnter="PlayerVolumeArea_MouseEnter" MouseLeave="PlayerVolumeArea_MouseLeave" ToolTip="Volume">
@@ -936,37 +907,9 @@
                     </Grid>
                 </DockPanel>
 
-                <!-- Floats the back button/title over the video's top-left corner, matching
-                     the design concept, not a docked bar above it (that reads as a border/
-                     gap the concept doesn't have). A Popup, not a plain overlay sibling:
-                     VideoView hosts a native HWND for the video surface, and native HWND
-                     content always paints over WPF siblings regardless of XAML z-order
-                     ("airspace"); Popups are their own top-level window, so this actually
-                     renders above the video instead of getting hidden behind it. The
-                     lockout bug this caused before is fixed at the source now: CloseOverlay
-                     always tears the player down first, so even if this Popup's position
-                     were ever to desync, closing the whole HUD still works. -->
                 <Popup x:Name="PlayerOverlayPopup" PlacementTarget="{Binding ElementName=PlayerVideoView}" Placement="Relative"
                        HorizontalOffset="10" VerticalOffset="10" AllowsTransparency="True" StaysOpen="True" Focusable="False" IsOpen="False">
                     <Grid x:Name="PlayerTitleBarHost" Width="{Binding ElementName=PlayerVideoView, Path=ActualWidth}" Height="46">
-                        <!-- A real backdrop blur of the video behind this isn't possible; VLC's
-                             video surface is a native HWND (see this file's own "airspace" notes
-                             elsewhere), which WPF's Effect/BlurEffect pipeline can't see through or
-                             capture, same reason CacheMode can't either. This fakes the "frosted
-                             glass" look instead: a solid, semi-transparent rounded pill, the
-                             standard practical stand-in when true blur-behind isn't available.
-                             PanelBgOpaque (DynamicResource, per-theme; see Theme.*.xaml), not a
-                             hardcoded hex; the first version of this used a literal color and
-                             stayed the same regardless of which theme was active, exactly what
-                             DynamicResource throughout this file exists to avoid (see CLAUDE.md's
-                             Theming section).
-                             Rounded is a deliberate, explicit exception to Backtrack's usual
-                             no-CornerRadius rule (see CLAUDE.md's Theming section); asked for by
-                             name after the first version of this pill went out square, unlike
-                             PlayerFullscreenTransportBorder below, which stayed square (never asked
-                             to change). No explicit Width on this Border; it auto-sizes to
-                             PlayerTitleBar's content, so it grows/shrinks with the title's own
-                             length automatically, same as any WPF panel sizing to its content. -->
                         <Border x:Name="PlayerTitlePill" Background="{DynamicResource PanelBgOpaque}" CornerRadius="18" Padding="10,7"
                                 HorizontalAlignment="Left" VerticalAlignment="Center">
                             <Border.Effect>
@@ -975,15 +918,16 @@
                             <StackPanel x:Name="PlayerTitleBar" Orientation="Horizontal" VerticalAlignment="Center">
                                 <Grid Style="{StaticResource BackButtonHost}" MouseLeftButtonUp="BackToGallery_Click">
                                     <Ellipse Fill="{DynamicResource BorderStrong}"/>
-                                    <!-- Fixed white until now, back from when this floated directly over raw
-                                         video (any theme, so a fixed color made sense there). Now that it sits
-                                         on a themed PanelBgOpaque pill instead, fixed white read as invisible
-                                         white-on-near-white in Light theme; Text0 tracks the pill's own theme. -->
                                     <TextBlock Text="&#8249;" FontSize="14" FontWeight="Bold" Foreground="{DynamicResource Text0}"
                                                HorizontalAlignment="Center" VerticalAlignment="Center" Margin="0,0,1,0"/>
                                 </Grid>
                                 <TextBlock x:Name="PlayerTitle" Text="Clip" FontWeight="Bold" FontSize="13" Foreground="{DynamicResource Text0}" VerticalAlignment="Center"
                                            Cursor="Hand" MouseLeftButtonDown="PlayerTitle_MouseLeftButtonDown" ToolTip="Double-click to rename"/>
+                                <!-- Starred Indicator Toggle in Title Pill -->
+                                <Button x:Name="PlayerStarButton" Style="{StaticResource BareIconButton}" Margin="8,0,0,0" Padding="4,2"
+                                        Click="PlayerStarButton_Click" ToolTip="Toggle Favorite / Starred">
+                                    <TextBlock x:Name="PlayerStarGlyph" Text="☆" FontSize="13" Foreground="{DynamicResource Text2}"/>
+                                </Button>
                             </StackPanel>
                         </Border>
 
@@ -1009,8 +953,8 @@
                             <DropShadowEffect BlurRadius="16" ShadowDepth="3" Color="Black" Opacity="0.6"/>
                         </Border.Effect>
                         <StackPanel>
-                            <!-- 2x2 Action Containers -->
-                            <UniformGrid Columns="2" Rows="2">
+                            <!-- 2x3 Action Containers -->
+                            <UniformGrid Columns="2" Rows="3">
                                 <Button Style="{StaticResource PlayerActionTileButton}" Margin="2" Click="PlayerRename_Click">
                                     <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
                                         <Path Data="M3,17.25V21h3.75L17.81,9.94l-3.75,-3.75L3,17.25zM20.71,7.04c0.39,-0.39,0.39,-1.02,0,-1.41l-2.34,-2.34c-0.39,-0.39,-1.02,-0.39,-1.41,0l-1.83,1.83l3.75,3.75L20.71,7.04z"
@@ -1023,6 +967,22 @@
                                         <Path Data="M9.64,7.64c0.23,-0.5,0.36,-1.05,0.36,-1.64c0,-2.21,-1.79,-4,-4,-4S2,3.79,2,6s1.79,4,4,4c0.59,0,1.14,-0.13,1.64,-0.36L10,12l-2.36,2.36C7.14,14.13,6.59,14,6,14c-2.21,0,-4,1.79,-4,4s1.79,4,4,4s4,-1.79,4,-4c0,-0.59,-0.13,-1.14,-0.36,-1.64L12,14l7,7h3v-1L9.64,7.64zM6,8C4.9,8,4,7.1,4,6s0.9,-2,2,-2s2,0.9,2,2S7.1,8,6,8zM6,20c-1.1,0,-2,-0.9,-2,-2s0.9,-2,2,-2s2,0.9,2,2S7.1,20,6,20zM12,13.5c-0.28,0,-0.5,-0.22,-0.5,-0.5s0.22,-0.5,0.5,-0.5s0.5,0.22,0.5,0.5S12.28,13.5,12,13.5zM19,3l-6,6l2,2l7,-7V3H19z"
                                               Fill="{DynamicResource Text1}" Width="15" Height="15" Stretch="Uniform" HorizontalAlignment="Center" Margin="0,0,0,4"/>
                                         <TextBlock Text="Trim" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource Text1}" HorizontalAlignment="Center"/>
+                                    </StackPanel>
+                                </Button>
+                                <Button Style="{StaticResource PlayerActionTileButton}" Margin="2" Click="PlayerCompress_Click">
+                                    <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
+                                        <!-- Compress zip/down icon -->
+                                        <Path Data="M19,9h-4V3H9v6H5l7,7 7,-7zM5,18v2h14v-2H5z"
+                                              Fill="{DynamicResource Text1}" Width="15" Height="15" Stretch="Uniform" HorizontalAlignment="Center" Margin="0,0,0,4"/>
+                                        <TextBlock Text="Compress" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource Text1}" HorizontalAlignment="Center"/>
+                                    </StackPanel>
+                                </Button>
+                                <Button Style="{StaticResource PlayerActionTileButton}" Margin="2" Click="PlayerAddBookmark_Click">
+                                    <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
+                                        <!-- Bookmark icon -->
+                                        <Path Data="M17,3H7c-1.1,0 -1.99,0.9 -1.99,2L5,21l7,-3 7,3V5c0,-1.1 -0.9,-2 -2,-2z"
+                                              Fill="{DynamicResource Text1}" Width="15" Height="15" Stretch="Uniform" HorizontalAlignment="Center" Margin="0,0,0,4"/>
+                                        <TextBlock Text="Bookmark" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource Text1}" HorizontalAlignment="Center"/>
                                     </StackPanel>
                                 </Button>
                                 <Button Style="{StaticResource PlayerActionTileButton}" Margin="2" Click="PlayerFolder_Click">
@@ -1083,6 +1043,45 @@
                                   Stretch="Uniform" HorizontalAlignment="Center"/>
                             <TextBlock x:Name="PlayerActionFeedbackText" FontWeight="Bold" FontSize="14" Foreground="{DynamicResource Text0}"
                                        HorizontalAlignment="Center" Margin="0,8,0,0"/>
+                        </StackPanel>
+                    </Border>
+                </Popup>
+
+                <!-- Floating Compress Dialog Popup -->
+                <Popup x:Name="CompressPopup" PlacementTarget="{Binding ElementName=PlayerMenuPill}" Placement="Bottom"
+                       HorizontalOffset="-230" VerticalOffset="8" AllowsTransparency="True" StaysOpen="False" Focusable="True" IsOpen="False">
+                    <Border Background="{DynamicResource PanelBgOpaque}" BorderBrush="{DynamicResource Hairline}" BorderThickness="1"
+                            Padding="14" Width="260">
+                        <Border.Effect>
+                            <DropShadowEffect BlurRadius="16" ShadowDepth="3" Color="Black" Opacity="0.6"/>
+                        </Border.Effect>
+                        <StackPanel>
+                            <TextBlock Text="Compress Clip" FontWeight="Bold" FontSize="13" Foreground="{DynamicResource Text0}" Margin="0,0,0,10"/>
+                            <TextBlock Text="Choose target file size:" FontSize="11" Foreground="{DynamicResource Text2}" Margin="0,0,0,8"/>
+                            
+                            <!-- Preset Buttons Grid -->
+                            <UniformGrid Columns="3" Margin="0,0,0,10">
+                                <Button Content="10 MB" Style="{StaticResource FlatButton}" Margin="2" Padding="4,6" Click="CompressPreset_Click" Tag="10"/>
+                                <Button Content="25 MB" Style="{StaticResource FlatButton}" Margin="2" Padding="4,6" Click="CompressPreset_Click" Tag="25" ToolTip="Discord Standard"/>
+                                <Button Content="50 MB" Style="{StaticResource FlatButton}" Margin="2" Padding="4,6" Click="CompressPreset_Click" Tag="50" ToolTip="Discord Nitro Basic"/>
+                                <Button Content="100 MB" Style="{StaticResource FlatButton}" Margin="2" Padding="4,6" Click="CompressPreset_Click" Tag="100"/>
+                                <Button Content="250 MB" Style="{StaticResource FlatButton}" Margin="2" Padding="4,6" Click="CompressPreset_Click" Tag="250"/>
+                                <Button x:Name="CompressCustomButton" Content="Custom" Style="{StaticResource FlatButton}" Margin="2" Padding="4,6" Click="CompressCustomButton_Click"/>
+                            </UniformGrid>
+
+                            <!-- Custom Size Input Row -->
+                            <Grid x:Name="CompressCustomRow" Visibility="Collapsed" Margin="0,0,0,10">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBox x:Name="CompressCustomMbBox" Background="{DynamicResource RowBg}" Foreground="{DynamicResource Text0}"
+                                         Padding="8,5" BorderThickness="0" Text="15"/>
+                                <Button Grid.Column="1" Content="Go" Style="{StaticResource FlatButton}" Margin="6,0,0,0" Padding="10,5"
+                                        Click="CompressCustomExecute_Click"/>
+                            </Grid>
+
+                            <TextBlock x:Name="CompressStatusText" Text="" FontSize="11" Foreground="{DynamicResource Accent}" TextWrapping="Wrap" Margin="0,2,0,0"/>
                         </StackPanel>
                     </Border>
                 </Popup>
@@ -1242,6 +1241,22 @@
                                 <ToggleButton x:Name="DisableAudioCuesToggle" Grid.Column="1" Style="{StaticResource AppToggle}" VerticalAlignment="Center" Click="DisableAudioCuesToggle_Click"/>
                             </Grid>
                         </Border>
+                        <Border x:Name="AudioCueVolumeRow" Style="{StaticResource SettingsRow}">
+                            <StackPanel>
+                                <Grid Margin="0,0,0,8">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel VerticalAlignment="Center">
+                                        <TextBlock Text="Audio cue volume" FontSize="13" FontWeight="Bold" Foreground="{DynamicResource Text0}"/>
+                                        <TextBlock Text="Adjusts the volume of recording and clip save chimes." FontSize="11" Foreground="{DynamicResource Text2}" Margin="0,3,0,0" TextWrapping="Wrap"/>
+                                    </StackPanel>
+                                    <TextBlock x:Name="AudioCueVolumeText" Grid.Column="1" Text="100%" FontSize="12" FontWeight="Bold" Foreground="{DynamicResource Text1}" VerticalAlignment="Center"/>
+                                </Grid>
+                                <Slider x:Name="AudioCueVolumeSlider" Minimum="0" Maximum="100" TickFrequency="1" IsSnapToTickEnabled="True" Value="100" ValueChanged="AudioCueVolumeSlider_ValueChanged"/>
+                            </StackPanel>
+                        </Border>
                         <Border Style="{StaticResource SettingsRow}">
                             <Grid>
                                 <Grid.ColumnDefinitions>
@@ -1382,6 +1397,19 @@
                                     <TextBlock Text="Stops and discards the active recording file" FontSize="11" Foreground="{DynamicResource Text2}" Margin="0,3,0,0"/>
                                 </StackPanel>
                                 <Button x:Name="CancelRecordHotkeyCaptureButton" Grid.Column="1" Content="(unbound)" Style="{StaticResource FlatButton}" VerticalAlignment="Center" Click="CancelRecordHotkeyCaptureButton_Click"/>
+                            </Grid>
+                        </Border>
+                        <Border Style="{StaticResource SettingsRow}" BorderThickness="0">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <StackPanel VerticalAlignment="Center">
+                                    <TextBlock Text="Bookmark / marker hotkey" FontSize="13" FontWeight="Bold" Foreground="{DynamicResource Text0}"/>
+                                    <TextBlock Text="Drops a bookmark pin into the active recording or playing clip" FontSize="11" Foreground="{DynamicResource Text2}" Margin="0,3,0,0"/>
+                                </StackPanel>
+                                <Button x:Name="BookmarkHotkeyCaptureButton" Grid.Column="1" Content="Ctrl+Shift+B" Style="{StaticResource FlatButton}" VerticalAlignment="Center" Click="BookmarkHotkeyCaptureButton_Click"/>
                             </Grid>
                         </Border>
                         <Border Style="{StaticResource SettingsRow}" BorderThickness="0">

@@ -378,6 +378,15 @@ public partial class ToastOverlay : Window
         Show(GlyphIcon("\u2715", Warning), Warning, $"Removed {count} old clip{(count == 1 ? "" : "s")}",
             $"Older than {afterDays} day{(afterDays == 1 ? "" : "s")}, per Settings > Clips");
 
+    public void ShowBookmarkAdded(string text) =>
+        Show(GlyphIcon("★", Warning), Warning, "Bookmark added", text);
+
+    public void ShowCompressStarted(string targetText) =>
+        Show(GlyphIcon("\u21bb", Accent), Accent, "Compressing clip", targetText);
+
+    public void ShowCompressFailed(string error) =>
+        Show(GlyphIcon("\u2715", Rec), Rec, "Compression failed", error);
+
     // Fired right before App.xaml.cs kicks off FirewallRules.AddRulesElevated
     // on a brand new install -- a UAC prompt appearing with zero warning,
     // moments after someone's very first launch, reads as suspicious with no

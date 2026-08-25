@@ -14,7 +14,7 @@
          replacements for every Win32-only feature) doesn't exist yet, but
          when it does it versions independently, starting fresh, not from
          this number. -->
-    <Version>0.3.7</Version>
+    <Version>0.3.8</Version>
     <ApplicationIcon>Assets\app.ico</ApplicationIcon>
     <!-- The OBS link itself is still a hand-rolled obs-websocket v5 client over
          System.Net.WebSockets, no package needed. LibVLC below is the one
@@ -35,6 +35,9 @@
     <Compile Remove="installer\**" />
     <EmbeddedResource Remove="installer\**" />
     <None Remove="installer\**" />
+    <Compile Remove="backup\**" />
+    <EmbeddedResource Remove="backup\**" />
+    <None Remove="backup\**" />
     <Resource Include="Assets\logo.png" />
     <Resource Include="Assets\ilyambr.png" />
     <None Update="Assets\backtrack_tray.png">
@@ -53,6 +56,9 @@
          official package tree is kept intact rather than cherry-picked, so
          install.cmd/imdisk.inf still find files exactly where they expect them. -->
     <None Update="ThirdParty\ImDisk\**">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Update="ThirdParty\FFmpeg\**">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
   </ItemGroup>

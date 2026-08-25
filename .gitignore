@@ -2,10 +2,12 @@ bin/
 obj/
 publish/
 dist/
+backup/
+claude-comments.md
 *.zip
 *.exe
 !Assets/*.exe
-!ThirdParty/ImDisk/**/*.exe
+!ThirdParty/**/*.exe
 installer/bin/
 installer/obj/
 installer/payload.zip

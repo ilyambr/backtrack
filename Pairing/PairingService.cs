@@ -11,6 +11,7 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Backtrack.Interop;
+using Backtrack.Core;
 // For AppLog -- see HandleTrimClipAsync/TrimRemoteClipAsync's own comments
 // on why the remote trim path specifically needed real logging added.
 using Backtrack;
@@ -283,6 +284,8 @@ public sealed class PairingService : IDisposable
                     "delete_clip" => HandleDeleteClip(doc.RootElement),
                     "rename_clip" => HandleRenameClip(doc.RootElement),
                     "trim_clip" => await HandleTrimClipAsync(doc.RootElement),
+                    "compress_clip" => await HandleCompressClipAsync(doc.RootElement),
+                    "play_audio_cue" => HandlePlayAudioCue(doc.RootElement),
                     _ => JsonSerializer.Serialize(new { error = "unknown request type" }),
                 };
 
@@ -472,6 +475,8 @@ public sealed class PairingService : IDisposable
     /// that into a relative path itself) on success.
     /// </summary>
     public Func<string, double, double, bool, Task<(bool Success, string? Error, string? NewFileName, long Size)>>? TrimClipForRemote { get; set; }
+
+    public Func<string, double, Task<(bool Success, string? Error, string? NewFileName, long Size)>>? CompressClipForRemote { get; set; }
 
     /// <summary>
     /// The relative path (forward-slash separated, matching MainWindow's own
@@ -712,6 +717,100 @@ public sealed class PairingService : IDisposable
         string newRelativePath = WithNewFileName(relativePath, newFileName);
         AppLog.Write($"[trim_clip] success -- new relative path '{newRelativePath}', size {fileSize} bytes");
         return JsonSerializer.Serialize(new { success = true, path = newRelativePath, size = fileSize });
+    }
+
+    private async Task<string> HandleCompressClipAsync(JsonElement request)
+    {
+        if (!IsAuthorizedClient(request))
+        {
+            AppLog.Write("[compress_clip] rejected: client is not authorized");
+            return JsonSerializer.Serialize(new { success = false, error = "Not authorized -- pair with this PC first." });
+        }
+
+        string relativePath = request.TryGetProperty("path", out JsonElement p) ? p.GetString() ?? "" : "";
+        double targetMb = request.TryGetProperty("targetMb", out JsonElement mb) ? mb.GetDouble() : 25.0;
+
+        AppLog.Write($"[compress_clip] incoming: relativePath='{relativePath}' targetMb={targetMb}");
+
+        if (string.IsNullOrWhiteSpace(relativePath))
+        {
+            AppLog.Write("[compress_clip] rejected: missing or empty path");
+            return JsonSerializer.Serialize(new { success = false, error = "Missing clip path." });
+        }
+
+        if (!TryResolveGalleryPath(relativePath, out string fullPath, out string? pathError) ||
+            !GalleryFormats.VideoExtensions.Contains(Path.GetExtension(fullPath).ToLowerInvariant()))
+        {
+            AppLog.Write($"[compress_clip] rejected: bad path -- {pathError ?? "not a clip file"} (resolved to '{fullPath}')");
+            return JsonSerializer.Serialize(new { success = false, error = pathError ?? "Not a clip file." });
+        }
+
+        if (!File.Exists(fullPath))
+        {
+            AppLog.Write($"[compress_clip] rejected: '{fullPath}' doesn't exist on this PC");
+            return JsonSerializer.Serialize(new { success = false, error = "That clip doesn't exist on this PC anymore." });
+        }
+
+        if (CompressClipForRemote is null)
+        {
+            AppLog.Write("[compress_clip] rejected: CompressClipForRemote delegate is null");
+            return JsonSerializer.Serialize(new { success = false, error = "This PC's Backtrack can't compress clips right now." });
+        }
+
+        AppLog.Write($"[compress_clip] resolved to '{fullPath}' -- starting compression");
+        (bool success, string? error, string? newFileName, long fileSize) = await CompressClipForRemote(fullPath, targetMb);
+        if (!success || newFileName is null)
+        {
+            AppLog.Write($"[compress_clip] CompressClipForRemote FAILED: {error ?? "(no error message)"}");
+            return JsonSerializer.Serialize(new { success = false, error = error ?? "Compression failed." });
+        }
+
+        string newRelativePath = WithNewFileName(relativePath, newFileName);
+        AppLog.Write($"[compress_clip] success -- new relative path '{newRelativePath}', size {fileSize} bytes");
+        return JsonSerializer.Serialize(new { success = true, path = newRelativePath, size = fileSize });
+    }
+
+    private string HandlePlayAudioCue(JsonElement request)
+    {
+        if (!IsAuthorizedClient(request))
+            return JsonSerializer.Serialize(new { success = false, error = "Not authorized -- pair with this PC first." });
+
+        string cue = request.TryGetProperty("cue", out JsonElement c) ? c.GetString() ?? "" : "";
+        int volume = request.TryGetProperty("volume", out JsonElement v) && v.TryGetInt32(out int vol) ? vol : -1;
+
+        AudioCues.PlayCueByName(cue, volume);
+        return JsonSerializer.Serialize(new { success = true });
+    }
+
+    public async Task<bool> SendPlayAudioCueAsync(string cue, int volume)
+    {
+        if (string.IsNullOrEmpty(_settings.PairedPeerHost) || string.IsNullOrEmpty(_settings.PairedPeerSecret))
+            return false;
+
+        try
+        {
+            using var client = new TcpClient();
+            await client.ConnectAsync(_settings.PairedPeerHost, _settings.PairedPeerPort).WaitAsync(TimeSpan.FromSeconds(2));
+            string request = JsonSerializer.Serialize(new
+            {
+                type = "play_audio_cue",
+                secret = _settings.PairedPeerSecret,
+                cue,
+                volume
+            });
+            await WriteLineAsync(client.GetStream(), request).WaitAsync(TimeSpan.FromSeconds(2));
+            string? responseLine = await ReadLineAsync(client.GetStream()).WaitAsync(TimeSpan.FromSeconds(2));
+            if (responseLine != null)
+            {
+                using JsonDocument doc = JsonDocument.Parse(responseLine);
+                return doc.RootElement.TryGetProperty("success", out JsonElement s) && s.GetBoolean();
+            }
+        }
+        catch (Exception ex)
+        {
+            AppLog.Write($"[Pairing] SendPlayAudioCueAsync failed: {ex.Message}");
+        }
+        return false;
     }
 
     /// <summary>
@@ -1214,6 +1313,53 @@ public sealed class PairingService : IDisposable
         catch (Exception ex)
         {
             AppLog.WriteError("[trim_clip] request threw", ex);
+            return (false, ex.Message, null, 0);
+        }
+    }
+
+    public async Task<(bool Success, string? Error, string? NewPath, long Size)> CompressRemoteClipAsync(string relativePath, double targetMb)
+    {
+        if (string.IsNullOrEmpty(_settings.PairedPeerHost) || string.IsNullOrEmpty(_settings.PairedPeerSecret))
+        {
+            AppLog.Write("[compress_clip] not sent: not paired with a transmitter PC");
+            return (false, "Not paired with a transmitter PC.", null, 0);
+        }
+
+        AppLog.Write($"[compress_clip] sending: path='{relativePath}' targetMb={targetMb} -> {_settings.PairedPeerHost}:{_settings.PairedPeerPort}");
+        try
+        {
+            using var client = new TcpClient();
+            await client.ConnectAsync(_settings.PairedPeerHost, _settings.PairedPeerPort).WaitAsync(MutationRequestTimeout);
+            var fields = new Dictionary<string, object?>
+            {
+                ["type"] = "compress_clip",
+                ["secret"] = _settings.PairedPeerSecret,
+                ["path"] = relativePath,
+                ["targetMb"] = targetMb,
+            };
+            await WriteLineAsync(client.GetStream(), JsonSerializer.Serialize(fields)).WaitAsync(MutationRequestTimeout);
+            string? responseLine = await ReadLineAsync(client.GetStream()).WaitAsync(TrimRequestTimeout);
+            if (responseLine is null)
+            {
+                AppLog.Write("[compress_clip] connection closed with no response line");
+                return (false, "No response from the transmitter PC.", null, 0);
+            }
+
+            using JsonDocument doc = JsonDocument.Parse(responseLine);
+            bool success = doc.RootElement.TryGetProperty("success", out JsonElement s) && s.GetBoolean();
+            string? error = doc.RootElement.TryGetProperty("error", out JsonElement er) ? er.GetString() : null;
+            string? path = doc.RootElement.TryGetProperty("path", out JsonElement pt) ? pt.GetString() : null;
+            long size = doc.RootElement.TryGetProperty("size", out JsonElement sz) ? sz.GetInt64() : 0;
+            return (success, success ? null : (error ?? "Compression failed."), path, size);
+        }
+        catch (TimeoutException)
+        {
+            AppLog.Write("[compress_clip] timed out");
+            return (false, $"{_settings.PairedPeerName ?? "The paired PC"} didn't respond in time.", null, 0);
+        }
+        catch (Exception ex)
+        {
+            AppLog.WriteError("[compress_clip] request threw", ex);
             return (false, ex.Message, null, 0);
         }
     }
