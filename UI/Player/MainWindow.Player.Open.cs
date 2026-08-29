@@ -20,35 +20,17 @@ namespace Backtrack;
 
 public partial class MainWindow : Window
 {
-        private void OpenRemoteClipStreaming(string relativePath, RemoteGalleryFile file)
+    private void OpenRemoteClipStreaming(string relativePath, RemoteGalleryFile file)
     {
         if (string.IsNullOrEmpty(_settings.PairedPeerDeviceId))
             return;
 
-        
-        
-        
-        
-        
-        
-        
-        
-        
         long myToken = ++_clipOpenToken;
         string? thumbnailCachePath = GetRemoteThumbnailCachePath(relativePath, file.Modified, file.Size);
         ShowPlayerLoadingUi(file.Name, thumbnailCachePath);
-        
-        
-        
-        
-        
-        
-        
+
         _currentPlayerRemoteOrigin = (relativePath, _settings.PairedPeerDeviceId);
 
-        
-        
-        
         _remoteStreamTotalBytes = file.Size;
         StatSize.Text = file.Size > 0 ? $"{file.Size / 1024.0 / 1024.0:0.#} MB" : "";
         StatDate.Text = $"{file.Modified.ToLocalTime():MMM d, yyyy h:mm tt}";
@@ -60,8 +42,7 @@ public partial class MainWindow : Window
         Dispatcher.BeginInvoke(new Action(() => StartPlayerPlayback(mediaUri, myToken, hideFreezeFrameOnFirstPlay: true)), DispatcherPriority.Loaded);
     }
 
-
-        private void ShowPlayerLoadingUi(string title, string? thumbnailCachePath)
+    private void ShowPlayerLoadingUi(string title, string? thumbnailCachePath)
     {
         _currentPlayerFile = null;
         _trimStart = null;
@@ -101,7 +82,7 @@ public partial class MainWindow : Window
             }
             catch
             {
-                
+
             }
         }
 
@@ -109,19 +90,13 @@ public partial class MainWindow : Window
         _ = Dispatcher.BeginInvoke(new Action(() =>
         {
             PlayerFreezeFramePopup.IsOpen = true;
-            
-            
-            
-            
-            
-            
+
             _freezeFrameTimer?.Stop();
             ReopenPlayerOverlayPopup();
         }), DispatcherPriority.Loaded);
     }
 
-
-        private async void ShowPlayerFreezeFrame(FileInfo file)
+    private async void ShowPlayerFreezeFrame(FileInfo file)
     {
         await LoadThumbnailAsync(file, PlayerFreezeFrame);
         PlayerFreezeFramePopup.IsOpen = false;
@@ -137,7 +112,6 @@ public partial class MainWindow : Window
         }), DispatcherPriority.Loaded);
     }
 
-
     private void OpenInPlayer(FileInfo file)
     {
         if (_libVlc is null)
@@ -146,25 +120,10 @@ public partial class MainWindow : Window
             return;
         }
 
-        
-        
-        
-        
-        
-        
         _playerBackTarget = Screen.Gallery;
 
-        
-        
-        
-        
-        
-        
         _clipOpenToken++;
-        
-        
-        
-        
+
         _currentPlayerRemoteOrigin = null;
 
         _currentPlayerFile = file;
@@ -176,10 +135,6 @@ public partial class MainWindow : Window
         StopPreviewLoop();
         ResetPlaybackSpeed();
 
-        
-        
-        
-        
         PlayerVideoView.Visibility = Visibility.Visible;
 
         ShowScreen(Screen.Player);
@@ -187,18 +142,6 @@ public partial class MainWindow : Window
         UpdatePlayerStarUi();
         RenderPlayerMarkers();
 
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
         ReopenPlayerOverlayPopup();
         ShowPlayerFreezeFrame(file);
 
@@ -210,43 +153,17 @@ public partial class MainWindow : Window
 
         StopPlayerPlayback();
 
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
         long myToken = _clipOpenToken;
         var mediaUri = new Uri(ResolveLocalClipPath(file));
         Dispatcher.BeginInvoke(new Action(() => StartPlayerPlayback(mediaUri, myToken)), DispatcherPriority.Loaded);
     }
 
-
-        private async void StartPlayerPlayback(Uri mediaUri, long myToken, bool hideFreezeFrameOnFirstPlay = false)
+    private async void StartPlayerPlayback(Uri mediaUri, long myToken, bool hideFreezeFrameOnFirstPlay = false)
     {
-        
-        
-        
-        
+
         if (_libVlc is null)
             return;
 
-        
-        
-        
-        
         if (myToken != _clipOpenToken)
             return;
 
@@ -256,8 +173,6 @@ public partial class MainWindow : Window
             _pendingVlcDisposeTask = null;
         }
 
-        
-        
         if (myToken != _clipOpenToken)
             return;
 
@@ -273,33 +188,11 @@ public partial class MainWindow : Window
         if (toastHwnd != IntPtr.Zero)
             WindowZOrder.BringToFrontWithoutActivating(toastHwnd);
 
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
         _isMuted = false;
         _vlcPlayer.Volume = 100;
         _vlcPlayer.Mute = false;
         PlayerVolumeSlider.Value = 100;
         UpdateVolumeIcon();
-
-        
-        
-        
-        
-        
-        
 
         bool tracksLoaded = false;
         bool freezeFrameHidden = false;
@@ -332,11 +225,6 @@ public partial class MainWindow : Window
                 }
             }
 
-            
-            
-            
-            
-            
             if (!tracksLoaded)
             {
                 tracksLoaded = true;
@@ -354,17 +242,6 @@ public partial class MainWindow : Window
             PauseIcon.Visibility = Visibility.Collapsed;
             _playerHasEnded = true;
 
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            
             _seekTimer?.Stop();
             PlayerSeekFill.Width = PlayerSeekTrack.ActualWidth;
             PlayerSeekThumb.Margin = new Thickness(PlayerSeekTrack.ActualWidth - 7, 0, 0, 0);
@@ -374,10 +251,9 @@ public partial class MainWindow : Window
         _seekTimer?.Start();
     }
 
+    private void TogglePlayerMenu() => PlayerMenuPopup.IsOpen = !PlayerMenuPopup.IsOpen;
 
-        private void TogglePlayerMenu() => PlayerMenuPopup.IsOpen = !PlayerMenuPopup.IsOpen;
+    internal void PlayerMenuButton_Click(object sender, RoutedEventArgs e) => TogglePlayerMenu();
 
-    private void PlayerMenuButton_Click(object sender, RoutedEventArgs e) => TogglePlayerMenu();
-
-    private void PlayerMenuButton_Click(object sender, MouseButtonEventArgs e) => TogglePlayerMenu();
+    internal void PlayerMenuButton_Click(object sender, MouseButtonEventArgs e) => TogglePlayerMenu();
 }

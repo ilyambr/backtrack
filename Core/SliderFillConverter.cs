@@ -5,10 +5,6 @@ using System.Windows.Data;
 
 namespace Backtrack;
 
-/// <summary>
-/// Splits a Slider's track into two Star-weighted grid columns (played / remaining)
-/// so the "filled up to the thumb" look doesn't need the track's rendered width.
-/// </summary>
 public sealed class SliderFillConverter : IMultiValueConverter
 {
     public object Convert(object[] values, Type targetType, object? parameter, CultureInfo culture)

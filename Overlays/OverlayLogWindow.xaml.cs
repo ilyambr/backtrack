@@ -90,7 +90,6 @@ public partial class OverlayLogWindow : Window
         BeginAnimation(OpacityProperty, anim);
     }
 
-    /// <summary>Empty text triggers smooth fade out to hidden -- matches OBS's status bar clearing when idle.</summary>
     public void SetObsLine(string text)
     {
         if (!string.IsNullOrWhiteSpace(text))

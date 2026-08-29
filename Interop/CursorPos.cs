@@ -3,7 +3,6 @@ using System.Windows;
 
 namespace Backtrack.Interop;
 
-/// <summary>Wraps GetCursorPos -- used to detect when the mouse has moved away from a window that hid itself on hover (a hidden window can't raise its own MouseLeave).</summary>
 public static class CursorPos
 {
     [StructLayout(LayoutKind.Sequential)]

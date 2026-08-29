@@ -5,7 +5,6 @@ using System.Windows.Interop;
 
 namespace Backtrack.Interop;
 
-/// <summary>Registers a real OS-level hotkey (RegisterHotKey/WM_HOTKEY), not a Chromium accelerator.</summary>
 public sealed class GlobalHotkey : IDisposable
 {
     [Flags]
@@ -44,7 +43,6 @@ public sealed class GlobalHotkey : IDisposable
             throw new InvalidOperationException("Could not register the global hotkey -- something else on this PC is already using it.");
     }
 
-    /// <summary>Switches to a different key combo without needing to recreate the window hook -- restores the previous combo if the new one is already taken elsewhere, rather than leaving no hotkey registered at all.</summary>
     public void Rebind(Modifiers modifiers, uint virtualKey)
     {
         UnregisterHotKey(_source.Handle, _id);

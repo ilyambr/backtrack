@@ -45,7 +45,6 @@ public partial class ScrimOverlay : Window
 
     private IntPtr WndProc(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
     {
-        // Prevent Windows from ever promoting ScrimOverlay above MainWindow when clicked
         if (msg == WM_MOUSEACTIVATE)
         {
             handled = true;
@@ -54,7 +53,6 @@ public partial class ScrimOverlay : Window
         return IntPtr.Zero;
     }
 
-    /// <summary>Re-reads the configured display and re-covers it -- called again from Settings if the user changes which monitor Backtrack shows on mid-session.</summary>
     public void Reposition()
     {
         Rect bounds = DisplayMonitors.ResolveBoundsDiu(AppSettings.Load().DisplayDeviceName);
@@ -66,16 +64,11 @@ public partial class ScrimOverlay : Window
 
     private DateTime _ignoreClicksUntilUtc = DateTime.MinValue;
 
-    /// <summary>
-    /// Temporarily ignores background/scrim dismiss clicks for the specified duration (default 400ms).
-    /// Used when opening or switching tabs/screens so fast double-clicks don't immediately exit or crash the player.
-    /// </summary>
     public void ArmDismissCooldown(int ms = 400)
     {
         _ignoreClicksUntilUtc = DateTime.UtcNow.AddMilliseconds(ms);
     }
 
-    // Any click on the dim area dismisses -- not just left.
     private void Scrim_MouseDown(object sender, MouseButtonEventArgs e)
     {
         if (DateTime.UtcNow < _ignoreClicksUntilUtc)
@@ -104,15 +97,6 @@ public partial class ScrimOverlay : Window
             DragHovered?.Invoke(new Point(pt.X, pt.Y));
     }
 
-    /// <summary>
-    /// Player fullscreen deliberately covers this window's own top-left
-    /// corner with the video, but this button sits in a separate Topmost
-    /// window from MainWindow -- whether it actually ends up hidden behind
-    /// the video depends on exact window bounds/z-order lining up, which
-    /// fullscreen's letterboxing can't always guarantee. Collapsing it
-    /// outright removes that dependency entirely; Escape and the in-video
-    /// fullscreen-exit button both still reach the same close path.
-    /// </summary>
     public void SetExitButtonVisible(bool visible) =>
         ExitButton.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
 }

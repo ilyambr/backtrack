@@ -26,7 +26,6 @@ public partial class MainWindow : Window
         _toastOverlay.ShowAppStarted(hotkey);
     }
 
-
     private string FormatHotkeyText()
     {
         var parts = new List<string>();
@@ -47,8 +46,6 @@ public partial class MainWindow : Window
         return string.Join("+", parts);
     }
 
-
-    
     private void RegisterHotkeyFromSettings()
     {
         try
@@ -92,7 +89,6 @@ public partial class MainWindow : Window
         }
     }
 
-
     private static string FormatHotkey(GlobalHotkey.Modifiers modifiers, uint virtualKey)
     {
         if (virtualKey == 0)
@@ -125,8 +121,7 @@ public partial class MainWindow : Window
         return string.Join("+", parts);
     }
 
-
-    private void HotkeyCaptureButton_Click(object sender, RoutedEventArgs e)
+    internal void HotkeyCaptureButton_Click(object sender, RoutedEventArgs e)
     {
         if (_capturingHotkey || _capturingCancelRecordHotkey)
             return;
@@ -136,8 +131,7 @@ public partial class MainWindow : Window
         PreviewKeyDown += HotkeyCapture_PreviewKeyDown;
     }
 
-
-    private void HotkeyCapture_PreviewKeyDown(object sender, KeyEventArgs e)
+    internal void HotkeyCapture_PreviewKeyDown(object sender, KeyEventArgs e)
     {
         Key key = e.Key == Key.System ? e.SystemKey : e.Key;
 
@@ -190,7 +184,6 @@ public partial class MainWindow : Window
         EndHotkeyCapture(cancelled: false);
     }
 
-
     private void EndHotkeyCapture(bool cancelled)
     {
         PreviewKeyDown -= HotkeyCapture_PreviewKeyDown;
@@ -199,8 +192,7 @@ public partial class MainWindow : Window
             HotkeyCaptureButton.Content = FormatHotkey((GlobalHotkey.Modifiers)_settings.HotkeyModifiers, (uint)_settings.HotkeyVirtualKey);
     }
 
-
-    private void CancelRecordHotkeyCaptureButton_Click(object sender, RoutedEventArgs e)
+    internal void CancelRecordHotkeyCaptureButton_Click(object sender, RoutedEventArgs e)
     {
         if (_capturingCancelRecordHotkey || _capturingHotkey)
             return;
@@ -210,8 +202,7 @@ public partial class MainWindow : Window
         PreviewKeyDown += CancelRecordHotkeyCapture_PreviewKeyDown;
     }
 
-
-    private void CancelRecordHotkeyCapture_PreviewKeyDown(object sender, KeyEventArgs e)
+    internal void CancelRecordHotkeyCapture_PreviewKeyDown(object sender, KeyEventArgs e)
     {
         Key key = e.Key == Key.System ? e.SystemKey : e.Key;
 
@@ -274,7 +265,6 @@ public partial class MainWindow : Window
         EndCancelRecordHotkeyCapture(cancelled: false);
     }
 
-
     private void EndCancelRecordHotkeyCapture(bool cancelled)
     {
         PreviewKeyDown -= CancelRecordHotkeyCapture_PreviewKeyDown;
@@ -283,7 +273,7 @@ public partial class MainWindow : Window
             CancelRecordHotkeyCaptureButton.Content = FormatHotkey((GlobalHotkey.Modifiers)_settings.CancelRecordHotkeyModifiers, (uint)_settings.CancelRecordHotkeyVirtualKey);
     }
 
-    private void BookmarkHotkeyCaptureButton_Click(object sender, RoutedEventArgs e)
+    internal void BookmarkHotkeyCaptureButton_Click(object sender, RoutedEventArgs e)
     {
         if (_capturingBookmarkHotkey || _capturingHotkey || _capturingCancelRecordHotkey)
             return;
@@ -293,7 +283,7 @@ public partial class MainWindow : Window
         PreviewKeyDown += BookmarkHotkeyCapture_PreviewKeyDown;
     }
 
-    private void BookmarkHotkeyCapture_PreviewKeyDown(object sender, KeyEventArgs e)
+    internal void BookmarkHotkeyCapture_PreviewKeyDown(object sender, KeyEventArgs e)
     {
         Key key = e.Key == Key.System ? e.SystemKey : e.Key;
 

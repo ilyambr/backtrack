@@ -37,15 +37,14 @@ public partial class MainWindow : Window
             videoWidth = videoHeight * 16.0 / 9.0;
         }
 
-        // Reparent transport bar into popup before resizing the video host
         PlayerVideoColumnDock.Children.Remove(PlayerTransportBar);
         PlayerTransportBar.Background = Brushes.Transparent;
         PlayerFullscreenTransportBorder.Child = PlayerTransportBar;
 
         const double transportPillSideInset = 40;
         const double transportPillBottomGap = 16;
-        const double transportPillVerticalPadding = 12; 
-        const double transportPillHorizontalPadding = 40; 
+        const double transportPillVerticalPadding = 12;
+        const double transportPillHorizontalPadding = 40;
         PlayerFullscreenTransportBorder.Width = videoWidth - transportPillSideInset;
         PlayerTransportBar.Width = PlayerFullscreenTransportBorder.Width - transportPillHorizontalPadding;
         PlayerFullscreenTransportPopup.HorizontalOffset = transportPillSideInset / 2;
@@ -69,7 +68,6 @@ public partial class MainWindow : Window
         ReopenPlayerFullscreenTransportPopup();
         UpdateLayout();
     }
-
 
     private void ExitPlayerFullscreen()
     {
@@ -101,7 +99,6 @@ public partial class MainWindow : Window
         ReopenPlayerOverlayPopup();
         UpdateLayout();
     }
-
 
     private void ReopenPlayerOverlayPopup()
     {

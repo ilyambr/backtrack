@@ -23,19 +23,18 @@ namespace Backtrack;
 
 public partial class MainWindow : Window
 {
-    private void GalleryRemoteTab_Click(object sender, RoutedEventArgs e)
+    internal void GalleryRemoteTab_Click(object sender, RoutedEventArgs e)
     {
         if (_galleryIsRemote || string.IsNullOrEmpty(_settings.PairedPeerSecret))
             return;
-        GalleryFilterBox.Text = string.Empty; 
+        GalleryFilterBox.Text = string.Empty;
         _galleryIsRemote = true;
         _currentRemoteGalleryFolder = null;
         RefreshGallerySourceTabsVisibility();
         LoadGallery();
     }
 
-
-        private async Task<int> CountRemoteClipsRecursiveAsync(string relativePath)
+    private async Task<int> CountRemoteClipsRecursiveAsync(string relativePath)
     {
         RemoteGalleryListing? listing = await _pairing.ListRemoteGalleryAsync(relativePath);
         if (listing is null)
@@ -47,23 +46,20 @@ public partial class MainWindow : Window
         return count;
     }
 
-
-        private void OpenRemoteGalleryFolder(string name)
+    private void OpenRemoteGalleryFolder(string name)
     {
-        GalleryFilterBox.Text = string.Empty; 
+        GalleryFilterBox.Text = string.Empty;
         _currentRemoteGalleryFolder = _currentRemoteGalleryFolder is null ? name : $"{_currentRemoteGalleryFolder}/{name}";
         LoadGallery();
     }
 
-
     private string RemoteClipRelativePath(string fileName) =>
         _currentRemoteGalleryFolder is null ? fileName : $"{_currentRemoteGalleryFolder}/{fileName}";
 
-
-        private async Task<List<(string RelativePath, RemoteGalleryFile File)>?> ListAllRemoteClipsAsync()
+    private async Task<List<(string RelativePath, RemoteGalleryFile File)>?> ListAllRemoteClipsAsync()
     {
         var foldersToWalk = new Queue<string?>();
-        foldersToWalk.Enqueue(null); 
+        foldersToWalk.Enqueue(null);
         var all = new List<(string RelativePath, RemoteGalleryFile File)>();
 
         while (foldersToWalk.Count > 0)
@@ -83,12 +79,10 @@ public partial class MainWindow : Window
         return all;
     }
 
-
-        private async Task SyncRemoteClipsAsync(IProgress<double>? progress = null)
+    private async Task SyncRemoteClipsAsync(IProgress<double>? progress = null)
     {
         List<(string RelativePath, RemoteGalleryFile File)>? all = await ListAllRemoteClipsAsync();
-        
-        
+
         if (all is null)
             return;
 
@@ -114,25 +108,16 @@ public partial class MainWindow : Window
         for (int i = 0; i < toDownload.Count; i++)
         {
             (string relativePath, RemoteGalleryFile file, string destPath) = toDownload[i];
-            int completed = i; 
-            
-            
-            
-            
-            
+            int completed = i;
+
             var fileProgress = progress is null ? null : new Progress<double>(p => progress.Report((completed + p) / toDownload.Count));
 
-            
-            
-            
-            
             await _pairing.DownloadRemoteClipAsync(relativePath, destPath, fileProgress);
             progress?.Report((double)(i + 1) / toDownload.Count);
         }
     }
 
-
-        private async Task OpenRemoteClipFileLocationAsync(string relativePath, RemoteGalleryFile file)
+    private async Task OpenRemoteClipFileLocationAsync(string relativePath, RemoteGalleryFile file)
     {
         string destPath = GetRemoteClipCachePath(relativePath, file.Name);
         if (!File.Exists(destPath))
@@ -148,8 +133,7 @@ public partial class MainWindow : Window
         RevealInExplorerAndClose(destPath);
     }
 
-
-        private async Task CopyRemoteClipPathAsync(string relativePath, RemoteGalleryFile file)
+    private async Task CopyRemoteClipPathAsync(string relativePath, RemoteGalleryFile file)
     {
         string destPath = GetRemoteClipCachePath(relativePath, file.Name);
         if (!File.Exists(destPath))
@@ -165,8 +149,7 @@ public partial class MainWindow : Window
         Clipboard.SetText(destPath);
     }
 
-
-        private void DeleteRemoteClip(string relativePath, RemoteGalleryFile file)
+    private void DeleteRemoteClip(string relativePath, RemoteGalleryFile file)
     {
         ShowConfirmDialog(
             $"Are you sure you want to delete \"{file.Name}\"? This deletes the real clip on {_settings.PairedPeerName}'s PC (sent to its recycle bin there), not just this view.",
@@ -178,29 +161,22 @@ public partial class MainWindow : Window
             });
     }
 
-
     private async Task FinishRemoteDeleteAsync(string relativePath, string displayName, RemoteGalleryFile? file)
     {
         (bool success, string? error) = await _pairing.DeleteRemoteClipAsync(relativePath);
         if (!success)
         {
-            
-            
-            
-            
-            
+
             _ = Dispatcher.BeginInvoke(() => MessageBox.Show(this, $"Couldn't delete \"{displayName}\": {error}", "Backtrack"));
         }
         else if (file is not null)
         {
-            
-            
-            
-            try { File.Delete(GetRemoteClipCachePath(relativePath, file.Name)); } catch {  }
+
+            try { File.Delete(GetRemoteClipCachePath(relativePath, file.Name)); } catch { }
             string? thumbCache = GetRemoteThumbnailCachePath(relativePath, file.Modified, file.Size);
             if (thumbCache is not null)
             {
-                try { File.Delete(thumbCache); } catch {  }
+                try { File.Delete(thumbCache); } catch { }
             }
         }
 
@@ -213,8 +189,7 @@ public partial class MainWindow : Window
         });
     }
 
-
-        private string? GetRemoteThumbnailCachePath(string relativePath, DateTime modified, long size)
+    private string? GetRemoteThumbnailCachePath(string relativePath, DateTime modified, long size)
     {
         if (string.IsNullOrEmpty(_settings.PairedPeerDeviceId))
             return null;
@@ -226,7 +201,6 @@ public partial class MainWindow : Window
         string hash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(key)));
         return Path.Combine(cacheDir, $"{hash}.jpg");
     }
-
 
     private async Task LoadRemoteThumbnailAsync(string relativePath, RemoteGalleryFile file, Image target)
     {
@@ -266,7 +240,6 @@ public partial class MainWindow : Window
         }
     }
 
-
     private void OpenRemoteFolderFileLocation(string? relativeFolderPath)
     {
         string baseCache = Path.Combine(_settings.ClipsFolder, "RemoteClips");
@@ -286,7 +259,7 @@ public partial class MainWindow : Window
         return lastSlash < 0 ? null : _currentRemoteGalleryFolder[..lastSlash];
     }
 
-        private async Task LoadRemoteGalleryAsync()
+    private async Task LoadRemoteGalleryAsync()
     {
         _galleryCardSelection.Clear();
         _selectedClipPaths.Clear();
@@ -297,9 +270,7 @@ public partial class MainWindow : Window
         RemoteGalleryListing? listing = await _pairing.ListRemoteGalleryAsync(_currentRemoteGalleryFolder ?? "");
         if (listing is null)
         {
-            
-            
-            
+
             if (_remotePcWasConnected)
             {
                 _remotePcWasConnected = false;
@@ -320,18 +291,10 @@ public partial class MainWindow : Window
         _remotePcWasConnected = true;
         _lastRemoteStorageInfo = listing.Storage;
 
-        
-        
-        
         string? newestRemotePath = await _pairing.GetRemoteNewestClipPathAsync();
 
-        
         string filter = GalleryFilterBox.Text.Trim();
 
-        
-        
-        
-        
         List<RemoteGalleryFile> files = listing.Files
             .Where(f => !_pendingRemoteDeletePaths.Contains(RemoteClipRelativePath(f.Name)))
             .Where(f => filter.Length == 0 || Path.GetFileNameWithoutExtension(f.Name).Contains(filter, StringComparison.OrdinalIgnoreCase))

@@ -20,11 +20,9 @@ namespace Backtrack;
 
 public partial class MainWindow : Window
 {
-        private void RefreshBufferDurationUi()
+    private void RefreshBufferDurationUi()
     {
-        
-        
-        
+
         if (_settings is null)
             return;
 
@@ -50,8 +48,7 @@ public partial class MainWindow : Window
         BufferDurationWarningText.Visibility = Visibility.Visible;
     }
 
-
-    private void ApplyObsConnection_Click(object sender, RoutedEventArgs e)
+    internal void ApplyObsConnection_Click(object sender, RoutedEventArgs e)
     {
         try
         {
@@ -89,22 +86,9 @@ public partial class MainWindow : Window
         }
     }
 
-
     private static void CreateOrUpdateStartupTask()
     {
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
+
         string exePath = Environment.ProcessPath ?? Process.GetCurrentProcess().MainModule!.FileName;
         var psi = new ProcessStartInfo(SchtasksPath,
             $"/Create /F /SC ONLOGON /RL LIMITED /TN \"{ScheduledTaskName}\" /TR \"\\\"{exePath}\\\"\"")
@@ -118,19 +102,9 @@ public partial class MainWindow : Window
                 : $"schtasks.exe failed to create the startup task: {stderr.Trim()}");
     }
 
-
     private static void DeleteStartupTask()
     {
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
+
         var psi = new ProcessStartInfo(SchtasksPath, $"/Delete /F /TN \"{ScheduledTaskName}\"")
         { UseShellExecute = false, RedirectStandardError = true, CreateNoWindow = true };
         using Process proc = Process.Start(psi)!;

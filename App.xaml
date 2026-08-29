@@ -1,5 +1,16 @@
-﻿<Application x:Class="Backtrack.App"
+<Application x:Class="Backtrack.App"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              ShutdownMode="OnExplicitShutdown">
+    <Application.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <ResourceDictionary Source="pack://application:,,,/Backtrack;component/UI/Styles/Converters.xaml"/>
+                <ResourceDictionary Source="pack://application:,,,/Backtrack;component/UI/Styles/ButtonStyles.xaml"/>
+                <ResourceDictionary Source="pack://application:,,,/Backtrack;component/UI/Styles/ControlStyles.xaml"/>
+                <ResourceDictionary Source="pack://application:,,,/Backtrack;component/UI/Styles/PlayerStyles.xaml"/>
+                <ResourceDictionary Source="pack://application:,,,/Backtrack;component/UI/Styles/MenuStyles.xaml"/>
+            </ResourceDictionary.MergedDictionaries>
+        </ResourceDictionary>
+    </Application.Resources>
 </Application>

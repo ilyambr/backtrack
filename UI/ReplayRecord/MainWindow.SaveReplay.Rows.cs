@@ -22,7 +22,7 @@ namespace Backtrack;
 
 public partial class MainWindow : Window
 {
-        private async Task LoadBufferVisibilityUi()
+    private async Task LoadBufferVisibilityUi()
     {
         if (_settings.ObsIsRemote)
             return;
@@ -56,7 +56,6 @@ public partial class MainWindow : Window
             BufferVisibilityPanel.Children.Add(BuildBufferVisibilityRow(row));
     }
 
-
     private Border BuildBufferVisibilityRow(ReplayRow row)
     {
         string label = row.Label;
@@ -86,9 +85,7 @@ public partial class MainWindow : Window
         var bottomGrid = new Grid
         {
             Margin = new Thickness(0, 8, 0, 0),
-            
-            
-            
+
             Visibility = toggle.IsChecked == true ? Visibility.Visible : Visibility.Collapsed,
         };
         bottomGrid.ColumnDefinitions.Add(new ColumnDefinition());
@@ -115,8 +112,7 @@ public partial class MainWindow : Window
         return new Border { Style = (Style)FindResource("SettingsRow"), Child = container };
     }
 
-
-        private async Task PickBufferDestFolderAsync(string rowKey, TextBlock folderLabel)
+    private async Task PickBufferDestFolderAsync(string rowKey, TextBlock folderLabel)
     {
         try
         {
@@ -142,7 +138,6 @@ public partial class MainWindow : Window
             MessageBox.Show(this, $"Couldn't set that folder: {ex.Message}", "Backtrack");
         }
     }
-
 
     private Button BuildRowButton(ReplayRow row)
     {
@@ -179,18 +174,6 @@ public partial class MainWindow : Window
         string styleKey = row.Status == 1 ? "BufRowButton" : "BufRowButtonNoHover";
         var button = new Button { Style = (Style)FindResource(styleKey), Content = content, Tag = row.Key };
 
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
         if (row.Status == 0)
         {
             button.IsEnabled = false;
@@ -221,29 +204,16 @@ public partial class MainWindow : Window
         return button;
     }
 
-
     private Border BuildSharedClipLengthControl(List<ReplayRow> rows)
     {
-        
-        
-        
-        
-        
-        
         int maxSeconds = Math.Max(MinClipSeconds, _settings.ReplayBufferMinutes * 60);
-        int initial = Math.Min(rows.Count > 0 ? rows[0].LengthSeconds : 60, maxSeconds);
+        int initial = _settings.PreferredClipLengthSeconds > 0
+            ? _settings.PreferredClipLengthSeconds
+            : (rows.Count > 0 && rows[0].LengthSeconds > 0 ? rows[0].LengthSeconds : 60);
+        initial = Math.Clamp(initial, MinClipSeconds, maxSeconds);
 
         var label = new TextBlock { Text = "Clip length", FontSize = 12, FontWeight = FontWeights.Bold, Foreground = (Brush)FindResource("Text1"), VerticalAlignment = VerticalAlignment.Center };
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
+
         var slider = new Slider { Style = (Style)FindResource("RowLengthSlider"), Value = SecondsToSliderPos(initial, maxSeconds), Margin = new Thickness(10, 0, 10, 0), IsMoveToPointEnabled = false };
         var lengthText = new TextBlock
         {
@@ -261,7 +231,7 @@ public partial class MainWindow : Window
         {
             slider.CaptureMouse();
             SetSliderValueFromMouse(slider, e.GetPosition(slider));
-            e.Handled = true; 
+            e.Handled = true;
         };
         slider.PreviewMouseMove += (_, e) =>
         {
@@ -274,6 +244,9 @@ public partial class MainWindow : Window
             slider.ReleaseMouseCapture();
 
             int seconds = SliderPosToSeconds(slider.Value, maxSeconds);
+            _settings.PreferredClipLengthSeconds = seconds;
+            _settings.Save();
+
             foreach (ReplayRow row in _lastReplayRows)
             {
                 try
@@ -301,8 +274,6 @@ public partial class MainWindow : Window
 
         return new Border { BorderBrush = (Brush)FindResource("Hairline"), BorderThickness = new Thickness(0, 1, 0, 0), Padding = new Thickness(0, 8, 0, 0), Margin = new Thickness(0, 6, 0, 0), Child = row2 };
     }
-
-
 
     private async Task<Border> BuildMainRecordFolderRowAsync()
     {
@@ -334,7 +305,6 @@ public partial class MainWindow : Window
 
         return new Border { Style = (Style)FindResource("SettingsRow"), Child = container };
     }
-
 
     private async Task<Border> BuildRecordFolderRowAsync(RecordRow row)
     {
@@ -393,7 +363,6 @@ public partial class MainWindow : Window
 
         return new Border { Style = (Style)FindResource("SettingsRow"), Child = container };
     }
-
 
     private void SetLocalRowNameOverride(string originalLabel, string newName)
     {

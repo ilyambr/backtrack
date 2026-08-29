@@ -9,15 +9,8 @@ using ComIDataObject = System.Runtime.InteropServices.ComTypes.IDataObject;
 
 namespace Backtrack;
 
-/// <summary>
-/// Provides OS-native drag-and-drop with custom drag image previews via the
-/// Windows Shell's IDragSourceHelper and shell IDataObject.
-/// The Windows OS handles rendering the drag preview natively at the cursor
-/// with zero lag across all applications.
-/// </summary>
 internal static class ShellDragHelper
 {
-    // ── COM Interfaces & CoClasses ────────────────────────────────────────────
 
     [ComImport]
     [Guid("4657278A-411B-11D2-839A-00C04FD918D0")]
@@ -125,18 +118,11 @@ internal static class ShellDragHelper
     [DllImport("gdi32.dll")]
     private static extern bool DeleteObject(IntPtr hObject);
 
-    // ── Preview Dimensions ───────────────────────────────────────────────────
-
-    private const int GhostWidth  = 180;
-    private const int ThumbHeight = 101;   // 16:9 ratio
+    private const int GhostWidth = 180;
+    private const int ThumbHeight = 101;
     private const int LabelHeight = 30;
     private const int TotalHeight = ThumbHeight + LabelHeight;
 
-    // ── Public Drag API ──────────────────────────────────────────────────────
-
-    /// <summary>
-    /// Initiates a drag-and-drop operation with a native OS drag preview image.
-    /// </summary>
     public static void DoFileDragDrop(
         DependencyObject dragSource,
         string[] filePaths,
@@ -159,14 +145,11 @@ internal static class ShellDragHelper
 
         if (shellDataObj != null)
         {
-            // Attach drag image to the native shell IDataObject
             AttachDragImage(shellDataObj, thumbnail, label);
-            // Wrap in WPF DataObject so WPF DragDrop pipeline can handle it
             dataObjectToUse = new System.Windows.DataObject(shellDataObj);
         }
         else
         {
-            // Fallback to standard WPF FileDrop DataObject if shell interop fails
             dataObjectToUse = new System.Windows.DataObject(DataFormats.FileDrop, filePaths);
         }
 
@@ -184,9 +167,6 @@ internal static class ShellDragHelper
     private static IDropTargetHelper DropTargetHelper => _dropTargetHelper ??= (IDropTargetHelper)new DragDropHelperCoClass();
     private static Action? _activeLeaveAction;
 
-    /// <summary>
-    /// Forces DropTargetHelper to leave and resets drop state, preventing stuck ghost images when overlay closes.
-    /// </summary>
     public static void ResetDropHelper()
     {
         try
@@ -198,9 +178,6 @@ internal static class ShellDragHelper
         catch { }
     }
 
-    /// <summary>
-    /// Enables Windows Shell drag image display over a WPF window during drag-and-drop.
-    /// </summary>
     public static void EnableDropPreview(UIElement element, Window window)
     {
         element.AllowDrop = true;
@@ -357,9 +334,9 @@ internal static class ShellDragHelper
             var shdi = new SHDRAGIMAGE
             {
                 sizeDragImage = new SIZEL { cx = GhostWidth, cy = TotalHeight },
-                ptOffset      = new NativeMethods.POINT { X = 12, Y = 12 },
+                ptOffset = new NativeMethods.POINT { X = 12, Y = 12 },
                 hbmpDragImage = hBitmap,
-                crColorKey    = 0xFFFF_FFFFu,
+                crColorKey = 0xFFFF_FFFFu,
             };
 
             int hr = helper.InitializeFromBitmap(ref shdi, dataObject);
@@ -374,8 +351,6 @@ internal static class ShellDragHelper
         }
     }
 
-    // ── GDI+ Preview Rendering ───────────────────────────────────────────────
-
     private static Bitmap? RenderGhostBitmap(ImageSource? thumbnail, string label)
     {
         var bmp = new Bitmap(
@@ -383,11 +358,10 @@ internal static class ShellDragHelper
             System.Drawing.Imaging.PixelFormat.Format32bppPArgb);
 
         using var g = Graphics.FromImage(bmp);
-        g.SmoothingMode     = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+        g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
         g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
-        g.PixelOffsetMode   = System.Drawing.Drawing2D.PixelOffsetMode.HighQuality;
+        g.PixelOffsetMode = System.Drawing.Drawing2D.PixelOffsetMode.HighQuality;
 
-        // ── Thumbnail ─────────────────────────────────────────────────────────
         bool drewThumb = false;
         if (thumbnail is BitmapSource bs)
         {
@@ -405,12 +379,10 @@ internal static class ShellDragHelper
             g.FillRectangle(placeholderBrush, 0, 0, GhostWidth, ThumbHeight);
         }
 
-        // ── Label background strip ─────────────────────────────────────────────
         using var labelBg = new SolidBrush(
             System.Drawing.Color.FromArgb(0xFF, 0x12, 0x14, 0x1A));
         g.FillRectangle(labelBg, 0, ThumbHeight, GhostWidth, LabelHeight);
 
-        // ── Label text ────────────────────────────────────────────────────────
         using var font = new Font(
             "Segoe UI", 9.5f, System.Drawing.FontStyle.Bold,
             GraphicsUnit.Point);
@@ -418,15 +390,14 @@ internal static class ShellDragHelper
             System.Drawing.Color.FromArgb(0xFF, 0xF0, 0xF0, 0xF0));
         using var sf = new StringFormat
         {
-            Trimming      = StringTrimming.EllipsisCharacter,
-            FormatFlags   = StringFormatFlags.NoWrap,
+            Trimming = StringTrimming.EllipsisCharacter,
+            FormatFlags = StringFormatFlags.NoWrap,
             LineAlignment = StringAlignment.Center,
         };
         var textRect = new RectangleF(
             8, ThumbHeight, GhostWidth - 16, LabelHeight);
         g.DrawString(label, font, textBrush, textRect, sf);
 
-        // ── 1-px hard border ──────────────────────────────────────────────────
         using var borderPen = new System.Drawing.Pen(
             System.Drawing.Color.FromArgb(0x88, 0xFF, 0xFF, 0xFF));
         g.DrawRectangle(borderPen, 0, 0, GhostWidth - 1, TotalHeight - 1);

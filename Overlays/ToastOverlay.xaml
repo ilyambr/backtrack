@@ -11,10 +11,6 @@
         ResizeMode="NoResize"
         SizeToContent="Height"
         ShowActivated="False">
-    <!--
-      Always-on, left side of the screen, independent of MainWindow; same
-      reasoning as StatusOverlay, notifications about what just happened
-      shouldn't disappear just because the hotkey HUD is hidden.
-    -->
+    
     <StackPanel x:Name="ToastStack" Margin="0,0,0,0"/>
 </Window>

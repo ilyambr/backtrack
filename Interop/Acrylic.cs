@@ -3,13 +3,6 @@ using System.Runtime.InteropServices;
 
 namespace Backtrack.Interop;
 
-/// <summary>
-/// Real blur-behind (Windows' undocumented-but-widely-used SetWindowCompositionAttribute),
-/// so the panel actually looks like a translucent dimmed sheet over the desktop/game
-/// instead of a flat, non-blurred rectangle. Best-effort: if it fails on some
-/// system/driver combination, the window still has its plain semi-transparent
-/// background as a fallback -- this never throws out to the caller.
-/// </summary>
 public static class Acrylic
 {
     private enum AccentState
@@ -52,14 +45,6 @@ public static class Acrylic
     [DllImport("dwmapi.dll")]
     private static extern int DwmExtendFrameIntoClientArea(IntPtr hwnd, ref Margins margins);
 
-    /// <summary>
-    /// Real acrylic blur-behind needs two things together: telling DWM the whole
-    /// client area is "glass" (so a plain WPF Background="Transparent" -- with
-    /// AllowsTransparency left OFF -- actually shows DWM's composited blur
-    /// through it instead of rendering opaque black), then the accent policy
-    /// itself. AllowsTransparency="True" uses GDI layered windows instead of DWM
-    /// composition and silently defeats this -- the window must not use it.
-    /// </summary>
     public static void TryEnableBlurBehind(IntPtr hwnd, byte r, byte g, byte b, byte a)
     {
         try
@@ -93,7 +78,6 @@ public static class Acrylic
         }
         catch
         {
-            // Best effort only -- the flat semi-transparent Border is the fallback.
         }
     }
 }

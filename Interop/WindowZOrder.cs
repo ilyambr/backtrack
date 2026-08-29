@@ -3,13 +3,6 @@ using System.Runtime.InteropServices;
 
 namespace Backtrack.Interop;
 
-/// <summary>
-/// Brings a topmost window back to the front of the topmost band without giving
-/// it keyboard focus. Needed because among several Topmost="True" windows, Windows
-/// puts whichever one was most recently shown/activated at the front -- so showing
-/// the Scrim after StatusOverlay/ToastOverlay were first shown at startup would
-/// otherwise leave it covering them.
-/// </summary>
 public static class WindowZOrder
 {
     private static readonly IntPtr HwndTopmost = new(-1);

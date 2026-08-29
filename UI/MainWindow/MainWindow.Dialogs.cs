@@ -39,12 +39,7 @@ public partial class MainWindow : Window
         });
     }
 
-
-        
-    
-    
-    
-            private static void FadeWindowIn(Window window, double durationMs = 180)
+    private static void FadeWindowIn(Window window, double durationMs = 180)
     {
         window.BeginAnimation(OpacityProperty, null);
         window.Opacity = 0;

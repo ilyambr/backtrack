@@ -18,16 +18,6 @@ public partial class StreamingStatusOverlay : Window
         };
     }
 
-    /// <summary>
-    /// Centered directly underneath MainWindow's own current bounds -- unlike
-    /// LogoOverlay/DisclaimerOverlay, which sit at a fixed spot on the
-    /// display independent of MainWindow, this one is meant to read as
-    /// attached to the main pill specifically, so it has to follow MainWindow
-    /// around every time its size/position changes (compact pill vs. the big
-    /// Gallery/Player panel vs. Settings' WideWidth, and moving between
-    /// monitors). Called by MainWindow itself right after any of that
-    /// changes.
-    /// </summary>
     public void Reposition(Rect mainWindowBounds)
     {
         Left = mainWindowBounds.X + (mainWindowBounds.Width - ActualWidth) / 2;

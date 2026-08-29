@@ -31,7 +31,7 @@ public partial class MainWindow : Window
         RevealInExplorerAndClose(target);
     }
 
-        private bool IsWithinClipsFolder(string path, out string relative)
+    private bool IsWithinClipsFolder(string path, out string relative)
     {
         string clipsFolder = Path.GetFullPath(_settings.ClipsFolder).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
         string full = Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
@@ -50,8 +50,7 @@ public partial class MainWindow : Window
         return false;
     }
 
-
-        private void UpdateGalleryPathBar()
+    private void UpdateGalleryPathBar()
     {
         if (_galleryIsRemote)
         {
@@ -73,12 +72,9 @@ public partial class MainWindow : Window
         GalleryPathText.Text = relative.Replace(Path.DirectorySeparatorChar, '/');
     }
 
-
     private void OpenGalleryFolder(string path)
     {
-        
-        
-        
+
         GalleryFilterBox.Text = string.Empty;
         string root = Path.GetFullPath(_settings.ClipsFolder).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
         string full = Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
@@ -93,7 +89,6 @@ public partial class MainWindow : Window
         }
         LoadGallery();
     }
-
 
     private string GetParentGalleryFolder()
     {
@@ -114,9 +109,9 @@ public partial class MainWindow : Window
         return parent;
     }
 
-    private void GalleryUp_Click(object sender, MouseButtonEventArgs? e)
+    internal void GalleryUp_Click(object? sender = null, RoutedEventArgs? e = null)
     {
-        GalleryFilterBox.Text = string.Empty; 
+        GalleryFilterBox.Text = string.Empty;
         if (_galleryIsRemote)
         {
             _currentRemoteGalleryFolder = GetParentRemoteGalleryFolder();
@@ -147,7 +142,7 @@ public partial class MainWindow : Window
         _activeHoveredFolderCard = null;
     }
 
-    private void GalleryBackButton_DragEnter(object sender, DragEventArgs e)
+    internal void GalleryBackButton_DragEnter(object sender, DragEventArgs e)
     {
         CancelFolderHover();
         if (e.Data.GetDataPresent(DataFormats.FileDrop) || e.Data.GetDataPresent("BacktrackRemoteClips"))
@@ -168,7 +163,7 @@ public partial class MainWindow : Window
         }
     }
 
-    private void GalleryBackButton_DragOver(object sender, DragEventArgs e)
+    internal void GalleryBackButton_DragOver(object sender, DragEventArgs e)
     {
         if (e.Data.GetDataPresent(DataFormats.FileDrop) || e.Data.GetDataPresent("BacktrackRemoteClips"))
         {
@@ -179,7 +174,7 @@ public partial class MainWindow : Window
         }
     }
 
-    private void GalleryBackButton_DragLeave(object sender, DragEventArgs e)
+    internal void GalleryBackButton_DragLeave(object sender, DragEventArgs e)
     {
         System.Windows.Point pos = e.GetPosition(GalleryBackButtonHost);
         if (pos.X < 0 || pos.Y < 0 || pos.X >= GalleryBackButtonHost.ActualWidth || pos.Y >= GalleryBackButtonHost.ActualHeight)
@@ -190,7 +185,7 @@ public partial class MainWindow : Window
         }
     }
 
-    private void GalleryBackButton_Drop(object sender, DragEventArgs e)
+    internal void GalleryBackButton_Drop(object sender, DragEventArgs e)
     {
         _backButtonHoverTimer?.Stop();
         _backButtonHoverTimer = null;
@@ -217,7 +212,7 @@ public partial class MainWindow : Window
         }
     }
 
-    private void GalleryScrollHost_DragEnter(object sender, DragEventArgs e)
+    internal void GalleryScrollHost_DragEnter(object sender, DragEventArgs e)
     {
         if (e.Data.GetDataPresent(DataFormats.FileDrop) || e.Data.GetDataPresent("BacktrackRemoteClips"))
         {
@@ -226,7 +221,7 @@ public partial class MainWindow : Window
         }
     }
 
-    private void GalleryScrollHost_DragOver(object sender, DragEventArgs e)
+    internal void GalleryScrollHost_DragOver(object sender, DragEventArgs e)
     {
         if (e.Data.GetDataPresent(DataFormats.FileDrop) || e.Data.GetDataPresent("BacktrackRemoteClips"))
         {
@@ -235,7 +230,7 @@ public partial class MainWindow : Window
         }
     }
 
-    private void GalleryScrollHost_Drop(object sender, DragEventArgs e)
+    internal void GalleryScrollHost_Drop(object sender, DragEventArgs e)
     {
         CancelFolderHover();
         if (e.Data.GetDataPresent("BacktrackRemoteClips"))

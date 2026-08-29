@@ -3,7 +3,6 @@ using System.Runtime.InteropServices;
 
 namespace Backtrack.Interop;
 
-/// <summary>Makes a layered window pass mouse clicks through to whatever is behind it -- for the always-on status badges, which are informational only.</summary>
 public static class ClickThrough
 {
     private const int GWL_EXSTYLE = -20;
@@ -22,7 +21,6 @@ public static class ClickThrough
         SetWindowLong(hwnd, GWL_EXSTYLE, style | WS_EX_LAYERED | WS_EX_TRANSPARENT);
     }
 
-    /// <summary>Turns click-through back off -- needed while an Undo toast with a real, clickable button is showing.</summary>
     public static void Disable(IntPtr hwnd)
     {
         int style = GetWindowLong(hwnd, GWL_EXSTYLE);

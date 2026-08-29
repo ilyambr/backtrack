@@ -2,7 +2,6 @@
 
 namespace Backtrack.Interop;
 
-/// <summary>Sends a file to the Recycle Bin instead of permanently deleting it -- free, real "undo" via Windows' own trash, no custom toast/undo system needed.</summary>
 public static class RecycleBin
 {
     private const int FO_DELETE = 3;
@@ -26,13 +25,12 @@ public static class RecycleBin
     [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
     private static extern int SHFileOperation(ref SHFILEOPSTRUCT fileOp);
 
-    /// <returns>true if the file was moved to the Recycle Bin successfully.</returns>
     public static bool Delete(string path)
     {
         var op = new SHFILEOPSTRUCT
         {
             wFunc = FO_DELETE,
-            pFrom = path + '\0' + '\0', // double-null terminated, as SHFileOperation requires
+            pFrom = path + '\0' + '\0',
             fFlags = FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_SILENT,
         };
         int result = SHFileOperation(ref op);

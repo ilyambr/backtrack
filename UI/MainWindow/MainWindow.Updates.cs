@@ -30,33 +30,13 @@ namespace Backtrack;
 public partial class MainWindow : Window
 {
 
-        private async Task CheckForUpdatesAsync(bool isManualTrigger = false)
+    private async Task CheckForUpdatesAsync(bool isManualTrigger = false)
     {
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
+
         var obsConnectDeadline = DateTime.UtcNow + TimeSpan.FromSeconds(3);
         while (!_obs.IsConnected && DateTime.UtcNow < obsConnectDeadline)
             await Task.Delay(100);
 
-        
-        
-        
-        
         await CheckAndApplyPluginUpdateAsync("obs-replay-slider", "Replay Slider", "replay-slider.dll", ReplaySliderStatusDot, ReplaySliderVersionText,
             name => name.Contains("windows", StringComparison.OrdinalIgnoreCase) && name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase),
             () => _settings.LastAppliedReplaySliderReleaseAt, v => _settings.LastAppliedReplaySliderReleaseAt = v,
@@ -67,41 +47,26 @@ public partial class MainWindow : Window
             () => _settings.LastAppliedSourceRecordDigest, v => _settings.LastAppliedSourceRecordDigest = v, isManualTrigger, deferObsReopen: true);
         ReopenObsIfPendingFromPluginUpdates();
 
-        
-        
-        
-        
-        
-        
-        
-        
-        
         if (!UpdateService.IsDevBuild)
             await CheckAndApplySelfUpdateAsync(isManualTrigger);
     }
 
-
-        private void SetUpdateStatus(System.Windows.Shapes.Ellipse dot, TextBlock versionText, string version, bool? ok)
+    private void SetUpdateStatus(System.Windows.Shapes.Ellipse dot, TextBlock versionText, string version, bool? ok)
     {
         dot.Fill = (Brush)FindResource(ok switch { true => "Green", false => "Rec", null => "Text2" });
         versionText.Text = version;
     }
 
-
-        private void ClearPendingUpdateIfMatches(string componentDisplayName)
+    private void ClearPendingUpdateIfMatches(string componentDisplayName)
     {
         if (_pendingUpdateName == componentDisplayName)
             SetPendingUpdate(null, null);
     }
 
-
     private async Task<PluginVersionInfo> CheckAndApplyPluginUpdateAsync(string repo, string displayName, string dllFileName, System.Windows.Shapes.Ellipse dot, TextBlock versionText, Func<string, bool> assetPredicate,
         Func<DateTimeOffset?> getLastApplied, Action<DateTimeOffset?> setLastApplied, Func<string?> getLastDigest, Action<string?> setLastDigest, bool isManualTrigger = false, bool deferObsReopen = false)
     {
-        
-        
-        
-        
+
         if (!_updates.IsObsInstalled)
         {
             SetUpdateStatus(dot, versionText, "OBS not installed", ok: null);
@@ -128,15 +93,7 @@ public partial class MainWindow : Window
 
             async Task ApplyAsync()
             {
-                
-                
-                
-                
-                
-                
-                
-                
-                
+
                 if (await _obs.GetStreamActiveAsync())
                 {
                     MessageBox.Show(this, $"You're currently livestreaming. End your stream before updating {displayName}.", "Backtrack");
@@ -164,29 +121,12 @@ public partial class MainWindow : Window
                 ClearPendingUpdateIfMatches(displayName);
             }
 
-            
-            
-            
-            
-            
-            
-            
-            
             async Task ApplyAndReopenAsync()
             {
                 await ApplyAsync();
                 ReopenObsIfPendingFromPluginUpdates();
             }
 
-            
-            
-            
-            
-            
-            
-            
-            
-            
             if (await _obs.GetStreamActiveAsync())
             {
                 if (isManualTrigger)
@@ -197,14 +137,6 @@ public partial class MainWindow : Window
                 return new PluginVersionInfo(installed.ToString(3), null);
             }
 
-            
-            
-            
-            
-            
-            
-            
-            
             if (await _obs.IsRecordingOrStreamingAsync())
             {
                 SetUpdateStatus(dot, versionText, $"{installed.ToString(3)} (waiting for OBS)", ok: null);
@@ -212,13 +144,6 @@ public partial class MainWindow : Window
                 return new PluginVersionInfo(installed.ToString(3), null);
             }
 
-            
-            
-            
-            
-            
-            
-            
             if (!isManualTrigger && _settings.DisablePluginAutoUpdate)
             {
                 SetUpdateStatus(dot, versionText, $"{installed.ToString(3)} (update available)", ok: null);
@@ -233,19 +158,14 @@ public partial class MainWindow : Window
         {
             Debug.WriteLine($"Update check/apply failed for {repo}: {ex.Message}");
             AppLog.WriteError($"Update check/apply failed for {repo}", ex);
-            
-            
-            
-            
-            
+
             _toastOverlay.ClearUpdateInProgress(displayName);
             SetUpdateStatus(dot, versionText, installed.ToString(3), ok: false);
             return new PluginVersionInfo(installed.ToString(3), false);
         }
     }
 
-
-        private void ReopenObsIfPendingFromPluginUpdates()
+    private void ReopenObsIfPendingFromPluginUpdates()
     {
         if (!_obsReopenPendingFromPluginUpdates)
             return;
@@ -253,17 +173,12 @@ public partial class MainWindow : Window
         _updates.RelaunchObsIfInstalled();
     }
 
-
     private async Task CheckAndApplySelfUpdateAsync(bool isManualTrigger = false)
     {
         Version installed = UpdateService.CurrentAppVersion;
         try
         {
-            
-            
-            
-            
-            
+
             ReleaseInfo? release = await _updates.GetLatestReleaseAsync("ilyambr", "backtrack",
                 name => name.Contains("win", StringComparison.OrdinalIgnoreCase) && name.EndsWith(".zip", StringComparison.OrdinalIgnoreCase));
             if (release?.DownloadUrl is null)
@@ -273,8 +188,7 @@ public partial class MainWindow : Window
             }
 
             bool versionBumped = UpdateService.IsNewer(release.Version, installed);
-            
-            
+
             if (!ShouldApplyUpdate(release, versionBumped, installedFileMissing: false,
                     () => _settings.LastAppliedBacktrackReleaseAt, v => _settings.LastAppliedBacktrackReleaseAt = v,
                     () => _settings.LastAppliedBacktrackDigest, v => _settings.LastAppliedBacktrackDigest = v))
@@ -293,11 +207,6 @@ public partial class MainWindow : Window
                 Application.Current.Shutdown();
             }
 
-            
-            
-            
-            
-            
             if (await _obs.IsRecordingOrStreamingAsync())
             {
                 SetUpdateStatus(BacktrackStatusDot, BacktrackVersionText, $"{installed.ToString(3)} (waiting for OBS)", ok: null);
@@ -305,9 +214,6 @@ public partial class MainWindow : Window
                 return;
             }
 
-            
-            
-            
             if (!isManualTrigger && _settings.DisableBacktrackAutoUpdate)
             {
                 SetUpdateStatus(BacktrackStatusDot, BacktrackVersionText, $"{installed.ToString(3)} (update available)", ok: null);
@@ -321,24 +227,20 @@ public partial class MainWindow : Window
         {
             Debug.WriteLine($"Self-update check/apply failed: {ex.Message}");
             AppLog.WriteError("Self-update check/apply failed", ex);
-            
-            
-            
+
             _toastOverlay.ClearUpdateInProgress("Backtrack");
             SetUpdateStatus(BacktrackStatusDot, BacktrackVersionText, installed.ToString(3), ok: false);
         }
     }
 
-
-        private void SetPendingUpdate(string? componentDisplayName, Action? install)
+    private void SetPendingUpdate(string? componentDisplayName, Action? install)
     {
         _pendingUpdateName = componentDisplayName;
         _pendingUpdateInstall = install;
         RefreshUpdatePromptVisibility();
     }
 
-
-    private async void CheckRemotePluginsButton_Click(object sender, RoutedEventArgs e)
+    internal async void CheckRemotePluginsButton_Click(object sender, RoutedEventArgs e)
     {
         if (string.IsNullOrEmpty(_settings.PairedPeerSecret))
         {
@@ -369,8 +271,7 @@ public partial class MainWindow : Window
         }
     }
 
-
-        private async void CheckUpdatesButton_Click(object sender, RoutedEventArgs e)
+    internal async void CheckUpdatesButton_Click(object sender, RoutedEventArgs e)
     {
         CheckUpdatesButton.IsEnabled = false;
         try

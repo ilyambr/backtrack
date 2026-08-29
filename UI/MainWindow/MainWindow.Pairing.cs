@@ -30,9 +30,7 @@ namespace Backtrack;
 public partial class MainWindow : Window
 {
 
-    
-
-        private void RefreshShareClipsUi()
+    private void RefreshShareClipsUi()
     {
         bool hasAuthorizedDevice = !string.IsNullOrEmpty(_settings.AuthorizedClientName);
 
@@ -49,18 +47,11 @@ public partial class MainWindow : Window
             ShareClipsStatusText.Text = $"Sharing as \"{Environment.MachineName}\", waiting for a PC to pair";
         }
 
-        
-        
-        
-        
-        
-        
         AuthorizedDeviceRow.Visibility = _settings.ShareClipsEnabled && hasAuthorizedDevice ? Visibility.Visible : Visibility.Collapsed;
         AuthorizedDeviceNameText.Text = _settings.AuthorizedClientName ?? "";
     }
 
-
-    private void DeauthorizeButton_Click(object sender, RoutedEventArgs e)
+    internal void DeauthorizeButton_Click(object sender, RoutedEventArgs e)
     {
         string? name = _settings.AuthorizedClientName;
         if (name is null)
@@ -77,8 +68,7 @@ public partial class MainWindow : Window
         RefreshShareClipsUi();
     }
 
-
-    private void ShareClipsToggle_Click(object sender, RoutedEventArgs e)
+    internal void ShareClipsToggle_Click(object sender, RoutedEventArgs e)
     {
         bool enabled = ShareClipsToggle.IsChecked == true;
         _settings.ShareClipsEnabled = enabled;
@@ -98,8 +88,7 @@ public partial class MainWindow : Window
         RefreshShareClipsUi();
     }
 
-
-    private void UnpairButton_Click(object sender, RoutedEventArgs e)
+    internal void UnpairButton_Click(object sender, RoutedEventArgs e)
     {
         _settings.PairedPeerDeviceId = null;
         _settings.PairedPeerName = null;
@@ -110,13 +99,12 @@ public partial class MainWindow : Window
         RefreshPairingStatusUi();
     }
 
-
-        private void RenderDiscoveredDevices()
+    private void RenderDiscoveredDevices()
     {
         DiscoveredDevicesPanel.Children.Clear();
 
         if (!string.IsNullOrEmpty(_settings.PairedPeerName))
-            return; 
+            return;
 
         var peers = _pairing.DiscoveredPeers;
         if (peers.Count == 0)
@@ -134,7 +122,6 @@ public partial class MainWindow : Window
         foreach (DiscoveredPeer peer in peers)
             DiscoveredDevicesPanel.Children.Add(BuildDiscoveredDeviceRow(peer));
     }
-
 
     private Border BuildDiscoveredDeviceRow(DiscoveredPeer peer)
     {
@@ -191,8 +178,7 @@ public partial class MainWindow : Window
         return new Border { BorderBrush = (Brush)FindResource("Hairline"), BorderThickness = new Thickness(0, 1, 0, 0), Padding = new Thickness(0, 8, 0, 8), Child = row };
     }
 
-
-        private async void ManualPairButton_Click(object sender, RoutedEventArgs e)
+    internal async void ManualPairButton_Click(object sender, RoutedEventArgs e)
     {
         string input = ManualPairAddressBox.Text.Trim();
         if (string.IsNullOrEmpty(input))
@@ -243,6 +229,5 @@ public partial class MainWindow : Window
             ManualPairButton.IsEnabled = true;
         }
     }
-
 
 }

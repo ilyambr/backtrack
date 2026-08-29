@@ -12,17 +12,13 @@
         SizeToContent="Height"
         Visibility="Hidden"
         Opacity="0">
-    <!-- PanelBg/Hairline/Text0/Text2/Rec used to be defined locally here
-         (PanelBg with its own opaque-ish alpha, #EC101113); now DynamicResource
-         into the shared theme (PanelBgOpaque specifically, same alpha level). -->
+    
     <Border Background="{DynamicResource PanelBgOpaque}" BorderBrush="{DynamicResource Hairline}" BorderThickness="1">
         <StackPanel>
-            <!-- OBS mode: exactly one line, no scrolling; mirrors OBS's own
-                 status bar showing one current condition at a time, not a history. -->
+            
             <TextBlock x:Name="ObsModeText" Text="" FontFamily="Consolas" FontSize="11" Foreground="{DynamicResource Text0}"
                        Padding="8,5" TextTrimming="CharacterEllipsis" Visibility="Collapsed"/>
 
-            <!-- Backtrack mode: fixed to ~3 lines tall, scrolls for anything older. -->
             <ScrollViewer x:Name="BacktrackModeScroll" MaxHeight="62" VerticalScrollBarVisibility="Auto" Visibility="Collapsed">
                 <ItemsControl x:Name="BacktrackModeList" Padding="8,5">
                     <ItemsControl.ItemTemplate>

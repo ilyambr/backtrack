@@ -37,7 +37,7 @@ public partial class MainWindow : Window
         PlayerStarGlyph.Foreground = isStarred ? new SolidColorBrush(Color.FromRgb(0xFF, 0xD7, 0x00)) : (Brush)FindResource("Text1");
     }
 
-    private void PlayerStarButton_Click(object sender, RoutedEventArgs e)
+    internal void PlayerStarButton_Click(object sender, RoutedEventArgs e)
     {
         string? key = GetCurrentClipKey();
         if (key is null) return;
@@ -46,7 +46,7 @@ public partial class MainWindow : Window
         UpdatePlayerStarUi();
     }
 
-    private void PlayerBookmarks_Click(object sender, RoutedEventArgs e)
+    internal void PlayerBookmarks_Click(object sender, RoutedEventArgs e)
     {
         PlayerMenuPopup.IsOpen = false;
         CompressPopup.IsOpen = false;
@@ -61,7 +61,7 @@ public partial class MainWindow : Window
         }
     }
 
-    private void CloseBookmarkPopup_Click(object sender, RoutedEventArgs e)
+    internal void CloseBookmarkPopup_Click(object sender, RoutedEventArgs e)
     {
         BookmarkPopup.IsOpen = false;
     }
@@ -82,7 +82,7 @@ public partial class MainWindow : Window
         }
     }
 
-    private void AddBookmarkDialogButton_Click(object sender, RoutedEventArgs e)
+    internal void AddBookmarkDialogButton_Click(object sender, RoutedEventArgs e)
     {
         AddPlayerBookmark();
         PopulateBookmarkList();
@@ -123,7 +123,6 @@ public partial class MainWindow : Window
             grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
             grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
-            // Left side: Clickable bookmark item to seek
             var jumpPanel = new StackPanel
             {
                 Orientation = Orientation.Horizontal,
@@ -172,7 +171,6 @@ public partial class MainWindow : Window
             Grid.SetColumn(jumpPanel, 0);
             grid.Children.Add(jumpPanel);
 
-            // Right side: Trash / Delete button
             var trashBtn = new Button
             {
                 Style = (Style)FindResource("BareIconButton"),

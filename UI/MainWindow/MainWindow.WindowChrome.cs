@@ -73,8 +73,6 @@ public partial class MainWindow : Window
         _recentClipsOverlay.Top = bounds.Y + bounds.Height - height - margin;
     }
 
-
-
     private void SetWindowBoundsSafe(double targetLeft, double targetTop, double targetWidth)
     {
         if (targetWidth < Width)
@@ -95,28 +93,26 @@ public partial class MainWindow : Window
     {
         if (!IsVisible || _galleryIsRemote) return;
 
-        // Forcefield padding around MainWindow and RecentClipsOverlay to prevent accidental exits
         const double ForcefieldThreshold = 45.0;
 
         Rect mainRect = new Rect(Left, Top, ActualWidth, ActualHeight);
         mainRect.Inflate(ForcefieldThreshold, ForcefieldThreshold);
 
         if (mainRect.Contains(screenPt))
-            return; // Still within MainWindow's forcefield buffer!
+            return;
 
         if (_recentClipsOverlay.IsVisible)
         {
             Rect recentRect = new Rect(_recentClipsOverlay.Left, _recentClipsOverlay.Top, _recentClipsOverlay.ActualWidth, _recentClipsOverlay.ActualHeight);
             recentRect.Inflate(ForcefieldThreshold, ForcefieldThreshold);
             if (recentRect.Contains(screenPt))
-                return; // Still within Quick Gallery's forcefield buffer!
+                return;
         }
 
-        // Passed beyond the forcefield -> exit overlay cleanly!
         Dispatcher.BeginInvoke(() => CloseOverlay());
     }
 
-                        private void CloseOverlay()
+    private void CloseOverlay()
     {
         if (_capturingHotkey)
             EndHotkeyCapture(cancelled: true);
@@ -174,8 +170,7 @@ public partial class MainWindow : Window
         _statusOverlay.Reposition();
     }
 
-
-    private void MainWindow_KeyDown(object sender, KeyEventArgs e)
+    internal void MainWindow_KeyDown(object sender, KeyEventArgs e)
     {
         if (!IsVisible)
             return;
@@ -190,15 +185,12 @@ public partial class MainWindow : Window
             }
             else if (TrimPanel.Visibility == Visibility.Visible)
             {
-                
-                
-                
+
                 TrimCancel_Click(sender, e);
             }
             else if (_isPlayerFullscreen)
             {
-                
-                
+
                 ExitPlayerFullscreen();
             }
             else if (_selectedClipPaths.Count > 0)

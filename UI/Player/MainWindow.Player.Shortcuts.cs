@@ -21,7 +21,7 @@ namespace Backtrack;
 
 public partial class MainWindow : Window
 {
-        private void ShowMainWindowAndOpenInPlayer(FileInfo file)
+    private void ShowMainWindowAndOpenInPlayer(FileInfo file)
     {
         if (DateTime.UtcNow - _lastQuickOpenUtc < TimeSpan.FromMilliseconds(400))
             return;
@@ -32,30 +32,12 @@ public partial class MainWindow : Window
         if (!IsVisible)
             ToggleVisible();
 
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
         Activate();
 
         OpenInPlayer(file);
-        
-        
+
         _playerBackTarget = Screen.Idle;
     }
-
 
     private void RevealInExplorerAndClose(string filePath)
     {
@@ -64,8 +46,7 @@ public partial class MainWindow : Window
         CloseOverlay();
     }
 
-
-        private void HandlePlayerKeyboardShortcut(KeyEventArgs e)
+    private void HandlePlayerKeyboardShortcut(KeyEventArgs e)
     {
         if (PlayerPanel.Visibility != Visibility.Visible || _isPlayerRenaming || _vlcPlayer is null)
             return;
@@ -113,12 +94,7 @@ public partial class MainWindow : Window
                 TogglePlayerMute();
                 break;
             case Key.Up:
-                
-                
-                
-                
-                
-                
+
                 PlayerVolumeSlider.Value = Math.Min(100, PlayerVolumeSlider.Value + 5);
                 ShowPlayerActionFeedback(PlayerFeedbackIcon.Volume, $"{(int)PlayerVolumeSlider.Value}%");
                 break;
@@ -155,52 +131,29 @@ public partial class MainWindow : Window
             case Key.D8 or Key.NumPad8: CommitSeek(lengthMs * 8 / 10); break;
             case Key.D9 or Key.NumPad9: CommitSeek(lengthMs * 9 / 10); break;
             default:
-                return; 
+                return;
         }
 
         e.Handled = true;
     }
 
-
-    private void BackToGallery_Click(object sender, MouseButtonEventArgs e)
+    internal void BackToGallery_Click(object? sender = null, RoutedEventArgs? e = null)
     {
-        
-        
-        
-        
-        
-        
-        
-        
+
         _cancelPlayerRename?.Invoke();
 
-        
-        
-        
-        
-        
-        
-        
         if (TrimPanel.Visibility == Visibility.Visible)
         {
-            TrimCancel_Click(sender, e);
+            TrimCancel_Click(sender ?? this, e ?? new RoutedEventArgs());
             return;
         }
 
-        
-        
-        
-        
-        
         if (_isPlayerFullscreen)
         {
             ExitPlayerFullscreen();
             return;
         }
 
-        
-        
-        
         ShowScreen(_playerBackTarget);
         if (_playerBackTarget == Screen.Gallery)
             LoadGallery();

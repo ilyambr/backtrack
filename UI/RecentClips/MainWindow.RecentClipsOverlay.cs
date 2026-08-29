@@ -25,8 +25,7 @@ public partial class MainWindow : Window
 {
     private readonly RecentClipsOverlay _recentClipsOverlay;
 
-
-        private void InitializeRecentClipsOverlay()
+    private void InitializeRecentClipsOverlay()
     {
         _recentClipsOverlay.PositionChanged += (x, y) =>
         {
@@ -35,7 +34,6 @@ public partial class MainWindow : Window
             _settings.Save();
         };
     }
-
 
     private void PositionRecentClipsOverlay()
     {
@@ -46,15 +44,6 @@ public partial class MainWindow : Window
             return;
         }
 
-        
-        
-        
-        
-        
-        
-        
-        
-        
         PositionInBottomRightCorner();
         void Handler(object? s, SizeChangedEventArgs e)
         {
@@ -64,8 +53,7 @@ public partial class MainWindow : Window
         _recentClipsOverlay.SizeChanged += Handler;
     }
 
-
-        private void UpdateRecentClipsOverlayVisibility(Screen currentScreen)
+    private void UpdateRecentClipsOverlayVisibility(Screen currentScreen)
     {
         if (!_settings.ShowRecentClipsOverlay || !IsVisible || currentScreen != Screen.Idle)
         {
@@ -73,19 +61,12 @@ public partial class MainWindow : Window
             return;
         }
 
-        
-        
-        
-        
-        
-        
         RefreshRecentClipsOverlay();
         PositionRecentClipsOverlay();
         _recentClipsOverlay.Show();
     }
 
-
-        private void RefreshRecentClipsOverlay()
+    private void RefreshRecentClipsOverlay()
     {
         if (!_settings.ShowRecentClipsOverlay)
             return;
@@ -114,13 +95,11 @@ public partial class MainWindow : Window
         }
         catch
         {
-            
-            
+
         }
     }
 
-
-        private async Task RefreshRecentClipsOverlayRemoteAsync()
+    private async Task RefreshRecentClipsOverlayRemoteAsync()
     {
         List<(string RelativePath, RemoteGalleryFile File)>? all = await ListAllRemoteClipsAsync();
         if (all is null)
@@ -135,9 +114,7 @@ public partial class MainWindow : Window
         _recentClipsOverlay.SetTiles(recent.Select(t => BuildRecentRemoteClipTile(t.RelativePath, t.File)));
     }
 
-
-
-                        public void ToggleVisible()
+    public void ToggleVisible()
     {
         if (IsVisible)
         {
@@ -154,7 +131,6 @@ public partial class MainWindow : Window
             double targetLeft = targetBounds.X + (targetBounds.Width - targetWidth) / 2;
             double targetTop = targetBounds.Y + CompactTop;
 
-            // Start off-screen so the initial layout + DirectX buffer swap occurs off-screen
             Left = -32000;
             Top = -32000;
 
@@ -200,7 +176,7 @@ public partial class MainWindow : Window
         }
     }
 
-    private void DisplaySelector_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    internal void DisplaySelector_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (DisplaySelector.SelectedValue is not string deviceName)
             return;
@@ -209,10 +185,6 @@ public partial class MainWindow : Window
         _settings.DisplayDeviceName = deviceName;
         _settings.Save();
 
-        
-        
-        
-        
         ShowScreen(Screen.Settings);
         _statusOverlay.Reposition();
         _scrim.Reposition();
@@ -220,7 +192,6 @@ public partial class MainWindow : Window
         _logo.Reposition();
         _toastOverlay.UpdatePosition(true);
 
-        
         if (_settings.ShowRecentClipsOverlay)
         {
             RefreshRecentClipsOverlay();
@@ -228,8 +199,7 @@ public partial class MainWindow : Window
         }
     }
 
-
-        private void RepositionRecentClipsOverlayForDisplayChange(string? previousDeviceName)
+    private void RepositionRecentClipsOverlayForDisplayChange(string? previousDeviceName)
     {
         if (_settings.RecentClipsOverlayX is not double x || _settings.RecentClipsOverlayY is not double y)
         {
@@ -238,7 +208,7 @@ public partial class MainWindow : Window
         }
 
         Rect oldBounds = DisplayMonitors.ResolveBoundsDiu(previousDeviceName);
-        Rect newBounds = TargetScreenBounds; 
+        Rect newBounds = TargetScreenBounds;
 
         double relativeX = oldBounds.Width > 0 ? (x - oldBounds.X) / oldBounds.Width : 0;
         double relativeY = oldBounds.Height > 0 ? (y - oldBounds.Y) / oldBounds.Height : 0;
@@ -247,9 +217,7 @@ public partial class MainWindow : Window
         double height = _recentClipsOverlay.ActualHeight > 0 ? _recentClipsOverlay.ActualHeight : 100;
         double newX = newBounds.X + relativeX * newBounds.Width;
         double newY = newBounds.Y + relativeY * newBounds.Height;
-        
-        
-        
+
         double clampedX = Math.Clamp(newX, newBounds.X, Math.Max(newBounds.X, newBounds.X + newBounds.Width - width));
         double clampedY = Math.Clamp(newY, newBounds.Y, Math.Max(newBounds.Y, newBounds.Y + newBounds.Height - height));
 
@@ -260,17 +228,11 @@ public partial class MainWindow : Window
         _settings.Save();
     }
 
-
-        private void RepositionAllForDisplayChange()
+    private void RepositionAllForDisplayChange()
     {
         try
         {
-            
-            
-            
-            
-            
-            
+
             if (IsVisible)
                 ShowScreen(_lastScreen, skipEntranceAnimation: true);
 
@@ -284,15 +246,12 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            
-            
-            
+
             AppLog.WriteError("Reposition after display settings changed", ex);
         }
     }
 
-
-        private void ClampRecentClipsOverlayOnScreen()
+    private void ClampRecentClipsOverlayOnScreen()
     {
         if (_settings.RecentClipsOverlayX is not double x || _settings.RecentClipsOverlayY is not double y)
             return;
@@ -313,19 +272,11 @@ public partial class MainWindow : Window
         }
     }
 
-
-    private void ShowRecentClipsToggle_Click(object sender, RoutedEventArgs e)
+    internal void ShowRecentClipsToggle_Click(object sender, RoutedEventArgs e)
     {
         bool enabled = ShowRecentClipsToggle.IsChecked == true;
         _settings.ShowRecentClipsOverlay = enabled;
 
-        
-        
-        
-        
-        
-        
-        
         if (!enabled)
         {
             _settings.RecentClipsOverlayX = null;
@@ -333,12 +284,6 @@ public partial class MainWindow : Window
         }
         _settings.Save();
 
-        
-        
-        
-        
-        
-        
         UpdateRecentClipsOverlayVisibility(_lastScreen);
     }
 }

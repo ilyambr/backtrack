@@ -7,22 +7,8 @@ using Microsoft.Win32;
 
 namespace Backtrack.Interop;
 
-/// <summary>WorkAreaDiu excludes the taskbar (and any other appbar docked to an edge) -- BoundsDiu is the full physical monitor rect, taskbar included.</summary>
 public readonly record struct DisplayInfo(string DeviceName, bool IsPrimary, Rect BoundsDiu, Rect WorkAreaDiu, string? FriendlyName);
 
-/// <summary>
-/// Raw Win32 monitor enumeration, not System.Windows.Forms.Screen -- this app
-/// has no other reason to reference WinForms (the tray icon uses raw
-/// Shell_NotifyIcon, not NotifyIcon; see SystemTrayManager.cs), so adding that
-/// whole assembly just for Screen would be a bigger footprint than a handful
-/// of P/Invoke calls.
-///
-/// Bounds are converted from the physical pixels Win32 reports into WPF's
-/// device-independent units (96 DPI) using THAT monitor's own actual DPI
-/// (GetDpiForMonitor), not an assumption borrowed from the primary screen --
-/// this is what makes multi-monitor placement come out correct even when
-/// monitors run at different Windows scaling percentages.
-/// </summary>
 public static class DisplayMonitors
 {
     private delegate bool MonitorEnumProc(IntPtr hMonitor, IntPtr hdcMonitor, ref RECT lprcMonitor, IntPtr dwData);
@@ -104,24 +90,6 @@ public static class DisplayMonitors
         return results;
     }
 
-    /// <summary>
-    /// Real monitor model name (e.g. "AG276QZD"), the same thing OBS's own log
-    /// shows -- not exposed by GetMonitorInfo/EnumDisplayMonitors at all, and
-    /// EnumDisplayDevices' own DeviceString is usually just the generic driver
-    /// name ("Generic PnP Monitor"), not the actual model. Getting the real
-    /// name means walking one level further: EnumDisplayDevices with
-    /// EDD_GET_DEVICE_INTERFACE_NAME turns the GDI device name into a device
-    /// interface path (\\?\DISPLAY#AOCA601#5&amp;...#{GUID}), whose middle two
-    /// segments are exactly the registry path components under
-    /// Enum\DISPLAY\...\Device Parameters where Windows stores that monitor's
-    /// raw EDID -- and the EDID itself (not the registry, not any Win32 call)
-    /// is where the actual model name lives, as one of its descriptor blocks.
-    /// Deliberately not using WMI's WmiMonitorID for this (same underlying
-    /// data) to avoid pulling in System.Management as a dependency just for
-    /// something raw P/Invoke + a registry read already gets us.
-    /// Returns null (never throws) if anything along the way doesn't pan out --
-    /// callers fall back to a generic "Display N" label in that case.
-    /// </summary>
     private static string? TryGetMonitorFriendlyName(string gdiDeviceName)
     {
         try
@@ -130,9 +98,6 @@ public static class DisplayMonitors
             if (!EnumDisplayDevices(gdiDeviceName, 0, ref monitorDevice, EDD_GET_DEVICE_INTERFACE_NAME))
                 return null;
 
-            // DeviceID looks like \\?\DISPLAY#AOCA601#5&2d8cb812&0&UID4353#{GUID} --
-            // segments [1] and [2] are the hardware ID and instance ID Windows
-            // uses as registry key names under Enum\DISPLAY.
             string[] parts = monitorDevice.DeviceID.Split('#');
             if (parts.Length < 3)
                 return null;
@@ -150,14 +115,6 @@ public static class DisplayMonitors
         }
     }
 
-    /// <summary>
-    /// EDID descriptor blocks live at fixed 18-byte offsets 54/72/90/108. A
-    /// block that isn't a detailed timing descriptor starts with 00 00 00,
-    /// followed by a tag byte -- 0xFC specifically means "Monitor Name",
-    /// with up to 13 ASCII bytes after that, LF-terminated (0x0A) and
-    /// space-padded. Not every monitor includes one (some only have a
-    /// serial number or range-limits descriptor instead), hence nullable.
-    /// </summary>
     private static string? ParseEdidMonitorName(byte[] edid)
     {
         for (int offset = 54; offset + 18 <= edid.Length && offset <= 108; offset += 18)
@@ -180,7 +137,6 @@ public static class DisplayMonitors
         return null;
     }
 
-    /// <summary>Falls back to the primary display if deviceName is empty/null, or no longer matches a connected monitor (e.g. it was unplugged).</summary>
     public static DisplayInfo Resolve(string? deviceName)
     {
         List<DisplayInfo> all = GetAll();

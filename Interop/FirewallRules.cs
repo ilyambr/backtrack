@@ -5,45 +5,13 @@ using Backtrack.Pairing;
 
 namespace Backtrack.Interop;
 
-/// <summary>
-/// Adds Windows Firewall allow rules for Backtrack's peer-to-peer clip
-/// sharing (Pairing/PairingService.cs): UDP BroadcastPort for discovery
-/// (StartDiscoveryListener runs unconditionally on every launch, whether or
-/// not "Share my clips" is on -- the Settings screen's discovered-devices
-/// list needs to keep hearing announcements regardless), and TCP
-/// DefaultPairingPort for the actual pairing/data connection (only
-/// listened on when sharing is enabled, but allowed either way so turning
-/// sharing on later doesn't need a second elevation).
-///
-/// Same "one UAC prompt for everything, not a whole elevated app" shape as
-/// RamDisk.InstallDriverElevated -- see that method's own comment for the
-/// fuller reasoning on why a cmd wrapper script instead of running netsh
-/// directly (RedirectStandardOutput/Error can't be combined with
-/// UseShellExecute+runas, so a wrapper redirecting to a log file is the
-/// only way to see WHY a failure failed instead of just an exit code).
-/// </summary>
 public static class FirewallRules
 {
-    // Both directions for both ports, per port, named individually rather
-    // than one combined rule -- Windows Firewall rules are inbound XOR
-    // outbound (dir=in/out can't be combined in one rule), and separate
-    // names make each one individually visible/removable in Windows
-    // Defender Firewall's own UI if a user ever goes looking.
     private const string InboundUdpRuleName = "Backtrack Discovery (UDP-In)";
     private const string OutboundUdpRuleName = "Backtrack Discovery (UDP-Out)";
     private const string InboundTcpRuleName = "Backtrack Pairing (TCP-In)";
     private const string OutboundTcpRuleName = "Backtrack Pairing (TCP-Out)";
 
-    /// <summary>
-    /// Runs all four `netsh advfirewall firewall add rule` calls elevated,
-    /// in one UAC prompt. Scoped to this exe's own path (program="..."),
-    /// not a bare port-based rule that would open the port for any process,
-    /// so the rules stay specific to Backtrack. Safe to call more than
-    /// once -- netsh doesn't error on a duplicate rule name, it just adds
-    /// another one -- but the caller (App.xaml.cs) only ever calls this
-    /// once, gated by AppSettings.FirewallRulesAttempted, precisely to
-    /// avoid that duplication in the normal case.
-    /// </summary>
     public static (bool Success, string? Error) AddRulesElevated()
     {
         string exePath = Process.GetCurrentProcess().MainModule?.FileName
@@ -97,7 +65,6 @@ public static class FirewallRules
         }
         catch (System.ComponentModel.Win32Exception ex) when (ex.NativeErrorCode == 1223)
         {
-            // ERROR_CANCELLED -- user said no to the UAC prompt.
             return (false, "Admin permission was declined, so the firewall rules weren't added. Clip sharing with another PC may be blocked until they're added manually or Backtrack is allowed to try again.");
         }
         catch (Exception ex)

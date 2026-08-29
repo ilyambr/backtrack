@@ -100,7 +100,7 @@ public partial class MainWindow : Window
         return null;
     }
 
-    private void PlayerCompress_Click(object sender, RoutedEventArgs e)
+    internal void PlayerCompress_Click(object sender, RoutedEventArgs e)
     {
         PlayerMenuPopup.IsOpen = false;
         CompressStatusText.Text = string.Empty;
@@ -109,7 +109,7 @@ public partial class MainWindow : Window
         RepositionPlayerPopups();
     }
 
-    private void CloseCompressPopup_Click(object sender, RoutedEventArgs e)
+    internal void CloseCompressPopup_Click(object sender, RoutedEventArgs e)
     {
         CompressPopup.IsOpen = false;
     }
@@ -137,7 +137,7 @@ public partial class MainWindow : Window
         }
     }
 
-    private void CompressPreset_Click(object sender, RoutedEventArgs e)
+    internal void CompressPreset_Click(object sender, RoutedEventArgs e)
     {
         if (sender is Button btn && btn.Tag is string tagStr && double.TryParse(tagStr, out double targetMb))
         {
@@ -148,7 +148,7 @@ public partial class MainWindow : Window
         }
     }
 
-    private void CompressCustomButton_Click(object sender, RoutedEventArgs e)
+    internal void CompressCustomButton_Click(object sender, RoutedEventArgs e)
     {
         _isCustomCompressSelected = true;
         CompressCustomRow.Visibility = Visibility.Visible;
@@ -157,10 +157,10 @@ public partial class MainWindow : Window
         CompressCustomMbBox.SelectAll();
     }
 
-    private void CompressReplace_Click(object sender, RoutedEventArgs e) =>
+    internal void CompressReplace_Click(object sender, RoutedEventArgs e) =>
         RunCompressAction(replaceOriginal: true);
 
-    private void CompressSaveNew_Click(object sender, RoutedEventArgs e) =>
+    internal void CompressSaveNew_Click(object sender, RoutedEventArgs e) =>
         RunCompressAction(replaceOriginal: false);
 
     private void RunCompressAction(bool replaceOriginal)
@@ -190,7 +190,6 @@ public partial class MainWindow : Window
             SetClipCompressing(remoteOrigin.Value.RelativePath, 0.0);
         }
 
-        // Return immediately to gallery or recent clips HUD
         StopPlayerPlayback();
         if (backTarget == Screen.Gallery)
         {
@@ -262,7 +261,6 @@ public partial class MainWindow : Window
                     File.Copy(destPath, sourcePath, overwrite: true);
                     File.Delete(destPath);
 
-                    // Bust thumbnail and duration cache so fresh info loads
                     string thumbCache = GetThumbnailCachePath(new FileInfo(sourcePath));
                     if (File.Exists(thumbCache)) try { File.Delete(thumbCache); } catch { }
                     string durCache = GetDurationCachePath(new FileInfo(sourcePath));
@@ -365,7 +363,6 @@ public partial class MainWindow : Window
             return string.Format(_cachedH264EncoderArgs, videoBitrateKbps, videoBitrateKbps * 2);
         }
 
-        // Try GPU hardware encoders in order of performance
         (string enc, string argsTemplate)[] candidateEncoders = new[]
         {
             ("h264_nvenc", "-c:v h264_nvenc -preset p1 -tune ull -b:v {0}k -maxrate {0}k -bufsize {1}k"),
@@ -461,7 +458,7 @@ public partial class MainWindow : Window
             proc.BeginErrorReadLine();
             proc.BeginOutputReadLine();
 
-            bool exited = proc.WaitForExit(300000); // 5 min max
+            bool exited = proc.WaitForExit(300000);
             if (!exited)
             {
                 try { proc.Kill(); } catch { }

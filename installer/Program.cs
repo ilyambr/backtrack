@@ -23,13 +23,6 @@ static class Program
         if (res == DialogResult.Cancel) return;
         if (res == DialogResult.No)
         {
-            // FolderBrowserDialog's own dialog doesn't let you type/create a
-            // brand new leaf folder by name the way a real "choose install
-            // location" flow needs (only navigate to EXISTING ones) --
-            // SelectedPath pre-seeded at the default install dir at least
-            // means picking a parent and accepting it back gives a sane
-            // "<chosen>\Backtrack"-shaped result instead of installing
-            // straight into whatever folder they happened to land on.
             using var folderDialog = new FolderBrowserDialog
             {
                 Description = "Choose a folder for Backtrack (a \"Backtrack\" subfolder will be created inside it)",
@@ -47,7 +40,6 @@ static class Program
 
         try
         {
-            // Kill running Backtrack process if open
             foreach (var proc in Process.GetProcessesByName("Backtrack"))
             {
                 try { proc.Kill(); proc.WaitForExit(2000); } catch { }
@@ -55,7 +47,6 @@ static class Program
 
             Directory.CreateDirectory(installDir);
 
-            // Extract embedded payload.zip
             Assembly asm = Assembly.GetExecutingAssembly();
             string resourceName = "BacktrackSetup.payload.zip";
             using (Stream? stream = asm.GetManifestResourceStream(resourceName))
@@ -77,22 +68,16 @@ static class Program
                 try { File.Delete(tempZipPath); } catch { }
             }
 
-            // Create Start Menu Shortcut
             string startMenuDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.StartMenu), "Programs");
             string shortcutPath = Path.Combine(startMenuDir, "Backtrack.lnk");
             string exePath = Path.Combine(installDir, "Backtrack.exe");
 
             CreateShortcut(shortcutPath, exePath, installDir, "Backtrack - Instant replay for OBS");
 
-            // Add Control Panel Uninstall Registry Key
             string uninstallKeyPath = @"Software\Microsoft\Windows\CurrentVersion\Uninstall\Backtrack";
             using (RegistryKey key = Registry.CurrentUser.CreateSubKey(uninstallKeyPath))
             {
                 key.SetValue("DisplayName", "Backtrack");
-                // Read off the just-extracted Backtrack.exe's own version instead of a
-                // hardcoded string here -- that string was already stuck on "0.2.0"
-                // (a whole release behind) before anyone noticed, since nothing forced
-                // it to be touched on a version bump. This way it can't drift again.
                 key.SetValue("DisplayVersion", FileVersionInfo.GetVersionInfo(exePath).FileVersion ?? "0.0.0");
                 key.SetValue("Publisher", "ilyambr");
                 key.SetValue("InstallLocation", installDir);

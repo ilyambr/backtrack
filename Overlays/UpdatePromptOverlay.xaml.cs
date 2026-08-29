@@ -5,15 +5,6 @@ using Backtrack.Interop;
 
 namespace Backtrack;
 
-/// <summary>
-/// Bottom-left, screen-anchored prompt shown when an update was found but
-/// deferred because OBS is actively recording/streaming (see
-/// ObsService.IsRecordingOrStreamingAsync and its callers in MainWindow). Unlike
-/// ToastOverlay/StatusOverlay, this is NOT click-through and NOT always-on --
-/// it needs to receive the Install button's clicks, and MainWindow shows/hides
-/// it in lockstep with its own visibility (ToggleVisible/CloseOverlay) so it
-/// only ever appears while the HUD is actually open, not as a persistent nag.
-/// </summary>
 public partial class UpdatePromptOverlay : Window
 {
     private Action? _onInstall;
@@ -32,7 +23,6 @@ public partial class UpdatePromptOverlay : Window
         Top = bounds.Y + bounds.Height - ActualHeight - 12;
     }
 
-    /// <summary>Call only while MainWindow is visible -- see the class doc. onInstall runs once, from the button click, then the prompt hides itself.</summary>
     public void ShowPrompt(string componentDisplayName, Action onInstall)
     {
         BodyText.Text = $"A new update is available for \"{componentDisplayName}\", would you like to install it?";

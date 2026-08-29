@@ -4,13 +4,6 @@ using System.IO;
 
 namespace Backtrack.Obs;
 
-/// <summary>
-/// Estimates a RAM disk size to safely hold OBS's replay buffer for a given
-/// target duration, using OBS's own config on disk rather than a hardcoded
-/// guess. Advisory only -- Backtrack never writes to any of these files, and
-/// the result is just a suggested value for the user to review and apply by
-/// hand in Settings, never auto-applied.
-/// </summary>
 public static class ReplayBufferSizing
 {
     public readonly record struct Estimate(int SuggestedSizeMb, int AssumedBitrateKbps, string Source);
@@ -33,10 +26,6 @@ public static class ReplayBufferSizing
             int? bitrateKbps = null;
             string source = "a generous resolution-based default (no fixed bitrate could be read from OBS's own config)";
 
-            // Advanced mode, and Simple mode with multitrack video's auto bitrate,
-            // both leave no single fixed bitrate number sitting in basic.ini --
-            // only plain Simple output has one, so that's the only case read
-            // directly rather than falling back to the resolution guess below.
             if (isSimple &&
                 ini.TryGetValue(("SimpleOutput", "VBitrate"), out string? vb) && int.TryParse(vb, out int vBitrate))
             {
@@ -59,8 +48,6 @@ public static class ReplayBufferSizing
 
             double bytesPerSecond = bitrateKbps.Value * 1000 / 8.0;
             double totalBytes = bytesPerSecond * targetMinutes * 60;
-            // +30% headroom for NTFS overhead and the fact this is an estimate,
-            // not a measurement; rounded up to a clean 256MB step.
             int suggestedMb = (int)Math.Ceiling(totalBytes * 1.3 / 1024 / 1024 / 256) * 256;
 
             return new Estimate(Math.Max(suggestedMb, 256), bitrateKbps.Value, source);

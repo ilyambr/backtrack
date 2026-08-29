@@ -12,10 +12,14 @@ part of a 3-repo family maintained by the same owner (`ilyambr`):
   sources via a filter, exposes a `source-record` websocket vendor.
 
 This file is for *durable, cross-cutting* lessons — things that generalize
-beyond one line of code. Line-specific reasoning ("why this exact call is
-ordered this way") lives in comments at that call site, not here; keep it
-there; it survives refactors better than a file:line pointer would, and
-it's where it's actually useful — right as someone edits that line.
+beyond one line of code. All detailed code comments, method docstrings, and architectural rationale notes are centralized and indexed in [`claude-comments.md`](claude-comments.md) to keep the active source files ultra-lean and readable.
+
+## Code Comments & Architectural Rationale Lookups
+
+To look up the design rationale or warnings for any file, feature, or function:
+- **By File Path**: Open `claude-comments.md` and navigate to the file section (e.g., `## UI/Settings/MainWindow.Settings.cs`, `## Obs/ObsService.cs`, `## UI/Player/MainWindow.Trim.cs`).
+- **By Function / Variable Name**: Search `claude-comments.md` for the method or field name (e.g., `RefreshStatusAsync`, `ApplyBufferDuration_Click`, `_recordRowActiveSinceUtc`).
+- **By Topic**: Use keywords in `claude-comments.md` (e.g. `DirectX`, `RAM Disk`, `Acrylic`, `SWP_NOCOPYBITS`, `WebSocket`).
 
 ## Build / verify / push workflow
 

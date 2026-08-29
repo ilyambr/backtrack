@@ -30,7 +30,7 @@ namespace Backtrack;
 public partial class MainWindow : Window
 {
 
-        private string? ComputeObsOverloadWarning(ObsStats stats)
+    private string? ComputeObsOverloadWarning(ObsStats stats)
     {
         const double ThresholdPct = 1.0;
         string? result = null;
@@ -66,9 +66,8 @@ public partial class MainWindow : Window
         return result;
     }
 
-
-        private async Task<(bool Available, string InstalledVersion)> CheckPluginAvailabilityAsync(string repo, string dllFileName, Func<string, bool> assetPredicate,
-        Func<DateTimeOffset?> getLastApplied, Action<DateTimeOffset?> setLastApplied, Func<string?> getLastDigest, Action<string?> setLastDigest)
+    private async Task<(bool Available, string InstalledVersion)> CheckPluginAvailabilityAsync(string repo, string dllFileName, Func<string, bool> assetPredicate,
+    Func<DateTimeOffset?> getLastApplied, Action<DateTimeOffset?> setLastApplied, Func<string?> getLastDigest, Action<string?> setLastDigest)
     {
         if (!_updates.IsObsInstalled)
             return (false, "OBS not installed");
@@ -89,8 +88,7 @@ public partial class MainWindow : Window
         }
     }
 
-
-        private (string Url, string? Password, bool ServerEnabledAtStartup) ResolveObsConnection()
+    private (string Url, string? Password, bool ServerEnabledAtStartup) ResolveObsConnection()
     {
         if (_settings.ObsIsRemote)
             return ($"ws://{_settings.ObsHost}:{_settings.ObsPort}", _settings.ObsRemotePassword, true);
@@ -98,7 +96,6 @@ public partial class MainWindow : Window
         (bool enabled, string? password) = ObsConfigReader.ReadLocalConfig();
         return ("ws://127.0.0.1:4455", password, enabled);
     }
-
 
     private async Task CancelActiveRecordingsAsync()
     {
@@ -129,8 +126,7 @@ public partial class MainWindow : Window
         }
     }
 
-
-    private void RecordTile_MouseRightButtonUp(object sender, MouseButtonEventArgs e)
+    internal void RecordTile_MouseRightButtonUp(object sender, MouseButtonEventArgs e)
     {
         if (RecordLabel.Text != "Stop Recording" && _lastKnownActiveRecordRowCount == 0)
             return;
@@ -154,7 +150,6 @@ public partial class MainWindow : Window
         contextMenu.IsOpen = true;
     }
 
-
     private async Task LoadRecordFolderUi()
     {
         if (_settings.ObsIsRemote)
@@ -168,11 +163,6 @@ public partial class MainWindow : Window
             return;
         }
 
-        
-        
-        
-        
-        
         RecordFolderPanel.Children.Add(await BuildMainRecordFolderRowAsync());
 
         List<RecordRow> rows;
@@ -201,8 +191,7 @@ public partial class MainWindow : Window
         }
     }
 
-
-        private async Task PickMainRecordFolderAsync(TextBlock folderLabel)
+    private async Task PickMainRecordFolderAsync(TextBlock folderLabel)
     {
         try
         {
@@ -222,23 +211,15 @@ public partial class MainWindow : Window
         }
     }
 
-
     private string DescribeRecordRowDestDir(string? destDir)
     {
         if (string.IsNullOrEmpty(destDir))
             return "Not set -- recordings stay wherever this filter writes them";
-        
-        
-        
-        
-        
-        
-        
+
         return IsWithinClipsFolder(destDir, out string relative)
             ? (relative.Length == 0 ? "Not set -- recordings stay wherever this filter writes them" : relative)
             : destDir;
     }
-
 
     private async Task PickRecordRowFolderAsync(string sourceName, string filterName, TextBlock folderLabel)
     {
@@ -260,12 +241,10 @@ public partial class MainWindow : Window
         }
     }
 
+    private string DisplayLabel(string originalLabel) =>
+    _settings.LocalRowNameOverrides.TryGetValue(originalLabel, out string? custom) ? custom : originalLabel;
 
-        private string DisplayLabel(string originalLabel) =>
-        _settings.LocalRowNameOverrides.TryGetValue(originalLabel, out string? custom) ? custom : originalLabel;
-
-
-        private void EnableDoubleTapRename(TextBlock nameBlock, string originalLabel)
+    private void EnableDoubleTapRename(TextBlock nameBlock, string originalLabel)
     {
         nameBlock.Cursor = Cursors.IBeam;
         nameBlock.ToolTip = "Double-click to rename (local to this PC only)";
@@ -316,7 +295,6 @@ public partial class MainWindow : Window
         };
     }
 
-
     private Button BuildFolderIconButton(RoutedEventHandler onClick)
     {
         var iconPath = new System.Windows.Shapes.Path
@@ -339,15 +317,6 @@ public partial class MainWindow : Window
             ToolTip = "Choose destination folder"
         };
 
-        
-        
-        
-        
-        
-        
-        
-        
-        
         if (_settings.ObsIsRemote)
         {
             button.IsEnabled = false;
@@ -361,14 +330,12 @@ public partial class MainWindow : Window
         return button;
     }
 
-
-    private void ObsRemoteToggle_Click(object sender, RoutedEventArgs e)
+    internal void ObsRemoteToggle_Click(object sender, RoutedEventArgs e)
     {
         ObsRemoteFields.Visibility = ObsRemoteToggle.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
     }
 
-
-        private void RefreshPluginStatusRemoteGating()
+    private void RefreshPluginStatusRemoteGating()
     {
         bool remote = _settings.ObsIsRemote;
         LocalPluginStatusRows.IsEnabled = !remote;
@@ -393,9 +360,7 @@ public partial class MainWindow : Window
         }
     }
 
-
-
-    private void DisableAudioCuesToggle_Click(object sender, RoutedEventArgs e)
+    internal void DisableAudioCuesToggle_Click(object sender, RoutedEventArgs e)
     {
         _settings.DisableAudioCues = DisableAudioCuesToggle.IsChecked == true;
         _settings.Save();
@@ -408,7 +373,7 @@ public partial class MainWindow : Window
 
     private DispatcherTimer? _audioCuePreviewDebounce;
 
-    private void AudioCueVolumeSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+    internal void AudioCueVolumeSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
     {
         if (_settings is null || AudioCueVolumeText is null || AudioCueVolumeSlider is null) return;
         int vol = (int)Math.Round(AudioCueVolumeSlider.Value);
@@ -416,7 +381,6 @@ public partial class MainWindow : Window
         _settings.AudioCueVolume = vol;
         _settings.Save();
 
-        // Debounce audio feedback preview
         _audioCuePreviewDebounce ??= new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(200) };
         _audioCuePreviewDebounce.Stop();
         _audioCuePreviewDebounce.Tick -= AudioCuePreview_Tick;
@@ -424,7 +388,7 @@ public partial class MainWindow : Window
         _audioCuePreviewDebounce.Start();
     }
 
-    private void AudioCuePreview_Tick(object? sender, EventArgs e)
+    internal void AudioCuePreview_Tick(object? sender, EventArgs e)
     {
         _audioCuePreviewDebounce?.Stop();
         if (!_settings.DisableAudioCues && _settings.AudioCueVolume > 0)

@@ -10,9 +10,7 @@ namespace Backtrack.Pairing;
 
 public sealed partial class PairingService
 {
-    // ------------------------------------------------------------- discovery
 
-    /// <summary>Always listening in the background (cheap: one idle UDP socket) so Settings has a live list ready the moment it's opened.</summary>
     public void StartDiscoveryListener()
     {
         if (_discoveryListener is not null)
@@ -41,14 +39,14 @@ public sealed partial class PairingService
             }
             catch
             {
-                return; // socket disposed -- shutting down
+                return;
             }
 
             try
             {
                 var msg = JsonSerializer.Deserialize<AnnounceMessage>(result.Buffer);
                 if (msg is null || msg.Type != AnnounceType || msg.DeviceId == _settings.DeviceId)
-                    continue; // ignore malformed packets and our own broadcasts
+                    continue;
 
                 var peer = new DiscoveredPeer(msg.DeviceId, msg.DeviceName, result.RemoteEndPoint.Address.ToString(), msg.PairingPort, DateTime.UtcNow);
                 _discovered[msg.DeviceId] = peer;
@@ -56,12 +54,10 @@ public sealed partial class PairingService
             }
             catch
             {
-                // Not a Backtrack announcement (or a corrupt one) -- ignore.
             }
         }
     }
 
-    /// <summary>Broadcasts this machine as pairable every few seconds. Call when "Share my clips" is turned on.</summary>
     public void StartAnnouncing()
     {
         if (_announceSender is not null)
@@ -86,7 +82,6 @@ public sealed partial class PairingService
             }
             catch
             {
-                // A transient network hiccup -- just try again next tick.
             }
 
             try { await Task.Delay(TimeSpan.FromSeconds(3), ct); }

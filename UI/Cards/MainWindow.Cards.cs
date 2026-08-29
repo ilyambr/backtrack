@@ -18,9 +18,7 @@ public partial class MainWindow : Window
 {
     private Border BuildClipCard(FileInfo file, bool isNewest = false)
     {
-        
-        
-        
+
         var thumb = new Border
         {
             Background = (Brush)FindResource("ThumbnailBg"),
@@ -30,10 +28,6 @@ public partial class MainWindow : Window
         };
         var thumbImage = new Image { Stretch = Stretch.UniformToFill };
 
-        
-        
-        
-        
         var selectCircle = new Border
         {
             Width = 20,
@@ -88,7 +82,6 @@ public partial class MainWindow : Window
         thumbHost.Children.Add(selectCircle);
         thumbHost.Children.Add(starButton);
 
-        // Compression progress overlay
         var compressOverlay = new Grid
         {
             Background = new SolidColorBrush(Color.FromArgb(0xDD, 0x12, 0x14, 0x1A)),
@@ -270,9 +263,6 @@ public partial class MainWindow : Window
             : modified.ToString("MMM d, h:mm tt");
         var sub = new TextBlock { Text = subText, FontSize = 11, Foreground = (Brush)FindResource("Text2") };
 
-        
-        
-        
         var durationText = new TextBlock
         {
             FontSize = 11,
@@ -299,16 +289,8 @@ public partial class MainWindow : Window
 
         _ = LoadThumbnailAsync(file, thumbImage, knownDurationMs is null ? durationText : null);
 
-        
-        
-        
-        
         var card = new Border { Width = 210, Child = content };
 
-        
-        
-        
-        
         if (IsNetworkPath(_settings.ClipsFolder))
         {
             var copyBtn = new Button { Content = "Copy here", Style = (Style)FindResource("IconButton"), Margin = new Thickness(0, 6, 0, 0) };
@@ -316,14 +298,6 @@ public partial class MainWindow : Window
             content.Children.Add(copyBtn);
         }
 
-        
-        
-        
-        
-        
-        
-        
-        
         title.MouseLeftButtonDown += (_, e) =>
         {
             if (e.ClickCount == 2)
@@ -344,7 +318,6 @@ public partial class MainWindow : Window
 
         return card;
     }
-
 
     private void BeginRename(Border card, TextBlock title, FileInfo file)
     {

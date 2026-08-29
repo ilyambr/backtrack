@@ -20,7 +20,7 @@ namespace Backtrack;
 
 public partial class MainWindow : Window
 {
-    private void PlayerFolder_Click(object sender, RoutedEventArgs e)
+    internal void PlayerFolder_Click(object sender, RoutedEventArgs e)
     {
         PlayerMenuPopup.IsOpen = false;
         if (_currentPlayerFile is null)
@@ -31,20 +31,16 @@ public partial class MainWindow : Window
         CloseOverlay();
     }
 
-
-        private void PlayerTitle_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    internal void PlayerTitle_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
         if (e.ClickCount == 2)
             PlayerRename_Click(sender, e);
     }
 
-
-    private void PlayerRename_Click(object sender, RoutedEventArgs e)
+    internal void PlayerRename_Click(object sender, RoutedEventArgs e)
     {
         PlayerMenuPopup.IsOpen = false;
-        
-        
-        
+
         if (_currentPlayerFile is null && _currentPlayerRemoteOrigin is null)
             return;
         _isPlayerRenaming = true;
@@ -105,13 +101,7 @@ public partial class MainWindow : Window
 
             if (file is null)
             {
-                
-                
-                
-                
-                
-                
-                
+
                 (string relPath, string deviceId) = _currentPlayerRemoteOrigin!.Value;
                 stack.Children.Remove(box);
                 stack.Children.Insert(index, PlayerTitle);
@@ -131,8 +121,6 @@ public partial class MainWindow : Window
                 return;
             }
 
-            
-            
             (string RelativePath, string DeviceId)? remoteOrigin = _currentPlayerRemoteOrigin;
             try
             {
@@ -147,9 +135,7 @@ public partial class MainWindow : Window
 
                 if (remoteOrigin is (string relPath2, string deviceId2))
                 {
-                    
-                    
-                    
+
                     _currentPlayerRemoteOrigin = remoteOrigin;
                     (bool success, string? error, string? newRelPath) = await _pairing.RenameRemoteClipAsync(relPath2, newName);
                     if (success)
@@ -167,16 +153,10 @@ public partial class MainWindow : Window
         }
     }
 
-
-    private void PlayerDelete_Click(object sender, RoutedEventArgs e)
+    internal void PlayerDelete_Click(object sender, RoutedEventArgs e)
     {
         PlayerMenuPopup.IsOpen = false;
-        
-        
-        
-        
-        
-        
+
         if (_currentPlayerFile is null && _currentPlayerRemoteOrigin is null)
             return;
 
@@ -203,24 +183,16 @@ public partial class MainWindow : Window
 
                 if (remoteOrigin is (string relPath, _))
                 {
-                    
-                    
-                    
-                    
-                    
-                    
-                    
-                    
-                    
+
                     if (file is not null)
                     {
-                        try { File.Delete(file.FullName); } catch {  }
+                        try { File.Delete(file.FullName); } catch { }
                     }
                     QueueRemoteDeleteWithUndo(relPath, displayName, file: null);
                 }
                 else
                 {
-                    QueueDeleteWithUndo(file!); 
+                    QueueDeleteWithUndo(file!);
                 }
             });
     }

@@ -10,50 +10,15 @@
         ShowInTaskbar="False"
         ResizeMode="NoResize"
         ShowActivated="False">
-    <!--
-      Always visible, independent of MainWindow's hidden/shown state; this is
-      the "always-on-screen indicator" from the design, separate from the
-      hotkey-summoned HUD on purpose. Click-through (see ClickThrough.Enable in
-      the code-behind) so it never blocks clicks to the game underneath it;
-      the code-behind also fades its own Opacity down the closer the real
-      cursor gets, purely cosmetic since clicks already pass through regardless.
-    -->
-    <!--
-      Orientation, and which edge(s) the strip anchors to, are both set from
-      code (StatusOverlay.xaml.cs's ApplyLayout, driven by AppSettings'
-      StatusIndicatorOrientation/StatusIndicatorLocation) rather than fixed
-      here: the window itself stays a fixed size (room for all four
-      badges) specifically so that alignment alone, not a resize, is what
-      keeps however many badges are actually showing anchored to the
-      corner the user picked; see ApplyLayout's own comment for why a
-      resize-based approach was rejected.
-    -->
+    
     <StackPanel x:Name="BadgesPanel" Orientation="Horizontal">
-        <!-- Leads the strip (most urgent status first): red warning-triangle
-             glyph. Font Awesome's SOLID "triangle-exclamation" (CC BY 4.0),
-             not Google Material's outline one originally used here: the
-             outline version's exclamation mark was a hairline stroke that
-             disappeared at this badge's actual 27px size; this one cuts the
-             "!" as solid negative space out of a filled triangle, bold at
-             any size. "F1" prefix forces Nonzero fill rule, which is what
-             that negative-space cutout actually depends on to render
-             correctly (WPF's own path-mini-language default is EvenOdd).
-             RefreshBadgeMargins handles actual spacing at runtime regardless
-             of declaration order here (see its own comment), so this only
-             needs to be first for the visual PRIORITY, not for any
-             margin-math reason. -->
+        
         <Border x:Name="ObsDisconnectedBadge" Width="27" Height="27" Background="{DynamicResource BadgeBg}" BorderBrush="{DynamicResource BadgeBorder}" BorderThickness="1"
                 Visibility="Collapsed">
             <Path Fill="{DynamicResource Rec}" Stretch="Uniform" Width="15" Height="15"
                   Data="F1 M256 32c14.2 0 27.3 7.5 34.5 19.8l216 368c7.3 12.4 7.3 27.7 .2 40.1S486.3 480 472 480L40 480c-14.3 0-27.6-7.7-34.7-20.1s-7-27.8 .2-40.1l216-368C228.7 39.5 241.8 32 256 32zm0 128c-13.3 0-24 10.7-24 24l0 112c0 13.3 10.7 24 24 24s24-10.7 24-24l0-112c0-13.3-10.7-24-24-24zm32 224a32 32 0 1 0 -64 0 32 32 0 1 0 64 0z"/>
         </Border>
-        <!-- Same triangle-exclamation glyph as ObsDisconnectedBadge above, but
-             its Fill is a plain SolidColorBrush assigned and animated from
-             code-behind (SetEncoderOverloaded), not a DynamicResource: it
-             needs to flash between RecDark and Rec on a continuous loop while
-             an overload is ongoing, which a static DynamicResource lookup
-             can't do. No Fill set here on purpose; the code-behind always
-             assigns one before this badge is ever made visible. -->
+        
         <Border x:Name="EncoderOverloadBadge" Width="27" Height="27" Background="{DynamicResource BadgeBg}" BorderBrush="{DynamicResource BadgeBorder}" BorderThickness="1"
                 Margin="5,0,0,0" Visibility="Collapsed">
             <Path x:Name="EncoderOverloadIconPath" Stretch="Uniform" Width="15" Height="15"
@@ -67,10 +32,7 @@
                 Margin="5,0,0,0" Visibility="Collapsed">
             <Ellipse Width="10" Height="10" Fill="{DynamicResource Stream}" HorizontalAlignment="Center" VerticalAlignment="Center"/>
         </Border>
-        <!-- Font Awesome solid "video" (CC BY 4.0): a plain camcorder
-             silhouette, the closest free-icon match to "virtual camera"
-             (Font Awesome doesn't have a distinct "webcam" glyph in its free
-             set). On while OBS's own Virtual Camera output is active. -->
+        
         <Border x:Name="VirtualCamBadge" Width="27" Height="27" Background="{DynamicResource BadgeBg}" BorderBrush="{DynamicResource BadgeBorder}" BorderThickness="1"
                 Margin="5,0,0,0" Visibility="Collapsed">
             <Path Fill="{DynamicResource Green}" Stretch="Uniform" Width="13" Height="13"
@@ -83,7 +45,7 @@
         <Border x:Name="MicBadge" Width="27" Height="27" Background="{DynamicResource BadgeBg}" BorderBrush="{DynamicResource BadgeBorder}" BorderThickness="1"
                 Margin="5,0,0,0" Visibility="Collapsed">
             <Grid Width="12" Height="12">
-                <!-- Real mic silhouette (capsule head + stand arc + base), not a placeholder shape. -->
+                
                 <Path Fill="{DynamicResource Rec}" Stretch="Uniform" Width="12" Height="12"
                       Data="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z
                             M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"/>

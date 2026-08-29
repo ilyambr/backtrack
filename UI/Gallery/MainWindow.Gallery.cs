@@ -38,7 +38,7 @@ public partial class MainWindow : Window
         }
     }
 
-    private void GallerySortComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    internal void GallerySortComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (_settings is null || GalleryPanel is null) return;
         if (GallerySortComboBox.SelectedItem is ComboBoxItem item && item.Tag is string sortTag)
@@ -266,8 +266,7 @@ public partial class MainWindow : Window
         }
     }
 
-
-    private void ClearClipsDirectoryButton_Click(object sender, RoutedEventArgs e)
+    internal void ClearClipsDirectoryButton_Click(object sender, RoutedEventArgs e)
     {
         string clipsFolder = _settings.ClipsFolder;
         if (string.IsNullOrWhiteSpace(clipsFolder) || !Directory.Exists(clipsFolder))
@@ -279,13 +278,7 @@ public partial class MainWindow : Window
         List<string> clipFiles;
         try
         {
-            
-            
-            
-            
-            
-            
-            
+
             clipFiles = Directory.EnumerateFiles(clipsFolder, "*", SearchOption.AllDirectories)
                 .Where(f => VideoExtensions.Contains(Path.GetExtension(f).ToLowerInvariant()))
                 .ToList();
@@ -321,20 +314,14 @@ public partial class MainWindow : Window
             });
     }
 
-
     private static void RevealInExplorer(string filePath) =>
         Process.Start(new ProcessStartInfo("explorer.exe", $"/select,\"{filePath}\"") { UseShellExecute = true });
-
 
     private async void GalleryTile_Click(object sender, RoutedEventArgs e)
     {
         _currentGalleryFolder = null;
         _currentRemoteGalleryFolder = null;
-        
-        
-        
-        
-        
+
         _galleryIsRemote = !string.IsNullOrEmpty(_settings.PairedPeerSecret);
         RefreshGallerySourceTabsVisibility();
         SyncGalleryToolbarUi();
@@ -351,34 +338,29 @@ public partial class MainWindow : Window
         }
     }
 
-
-        private void RefreshGallerySourceTabsVisibility()
+    private void RefreshGallerySourceTabsVisibility()
     {
         GallerySourceTabs.Visibility = Visibility.Collapsed;
         bool paired = !string.IsNullOrEmpty(_settings.PairedPeerSecret);
         if (!paired && _galleryIsRemote)
         {
-            
-            
-            
+
             _galleryIsRemote = false;
             _currentRemoteGalleryFolder = null;
         }
     }
 
-
-    private void GalleryLocalTab_Click(object sender, RoutedEventArgs e)
+    internal void GalleryLocalTab_Click(object sender, RoutedEventArgs e)
     {
         if (!_galleryIsRemote)
             return;
-        GalleryFilterBox.Text = string.Empty; 
+        GalleryFilterBox.Text = string.Empty;
         _galleryIsRemote = false;
         RefreshGallerySourceTabsVisibility();
         LoadGallery();
     }
 
-
-        private void RunAutoDeleteOldClips()
+    private void RunAutoDeleteOldClips()
     {
         if (!_settings.AutoDeleteOldClipsEnabled)
             return;
@@ -424,14 +406,9 @@ public partial class MainWindow : Window
         }
     }
 
-
     private async Task RefreshGalleryCountAsync()
     {
-        
-        
-        
-        
-        
+
         if (!string.IsNullOrEmpty(_settings.PairedPeerSecret))
         {
             RemoteGalleryListing? rootListing = await _pairing.ListRemoteGalleryAsync("");
@@ -443,42 +420,31 @@ public partial class MainWindow : Window
                 GalleryStatus.Text = total == 1 ? "1 clip" : $"{total} clips";
                 return;
             }
-            
-            
+
         }
 
         int count = await Task.Run(CountClips);
         GalleryStatus.Text = count == 1 ? "1 clip" : $"{count} clips";
     }
 
-
-    private void GalleryFilterBox_TextChanged(object sender, TextChangedEventArgs e)
+    internal void GalleryFilterBox_TextChanged(object sender, TextChangedEventArgs e)
     {
         GalleryFilterPlaceholder.Visibility = GalleryFilterBox.Text.Length == 0 ? Visibility.Visible : Visibility.Collapsed;
         _galleryFilterDebounceTimer?.Stop();
         _galleryFilterDebounceTimer?.Start();
     }
 
-
     private static string GetThumbnailCachePath(FileInfo file)
     {
         string cacheDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Backtrack", "thumbnails");
         Directory.CreateDirectory(cacheDir);
-        
-        
-        
+
         string key = $"{file.FullName}|{file.LastWriteTimeUtc.Ticks}|{file.Length}";
         string hash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(key)));
         return Path.Combine(cacheDir, $"{hash}.jpg");
     }
 
-
-    
-    
-    
-    
     private static string GetDurationCachePath(FileInfo file) => Path.ChangeExtension(GetThumbnailCachePath(file), ".duration");
-
 
     private async Task LoadThumbnailAsync(FileInfo file, Image target, TextBlock? durationTarget = null)
     {
@@ -516,7 +482,6 @@ public partial class MainWindow : Window
         });
     }
 
-
     private void RefreshPairingStatusUi()
     {
         if (!string.IsNullOrEmpty(_settings.PairedPeerName))
@@ -532,8 +497,7 @@ public partial class MainWindow : Window
         RefreshGallerySourceTabsVisibility();
     }
 
-
-    private void ChangeClipsFolder_Click(object sender, RoutedEventArgs e)
+    internal void ChangeClipsFolder_Click(object sender, RoutedEventArgs e)
     {
         try
         {
@@ -551,7 +515,6 @@ public partial class MainWindow : Window
             MessageBox.Show(this, $"Couldn't change the clips folder: {ex.Message}", "Backtrack");
         }
     }
-
 
     private void LoadGallery()
     {
@@ -582,9 +545,6 @@ public partial class MainWindow : Window
             return;
         }
 
-        
-        
-        
         string filter = GalleryFilterBox.Text.Trim();
 
         List<DirectoryInfo> subfolders;
@@ -601,19 +561,7 @@ public partial class MainWindow : Window
                 .Where(f => VideoExtensions.Contains(Path.GetExtension(f).ToLowerInvariant()) && !_pendingDeletePaths.Contains(Path.GetFullPath(f)))
                 .Where(f => filter.Length == 0 || Path.GetFileNameWithoutExtension(f).Contains(filter, StringComparison.OrdinalIgnoreCase))
                 .Select(f => new FileInfo(f))
-                
-                
-                
-                
-                
-                
-                
-                
-                
-                
-                
-                
-                
+
                 .Where(f => f.Exists && f.Length > 0 && TryGetCachedDurationMs(f) is not < 2000)
                 .ToList();
 

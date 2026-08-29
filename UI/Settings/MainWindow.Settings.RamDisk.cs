@@ -20,7 +20,7 @@ namespace Backtrack;
 
 public partial class MainWindow : Window
 {
-        private async Task InitializeRamDiskAsync()
+    private async Task InitializeRamDiskAsync()
     {
         if (!_settings.RamDiskEnabled)
             return;
@@ -30,17 +30,12 @@ public partial class MainWindow : Window
 
         if (!ok)
         {
-            
-            
-            
+
             Debug.WriteLine($"RAM disk setup failed: {error}");
             MessageBox.Show(this, $"Couldn't set up the RAM disk: {error}", "Backtrack");
             return;
         }
 
-        
-        
-        
         if (!_settings.RamDiskInstructionShown)
         {
             _settings.RamDiskInstructionShown = true;
@@ -55,7 +50,6 @@ public partial class MainWindow : Window
         if (_obs.IsConnected)
             _ = PushRamDiskDestDirAsync();
     }
-
 
     private (bool Success, string? Error) EnsureRamDiskReady()
     {
@@ -73,8 +67,7 @@ public partial class MainWindow : Window
         return (ok, error);
     }
 
-
-        private async Task PushRamDiskDestDirAsync()
+    private async Task PushRamDiskDestDirAsync()
     {
         try
         {
@@ -82,12 +75,9 @@ public partial class MainWindow : Window
         }
         catch
         {
-            
-            
-            
+
         }
     }
-
 
     private void RefreshRamDiskStatusText()
     {
@@ -109,20 +99,16 @@ public partial class MainWindow : Window
         }
     }
 
-
-    private async void RamDiskToggle_Click(object sender, RoutedEventArgs e)
+    internal async void RamDiskToggle_Click(object sender, RoutedEventArgs e)
     {
         bool enabled = RamDiskToggle.IsChecked == true;
         await ApplyRamDiskConfigAsync(enabled, _settings.RamDiskDriveLetter, _settings.RamDiskSizeMb);
     }
-        private async Task<(bool Success, string? Error)> ApplyRamDiskConfigAsync(bool enabled, char driveLetter, int sizeMb)
+    private async Task<(bool Success, string? Error)> ApplyRamDiskConfigAsync(bool enabled, char driveLetter, int sizeMb)
     {
         char oldDrive = _settings.RamDiskDriveLetter;
         bool driveOrSizeChanged = oldDrive != driveLetter || sizeMb != _settings.RamDiskSizeMb;
 
-        
-        
-        
         if ((!enabled || driveOrSizeChanged) && RamDisk.IsMounted(oldDrive))
         {
             await Task.Run(() => RamDisk.Unmount(oldDrive));
@@ -176,10 +162,7 @@ public partial class MainWindow : Window
 
         if (!enabled)
         {
-            
-            
-            
-            
+
             _ = RevertRamDiskDestDirsAsync(oldDrive);
 
             if (_settings.RamDiskInstructionShown)
@@ -195,8 +178,7 @@ public partial class MainWindow : Window
         return (true, null);
     }
 
-
-        private void RefreshRamDiskRemoteGating()
+    private void RefreshRamDiskRemoteGating()
     {
         bool remote = _settings.ObsIsRemote;
         LocalRamDiskSection.Visibility = remote ? Visibility.Collapsed : Visibility.Visible;
@@ -205,7 +187,6 @@ public partial class MainWindow : Window
         if (remote)
             _ = LoadRemoteRamDiskUi();
     }
-
 
     private async Task LoadRemoteRamDiskUi()
     {
@@ -237,8 +218,7 @@ public partial class MainWindow : Window
         RemoteRamDiskSizeBox.Text = snapshot.SizeMb.ToString();
     }
 
-
-    private async void ApplyRamDiskSettings_Click(object sender, RoutedEventArgs e)
+    internal async void ApplyRamDiskSettings_Click(object sender, RoutedEventArgs e)
     {
         string driveText = RamDiskDriveBox.Text.Trim().TrimEnd(':');
         if (driveText.Length != 1 || !char.IsLetter(driveText[0]))
@@ -255,8 +235,7 @@ public partial class MainWindow : Window
         await ApplyRamDiskConfigAsync(_settings.RamDiskEnabled, char.ToUpperInvariant(driveText[0]), sizeMb);
     }
 
-
-    private void SuggestRamDiskSize_Click(object sender, RoutedEventArgs e)
+    internal void SuggestRamDiskSize_Click(object sender, RoutedEventArgs e)
     {
         if (!int.TryParse(RamDiskTargetMinutesBox.Text.Trim(), out int minutes) || minutes <= 0)
         {
@@ -278,8 +257,7 @@ public partial class MainWindow : Window
             "Backtrack");
     }
 
-
-    private async void ApplyRemoteRamDiskSettings_Click(object sender, RoutedEventArgs e)
+    internal async void ApplyRemoteRamDiskSettings_Click(object sender, RoutedEventArgs e)
     {
         string driveText = RemoteRamDiskDriveBox.Text.Trim().TrimEnd(':');
         if (driveText.Length != 1 || !char.IsLetter(driveText[0]))

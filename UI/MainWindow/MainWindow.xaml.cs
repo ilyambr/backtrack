@@ -28,46 +28,25 @@ namespace Backtrack;
 
 public partial class MainWindow : Window
 {
+    public static MainWindow? Instance { get; private set; }
     private enum Screen { Idle, SaveReplay, StartRecord, Gallery, Player, Settings }
-
 
     private const double CompactWidth = 460;
 
     private const double WideWidth = 680;
 
-
-    
-    
-    
     private const double CompactTop = 76;
 
-
-    
-    
-    
-    
-    
-    
     private const double BigTop = 76;
-
 
     private const string ScheduledTaskName = "BacktrackAutostart";
 
-
-        private Rect TargetScreenBounds => DisplayMonitors.ResolveBoundsDiu(_settings.DisplayDeviceName);
-
+    private Rect TargetScreenBounds => DisplayMonitors.ResolveBoundsDiu(_settings.DisplayDeviceName);
 
     private ObsService _obs = null!;
 
     private bool _serverEnabledAtStartup;
 
-
-    
-    
-    
-    
-    
-    
     private bool _lastKnownAnyRowActive;
 
     private bool _lastKnownAnyRowError;
@@ -76,36 +55,11 @@ public partial class MainWindow : Window
 
     private bool _refreshStatusRunning;
 
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
     private readonly Dictionary<string, DateTime> _recordRowActiveSinceUtc = new();
 
-
-    
-    
-    
-    
-    
     private readonly Dictionary<string, (string Label, string SourceName, string FilterName)> _recordRowInfoByKey = new();
 
-
-    
-    
-    
-    
-    
     private bool _recordRowPollSeeded;
-
 
     private DispatcherTimer? _pollTimer;
 
@@ -131,13 +85,6 @@ public partial class MainWindow : Window
 
     private readonly DisclaimerOverlay _disclaimer;
 
-
-    
-    
-    
-    
-    
-    
     private string? _pendingUpdateName;
 
     private Action? _pendingUpdateInstall;
@@ -152,36 +99,12 @@ public partial class MainWindow : Window
 
     private readonly UpdateService _updates = new();
 
-
-    
-    
-    
-    
-    
-    
     private bool _manualUpdateReady;
 
-    
-    
-    
-    
     private bool _isStreaming;
 
-    
-    
     private DateTime _lastEncoderOverloadToastUtc = DateTime.MinValue;
 
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
     private DateTime _lastEncoderOverloadEventUtc = DateTime.MinValue;
 
     private bool _encoderOverloadedShown;
@@ -224,29 +147,14 @@ public partial class MainWindow : Window
 
     private Screen _lastScreen = Screen.Idle;
 
-    
-    
-    
-    
-    
-    
     private Screen _playerBackTarget = Screen.Gallery;
 
     private SystemTrayManager? _trayManager;
-
 
     private bool _isRenamingCard;
 
     private bool _isPlayerRenaming;
 
-    
-    
-    
-    
-    
-    
-    
-    
     private Action? _cancelPlayerRename;
 
     private async void OnBookmarkHotkeyPressed()
@@ -293,23 +201,12 @@ public partial class MainWindow : Window
 
     private readonly HashSet<string> _pendingDeletePaths = new(StringComparer.OrdinalIgnoreCase);
 
-    
-    
     private readonly HashSet<string> _pendingRemoteDeletePaths = new(StringComparer.Ordinal);
-
-
-    
 
     private LibVlc.LibVLC? _libVlc;
 
     private LibVlc.MediaPlayer? _vlcPlayer;
 
-    
-    
-    
-    
-    
-    
     private bool _playerHasEnded;
 
     private bool _isMuted;
@@ -320,14 +217,6 @@ public partial class MainWindow : Window
 
     private FileInfo? _currentPlayerFile;
 
-    
-    
-    
-    
-    
-    
-    
-    
     private (string RelativePath, string DeviceId)? _currentPlayerRemoteOrigin;
 
     private DispatcherTimer? _seekTimer;
@@ -350,12 +239,8 @@ public partial class MainWindow : Window
 
     private IntPtr _thumbnailSinkHwnd;
 
-
-    
     private bool _capturingHotkey;
 
-
-    
     private TimeSpan? _trimStart;
 
     private TimeSpan? _trimEnd;
@@ -366,55 +251,26 @@ public partial class MainWindow : Window
 
     private TrimDragMode _trimDragMode = TrimDragMode.None;
 
-
-    
-    
-    
     private static readonly float[] PlaybackSpeeds = { 0.5f, 1f, 1.5f, 2f };
 
-    private int _playbackSpeedIndex = 1; 
+    private int _playbackSpeedIndex = 1;
 
-
-    
-
-    
-    
-    
     private string? _currentGalleryFolder;
 
-
-    
-    
-    
-    
     private bool _galleryIsRemote;
 
-    
     private string? _currentRemoteGalleryFolder;
     private RemoteStorageInfo? _lastRemoteStorageInfo;
 
-    
-    
-    
-    
-    
-    
-    
     private bool _remotePcWasConnected;
-
 
     private readonly HashSet<string> _selectedClipPaths = new(StringComparer.OrdinalIgnoreCase);
 
-    
-    
-    
     private readonly List<(FileInfo File, Border Circle, Border Thumb)> _galleryCardSelection = new();
-
-
-
 
     public MainWindow(StatusOverlay statusOverlay, ToastOverlay toastOverlay, ScrimOverlay scrim, DisclaimerOverlay disclaimer, LogoOverlay logo, StreamingStatusOverlay streamingStatus, PairingRequestOverlay pairingRequestOverlay, RecentClipsOverlay recentClipsOverlay)
     {
+        Instance = this;
         InitializeComponent();
         BuildThemeSwatches();
         _statusOverlay = statusOverlay;

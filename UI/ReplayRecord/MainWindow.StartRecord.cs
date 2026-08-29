@@ -32,22 +32,10 @@ public partial class MainWindow : Window
 
     private async void RecordTile_Click(object sender, RoutedEventArgs e)
     {
-        
-        
-        
-        
-        
-        
-        
-        
-        
+
         try
         {
-            
-            
-            
-            
-            
+
             if (!_obs.IsConnected)
             {
                 ShowScreen(Screen.StartRecord);
@@ -67,10 +55,7 @@ public partial class MainWindow : Window
             {
                 RecordRow row = activeRows[0];
                 await _obs.StopRecordRowAsync(row.Key);
-                
-                
-                
-                
+
                 await RefreshStatusAsync();
             }
             else
@@ -85,8 +70,7 @@ public partial class MainWindow : Window
         }
     }
 
-
-        private async Task LoadRecordRowsAsync()
+    private async Task LoadRecordRowsAsync()
     {
         RecRowsPanel.Children.Clear();
 
@@ -98,11 +82,6 @@ public partial class MainWindow : Window
             return;
         }
 
-        
-        
-        
-        
-        
         try
         {
             RecordStatus mainStatus = await _obs.GetRecordStatusAsync();
@@ -138,13 +117,6 @@ public partial class MainWindow : Window
             return;
         }
 
-        
-        
-        
-        
-        
-        
-        
         List<RecordRow> visibleRows = rows.Where(r => !_settings.HiddenBufferLabels.Contains(r.Label))
             .OrderBy(r => r.Status is RecordStatusStopped or RecordStatusRecording ? 0 : 1)
             .ToList();

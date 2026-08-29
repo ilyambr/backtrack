@@ -22,14 +22,11 @@ namespace Backtrack;
 
 public partial class MainWindow : Window
 {
-    private void SaveReplayTile_Click(object sender, RoutedEventArgs e)
+    internal void SaveReplayTile_Click(object sender, RoutedEventArgs e)
     {
         ShowScreen(Screen.SaveReplay);
         _ = LoadReplayRowsAsync();
     }
-
-
-    
 
     private async Task LoadReplayRowsAsync()
     {
@@ -64,10 +61,6 @@ public partial class MainWindow : Window
         foreach (ReplayRow row in rows)
             _rowLabels[row.Key] = row.Label;
 
-        
-        
-        
-        
         List<ReplayRow> visibleRows = rows.Where(r => !_settings.HiddenBufferLabels.Contains(r.Label)).ToList();
         _lastReplayRows = visibleRows;
 
@@ -77,7 +70,15 @@ public partial class MainWindow : Window
             return;
         }
 
-        
+        if (_settings.PreferredClipLengthSeconds > 0)
+        {
+            foreach (ReplayRow row in visibleRows)
+            {
+                if (row.LengthSeconds != _settings.PreferredClipLengthSeconds)
+                    _ = _obs.SetReplayRowLengthAsync(row.Key, _settings.PreferredClipLengthSeconds);
+            }
+        }
+
         foreach (ReplayRow row in visibleRows.OrderBy(r => r.Status == 1 ? 0 : 1))
             BufRowsPanel.Children.Add(BuildRowButton(row));
 

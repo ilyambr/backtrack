@@ -29,8 +29,7 @@ namespace Backtrack;
 public partial class MainWindow : Window
 {
 
-
-        public void MarkFirewallRulesAttempted()
+    public void MarkFirewallRulesAttempted()
     {
         Dispatcher.BeginInvoke(() =>
         {
@@ -38,7 +37,6 @@ public partial class MainWindow : Window
             _settings.Save();
         });
     }
-
 
     private void RefreshUpdatePromptVisibility()
     {
@@ -48,38 +46,9 @@ public partial class MainWindow : Window
             _updatePrompt.HidePrompt();
     }
 
-
-        private static void PrepareAnimatePanelIn(FrameworkElement panel, bool useCache)
+    private static void PrepareAnimatePanelIn(FrameworkElement panel, bool useCache)
     {
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
+
         if (useCache)
             panel.CacheMode = new BitmapCache();
         panel.RenderTransform = new ScaleTransform(0.96, 0.96);
@@ -87,14 +56,9 @@ public partial class MainWindow : Window
         panel.Opacity = 0;
     }
 
-
     private static void StartAnimatePanelIn(FrameworkElement panel)
     {
-        
-        
-        
-        
-        
+
         var duration = TimeSpan.FromMilliseconds(320);
         var ease = new CubicEase { EasingMode = EasingMode.EaseOut };
         var scale = (ScaleTransform)panel.RenderTransform;
@@ -107,66 +71,17 @@ public partial class MainWindow : Window
         scale.BeginAnimation(ScaleTransform.ScaleYProperty, new DoubleAnimation(0.96, 1, duration) { EasingFunction = ease });
     }
 
-
     private void ShowScreen(Screen screen, bool skipEntranceAnimation = false)
     {
         _scrim.ArmDismissCooldown(400);
 
-        
-        
-        
-        
-        
-        
         StopSettingsAutoscroll();
 
         FrameworkElement newPanel = PanelFor(screen);
         bool switchingPanel = newPanel.Visibility != Visibility.Visible;
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
+
         bool animateEntrance = switchingPanel && screen != Screen.Player && !skipEntranceAnimation && _settings.EnableAnimations;
 
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
         if (screen != Screen.Player)
         {
             PlayerVideoView.Visibility = Visibility.Collapsed;
@@ -230,78 +145,30 @@ public partial class MainWindow : Window
         }
 
         SetWindowBoundsSafe(targetLeft, targetTop, targetWidth);
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
+
         UpdateLayout();
         UpdateStreamingBoxVisibility();
 
-        
-        
-        
-        
-        
-        
-        
-        
-        
         if (screen == Screen.Idle)
             _ = RefreshGalleryCountAsync();
 
         if (animateEntrance)
             StartAnimatePanelIn(newPanel);
 
-        
-        
         TopRightButtons.Visibility = screen == Screen.Idle ? Visibility.Visible : Visibility.Collapsed;
 
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
         if (screen != Screen.Player)
         {
             PlayerOverlayPopup.IsOpen = false;
             PlayerMenuPopup.IsOpen = false;
         }
 
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
         if (screen != Screen.Player)
             DisposeVlcPlayerAsync();
 
         if (screen is Screen.Idle or Screen.SaveReplay or Screen.StartRecord or Screen.Gallery or Screen.Settings)
             _lastScreen = screen;
 
-        
-        
-        
-        
         UpdateRecentClipsOverlayVisibility(screen);
 
         IntPtr toastHwnd = new WindowInteropHelper(_toastOverlay).Handle;
@@ -311,22 +178,17 @@ public partial class MainWindow : Window
         }
     }
 
+    private double BigWidth() => Math.Min(TargetScreenBounds.Width * 0.78, 2000);
 
-        private double BigWidth() => Math.Min(TargetScreenBounds.Width * 0.78, 2000);
+    internal void BackToIdle_Click(object? sender = null, RoutedEventArgs? e = null) => ShowScreen(Screen.Idle);
 
-
-    private void BackToIdle_Click(object sender, MouseButtonEventArgs e) => ShowScreen(Screen.Idle);
-
-
-
-        private void SetRecordIcon(bool active)
+    private void SetRecordIcon(bool active)
     {
         RecordDot.Visibility = active ? Visibility.Collapsed : Visibility.Visible;
         RecordSquare.Visibility = active ? Visibility.Visible : Visibility.Collapsed;
     }
 
-
-        private void UpdateStreamingBoxVisibility()
+    private void UpdateStreamingBoxVisibility()
     {
         if (_isStreaming && IsVisible && IdlePanel.Visibility == Visibility.Visible)
         {

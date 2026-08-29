@@ -20,7 +20,7 @@ namespace Backtrack;
 
 public partial class MainWindow : Window
 {
-        private void RefreshStorageLimitStatusText()
+    private void RefreshStorageLimitStatusText()
     {
         if (!_settings.StorageLimitEnabled)
         {
@@ -31,8 +31,7 @@ public partial class MainWindow : Window
         StorageLimitStatusText.Text = $"{usedGb:0.0} GB used of {_settings.StorageLimitGb:0.#} GB limit";
     }
 
-
-    private void StorageLimitToggle_Click(object sender, RoutedEventArgs e)
+    internal void StorageLimitToggle_Click(object sender, RoutedEventArgs e)
     {
         _settings.StorageLimitEnabled = StorageLimitToggle.IsChecked == true;
         _settings.Save();
@@ -40,8 +39,7 @@ public partial class MainWindow : Window
         RefreshStorageLimitStatusText();
     }
 
-
-        private void ClearSettingsCacheButton_Click(object sender, RoutedEventArgs e)
+    internal void ClearSettingsCacheButton_Click(object sender, RoutedEventArgs e)
     {
         string cacheDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Backtrack", "thumbnails");
 
@@ -56,10 +54,8 @@ public partial class MainWindow : Window
                 {
                     foreach (string f in Directory.EnumerateFiles(cacheDir))
                     {
-                        
-                        
-                        
-                        try { File.Delete(f); } catch {  }
+
+                        try { File.Delete(f); } catch { }
                     }
                 }
 
@@ -69,14 +65,13 @@ public partial class MainWindow : Window
                 if (!string.IsNullOrEmpty(exePath))
                 {
                     try { Process.Start(new ProcessStartInfo(exePath) { UseShellExecute = true }); }
-                    catch {  }
+                    catch { }
                 }
                 Application.Current.Shutdown();
             });
     }
 
-
-        private bool TryBlockForStorageLimit(out string? blockedMessage)
+    private bool TryBlockForStorageLimit(out string? blockedMessage)
     {
         blockedMessage = null;
         if (!_settings.StorageLimitEnabled)
@@ -92,7 +87,6 @@ public partial class MainWindow : Window
             "Free up space, delete some clips, or raise the limit in Settings before recording or saving more.";
         return true;
     }
-
 
     private Button BuildRecordRowButton(string label, int status, Func<Task> start, Func<Task> stop, Func<Task>? cancel = null, string? hotkey = null)
     {
@@ -129,15 +123,6 @@ public partial class MainWindow : Window
         statePanel.Children.Add(dot);
         statePanel.Children.Add(stateText);
 
-        
-        
-        
-        
-        
-        
-        
-        
-        
         UIElement rightContent = statePanel;
         if (hotkey != null)
         {
@@ -206,20 +191,6 @@ public partial class MainWindow : Window
             };
         }
 
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
         if (status == RecordStatusInactive || status == RecordStatusNoSignal)
         {
             button.IsEnabled = false;
@@ -228,9 +199,7 @@ public partial class MainWindow : Window
 
         button.Click += async (_, _) =>
         {
-            
-            
-            
+
             if (!recording && TryBlockForStorageLimit(out string? blockMessage))
             {
                 MessageBox.Show(this, blockMessage, "Backtrack");
@@ -239,42 +208,13 @@ public partial class MainWindow : Window
             button.IsEnabled = false;
             try
             {
-                
-                
-                
-                
+
                 await (recording ? stop() : start());
 
-                
-                
-                
-                
-                
-                
-                
-                
-                
-                
-                
-                
-                
                 dot.Fill = (Brush)FindResource(recording ? "Text2" : "Rec");
                 stateText.Text = recording ? "Stopped" : "Recording";
                 button.Style = (Style)FindResource(recording ? "BufRowButtonNoHover" : "BufRowButton");
 
-                
-                
-                
-                
-                
-                
-                
-                
-                
-                
-                
-                
-                
                 await Task.Delay(TimeSpan.FromSeconds(2));
                 await LoadRecordRowsAsync();
             }
@@ -287,8 +227,7 @@ public partial class MainWindow : Window
         return button;
     }
 
-
-    private void ApplyStorageLimit_Click(object sender, RoutedEventArgs e)
+    internal void ApplyStorageLimit_Click(object sender, RoutedEventArgs e)
     {
         if (!double.TryParse(StorageLimitGbBox.Text.Trim(), out double gb) || gb <= 0)
         {
@@ -300,8 +239,7 @@ public partial class MainWindow : Window
         RefreshStorageLimitStatusText();
     }
 
-
-    private void ApplyAutoDeleteOldClips_Click(object sender, RoutedEventArgs e)
+    internal void ApplyAutoDeleteOldClips_Click(object sender, RoutedEventArgs e)
     {
         if (!int.TryParse(AutoDeleteOldClipsDaysBox.Text.Trim(), out int days) || days <= 0)
         {

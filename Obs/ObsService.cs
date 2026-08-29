@@ -8,47 +8,15 @@ namespace Backtrack.Obs;
 
 public sealed record ReplayRow(string Key, string Label, string Hotkey, int Status, int LengthSeconds, string DestDir);
 
-/// <summary>
-/// One Source Record filter tracked by obs-replay-slider's ControlPanelDock -- see ListRecordRowsAsync.
-/// Status: 0 Inactive (the underlying source isn't actively capturing anything,
-/// e.g. a Window Capture with no window selected), 1 Stopped (capturing fine,
-/// just not recording), 2 Recording, 3 Error (was recording, the output
-/// stopped with a failure). SourceName/FilterName (not Label, which is the
-/// "{source} - {filter}" display string) are for looking this filter's own
-/// settings up via GetRecordRowDestinationFolderAsync. Hotkey is this
-/// filter's own "Source Record Start Recording" OBS hotkey (set via OBS's
-/// Settings > Hotkeys, same as any other), empty if unbound -- same idea as
-/// ReplayRow.Hotkey above.
-/// </summary>
 public sealed record RecordRow(string Key, string Label, int Status, string SourceName, string FilterName, string Path = "", string Hotkey = "");
 public sealed record RecordStatus(bool Active, long DurationMs, bool Paused);
 
 public sealed record ObsStats(long RenderTotalFrames, long RenderSkippedFrames, long OutputTotalFrames, long OutputSkippedFrames);
 
-/// <summary>
-/// One or more of these is true whenever obs-source-record's own
-/// check_encoder_overload (0.4.19+) detects a real recent dropped-frame rate
-/// on that specific output -- see ObsService.EncoderOverloadDetected.
-/// MainStream can also mean network/bandwidth congestion, not necessarily
-/// the encoder itself; the plugin can't tell those apart for a streaming
-/// output, only file outputs (recording/replay buffer/this filter) reliably
-/// mean encoder-side lag.
-/// </summary>
 public sealed record EncoderOverloadInfo(bool ThisFilter, bool MainRecording, bool MainStream, bool MainReplayBuffer, string Source, string Filter);
 
 public enum MicStatus { Hidden, Silent, MutedOrQuiet }
 
-/// <summary>
-/// Thin faÃ§ade over <see cref="ObsClient"/>: owns the connect/retry loop and
-/// exposes the handful of calls the overlay UI actually needs, including the
-/// two custom requests the patched obs-replay-slider plugin exposes as an
-/// obs-websocket vendor (see vendor/obs-replay-slider/src/websocket-bridge.cpp).
-///
-/// The OBS instance this talks to doesn't have to be on this PC -- e.g. a
-/// two-PC setup where OBS runs on a separate stream/broadcast machine and this
-/// overlay runs on the PC you actually sit at. <see cref="Reconfigure"/> lets
-/// Settings point it at a different host without restarting the app.
-/// </summary>
 public sealed class ObsService
 {
     private ObsClient _client = new();
@@ -57,8 +25,6 @@ public sealed class ObsService
     private bool _running;
     private int _generation;
 
-    // Auto-detected on connect (first WASAPI mic-capture input OBS reports) --
-    // no Settings UI to pick one, since "the" global mic is what's being asked for.
     private string? _micInputName;
     private DateTime _micLastAudioUtc = DateTime.UtcNow;
     private bool _micMuted;
@@ -68,34 +34,16 @@ public sealed class ObsService
     public string? LastError { get; private set; }
     public event Action? StateChanged;
 
-    /// <summary>Fires the moment OBS's own recording output actually starts/stops -- event-driven, not the 1s poll. Path is only populated on stop.</summary>
     public event Action<bool, string?>? RecordingStateChanged;
 
-    /// <summary>Fires the moment OBS's own stream output actually starts/stops -- event-driven, same idea as RecordingStateChanged.</summary>
     public event Action<bool>? StreamingStateChanged;
 
-    /// <summary>Fires the moment OBS's own Virtual Camera output actually starts/stops -- event-driven, same idea as StreamingStateChanged.</summary>
     public event Action<bool>? VirtualCamStateChanged;
 
-    /// <summary>Fires when a Replay Slider row's buffer actually finishes saving: (rowKey, path). This is the real "yes, the clip exists now" confirmation.</summary>
     public event Action<string, string>? ReplaySaved;
 
-    /// <summary>
-    /// Fires the instant a row's save genuinely starts -- OBS itself just
-    /// reported the raw (untrimmed) file landed, right before obs-replay-
-    /// slider's own trim thread starts. Needs obs-replay-slider 0.2.20+;
-    /// older builds simply never emit this, so a Processing toast still
-    /// silently never shows on those the same way it always didn't (not a
-    /// regression, no version check needed here -- ReplaySaved alone still
-    /// covers the eventual "done" toast regardless of this event existing).
-    /// Unlike ReplaySaved, fires for EVERY trigger (this dock's own Save
-    /// button, a hotkey bound directly in OBS, or a save_row request) --
-    /// previously the only "processing" signal Backtrack had was its own UI
-    /// click handler, which obviously never fired for the other two.
-    /// </summary>
     public event Action<string>? ReplaySaving;
 
-    /// <summary>Fires roughly every ~2s while obs-source-record detects a real recent dropped-frame rate somewhere (this filter, main recording, main stream, or main replay buffer) -- see EncoderOverloadInfo.</summary>
     public event Action<EncoderOverloadInfo>? EncoderOverloadDetected;
 
     public ObsService(string url, string? password)
@@ -109,8 +57,6 @@ public sealed class ObsService
     {
         client.Disconnected += () =>
         {
-            // Can't verify mic state without a connection -- hide the badge
-            // rather than show a stale reading from before the disconnect.
             _micInputName = null;
             StateChanged?.Invoke();
         };
@@ -121,10 +67,6 @@ public sealed class ObsService
     {
         if (eventType == "RecordStateChanged" && data.TryGetProperty("outputState", out JsonElement stateEl))
         {
-            // obs-websocket fires this twice per transition (STARTING then STARTED,
-            // STOPPING then STOPPED) -- both carry the same outputActive value, so
-            // reacting to outputActive directly fired the toast twice per action.
-            // outputPath is only populated once the state is definitively STOPPED.
             string? state = stateEl.GetString();
             if (state == "OBS_WEBSOCKET_OUTPUT_STARTED")
                 RecordingStateChanged?.Invoke(true, null);
@@ -133,7 +75,6 @@ public sealed class ObsService
         }
         else if (eventType == "StreamStateChanged" && data.TryGetProperty("outputState", out JsonElement streamStateEl))
         {
-            // Same double-fire-per-transition reasoning as RecordStateChanged above.
             string? state = streamStateEl.GetString();
             if (state == "OBS_WEBSOCKET_OUTPUT_STARTED")
                 StreamingStateChanged?.Invoke(true);
@@ -142,9 +83,6 @@ public sealed class ObsService
         }
         else if (eventType == "VirtualcamStateChanged" && data.TryGetProperty("outputState", out JsonElement vcamStateEl))
         {
-            // Same double-fire-per-transition reasoning as RecordStateChanged above.
-            // Event name really is lowercase-c "Virtualcam" -- that's obs-websocket's
-            // own spelling for this one, unlike "VirtualCam" everywhere else in its API.
             string? state = vcamStateEl.GetString();
             if (state == "OBS_WEBSOCKET_OUTPUT_STARTED")
                 VirtualCamStateChanged?.Invoke(true);
@@ -207,12 +145,6 @@ public sealed class ObsService
         }
     }
 
-    /// <summary>
-    /// inputLevelsMul is an array of per-channel [peak, magnitude, inputPeak]
-    /// linear-multiplier readings -- rather than depend on the exact index
-    /// meaning, "any of these numbers above a near-silence floor" is enough to
-    /// call it "there's signal right now".
-    /// </summary>
     private static bool HasSignal(JsonElement levelsArray)
     {
         const double SilenceFloor = 0.0005;
@@ -227,11 +159,6 @@ public sealed class ObsService
         return false;
     }
 
-    /// <summary>
-    /// Hidden when no mic is detected or things look fine; MutedOrQuiet takes
-    /// priority over Silent since a deliberately muted/low mic isn't "dead",
-    /// it's configured that way -- distinct icon for that case.
-    /// </summary>
     public MicStatus GetMicStatus()
     {
         if (_micInputName is null)
@@ -266,12 +193,10 @@ public sealed class ObsService
         }
         catch
         {
-            // No mic input, or a request failed mid-detection -- just hide the badge.
             _micInputName = null;
         }
     }
 
-    /// <summary>Connects, and keeps retrying every 5s in the background if OBS isn't up yet.</summary>
     public void Start()
     {
         if (_running)
@@ -280,12 +205,11 @@ public sealed class ObsService
         _ = RetryLoopAsync(_client, _generation);
     }
 
-    /// <summary>Points this at a different OBS instance (e.g. switching between "this PC" and a remote stream PC) and reconnects immediately.</summary>
     public void Reconfigure(string url, string? password)
     {
         _url = url;
         _password = password;
-        _generation++; // orphans the old retry loop so it stops touching the new client
+        _generation++;
 
         var oldClient = _client;
         _client = new ObsClient();
@@ -312,7 +236,6 @@ public sealed class ObsService
                 }
                 catch (ObsUnreachableException)
                 {
-                    // Just not there yet -- expected whenever OBS is closed, not a real error.
                     LastError = null;
                 }
                 catch (Exception ex)
@@ -330,10 +253,6 @@ public sealed class ObsService
         return new RecordStatus(
             d.GetProperty("outputActive").GetBoolean(),
             d.TryGetProperty("outputDuration", out JsonElement od) ? od.GetInt64() : 0,
-            // OBS legitimately freezes outputDuration while paused (paused time
-            // doesn't count toward recording length) -- correct on OBS's end, but
-            // Backtrack was never reading this flag at all, so a paused recording
-            // just looked exactly like a broken/stuck timer with no explanation.
             d.TryGetProperty("outputPaused", out JsonElement op) && op.GetBoolean());
     }
 
@@ -343,19 +262,9 @@ public sealed class ObsService
         await _client.RequestAsync(status.Active ? "StopRecord" : "StartRecord");
     }
 
-    /// <summary>Explicit start/stop of OBS's own single global recording -- used by the
-    /// "main" row on the Start Recording menu (see LoadRecordRowsAsync), where the
-    /// current state is already known so a toggle would be redundant/racy.</summary>
     public async Task StartMainRecordAsync() => await _client.RequestAsync("StartRecord");
     public async Task StopMainRecordAsync() => await _client.RequestAsync("StopRecord");
 
-    /// <summary>
-    /// OBS's own single global recording output directory (Settings > Output >
-    /// Recording Path) -- native obs-websocket requests, same idea as
-    /// GetRecordRowDestinationFolderAsync/SetRecordRowDestinationFolderAsync
-    /// for a Source Record filter's own path, just for the "Full Scene" row
-    /// instead of a per-filter one. No plugin bridge involved.
-    /// </summary>
     public async Task<string?> GetMainRecordDirectoryAsync()
     {
         try
@@ -373,16 +282,6 @@ public sealed class ObsService
 
     public async Task SetMainRecordDirectoryAsync(string newPath) =>
         await _client.RequestAsync("SetRecordDirectory", new Dictionary<string, object?> { ["recordDirectory"] = newPath });
-    /// <summary>
-    /// Raw counters behind OBS's own status-bar-style overload warnings --
-    /// there's no request/event that hands over the literal status bar text
-    /// or its timing (that's internal Qt UI logic with no public hook), but
-    /// this is the same underlying data it's computed from, and it works over
-    /// the same websocket connection regardless of whether OBS is local or on
-    /// a remote transmitter PC (unlike, say, tailing OBS's own log file,
-    /// which only a local install even has). Callers diff consecutive polls
-    /// to get a recent/current rate rather than a lifetime average.
-    /// </summary>
     public async Task<ObsStats> GetStatsAsync()
     {
         JsonElement d = await _client.RequestAsync("GetStats");
@@ -401,21 +300,12 @@ public sealed class ObsService
 
     public async Task<bool> GetStreamActiveAsync()
     {
-        // IsRecordingOrStreamingAsync already guards its OWN call to this with
-        // the same check, but two other callers (CheckAndApplyPluginUpdateAsync's
-        // livestream-block, both inside and outside ApplyAsync) call this
-        // directly -- OBS simply not running at all (very much the normal case
-        // right before installing a plugin update) meant _client.RequestAsync
-        // threw "Not connected to OBS" straight through, which those callers'
-        // generic catch block then misread as an update failure (red status
-        // dot) instead of "OBS isn't running, obviously not streaming".
         if (!IsConnected)
             return false;
         JsonElement d = await _client.RequestAsync("GetStreamStatus");
         return d.GetProperty("outputActive").GetBoolean();
     }
 
-    /// <summary>Same shape/reasoning as GetStreamActiveAsync above -- OBS's Virtual Camera output, a plain obs-websocket request with no plugin dependency.</summary>
     public async Task<bool> GetVirtualCamActiveAsync()
     {
         if (!IsConnected)
@@ -424,16 +314,6 @@ public sealed class ObsService
         return d.GetProperty("outputActive").GetBoolean();
     }
 
-    /// <summary>
-    /// True if OBS is actually recording or streaming right now (main output,
-    /// or a Source Record filter's own per-source recording) -- used to defer
-    /// auto-updates rather than yank OBS out from under something genuinely
-    /// being captured. Deliberately does NOT count a replay buffer just being
-    /// armed (main or per-row, Status == 1) -- an armed-but-not-saving buffer
-    /// isn't writing anything to disk that an update would interrupt, and
-    /// buffers being armed is the normal resting state most of the time, so
-    /// counting that here meant updates almost never applied automatically.
-    /// </summary>
     public async Task<bool> IsRecordingOrStreamingAsync()
     {
         if (!IsConnected)
@@ -445,13 +325,10 @@ public sealed class ObsService
                 return true;
 
             List<RecordRow> recordRows = await ListRecordRowsAsync();
-            return recordRows.Any(r => r.Status == 2); // 2 == Recording, see RecordRow's own doc comment
+            return recordRows.Any(r => r.Status == 2);
         }
         catch
         {
-            // Can't confirm nothing's active (bridge unreachable, request failed,
-            // etc.) -- treat as active so a transient hiccup errs toward NOT
-            // updating rather than risking an update mid-recording.
             return true;
         }
     }
@@ -484,14 +361,6 @@ public sealed class ObsService
         return rows;
     }
 
-    /// <summary>
-    /// One row per Source Record filter obs-replay-slider's ControlPanelDock is
-    /// currently tracking -- distinct from ListReplayRowsAsync's rows: no "main"
-    /// entry here (ControlPanelDock doesn't track OBS's own global recording),
-    /// and each row is a start/stop toggle rather than a one-shot save. Needs
-    /// the list_record_rows bridge PR merged into the plugin; older builds just
-    /// return an empty list harmlessly.
-    /// </summary>
     public async Task<List<RecordRow>> ListRecordRowsAsync()
     {
         JsonElement d = await _client.RequestAsync("CallVendorRequest", new Dictionary<string, object?>
@@ -521,14 +390,6 @@ public sealed class ObsService
         return rows;
     }
 
-    /// <summary>
-    /// Reads a Source Record filter's own configured output folder ("path" in
-    /// its settings) via the plain obs-websocket GetSourceFilterList request --
-    /// no plugin bridge involved, this is regular filter-settings data any
-    /// obs-websocket client can already read. Returns null if the source/filter
-    /// can't be found or has no path set (recordings stay wherever the filter's
-    /// own default/relative location resolves to).
-    /// </summary>
     public async Task<string?> GetRecordRowDestinationFolderAsync(string sourceName, string filterName)
     {
         try
@@ -553,8 +414,6 @@ public sealed class ObsService
         }
         catch
         {
-            // Bridge/request unreachable -- just means the toast won't show a
-            // folder this one time, not worth surfacing as an error.
         }
         return null;
     }
@@ -635,7 +494,6 @@ public sealed class ObsService
         catch { }
     }
 
-    /// <summary>Needs the set-row-length bridge PR merged into the plugin; older builds will just error.</summary>
     public async Task SetReplayRowLengthAsync(string key, int seconds)
     {
         await _client.RequestAsync("CallVendorRequest", new Dictionary<string, object?>
@@ -646,12 +504,6 @@ public sealed class ObsService
         });
     }
 
-    /// <summary>
-    /// Per-row override of SetReplayDestDirAsync below -- lets one specific
-    /// buffer's clips land in their own subfolder instead of the shared clips
-    /// folder. Empty path clears the override. Needs the set-row-dest-dir
-    /// bridge PR merged into the plugin; older builds just error here harmlessly.
-    /// </summary>
     public async Task SetReplayRowDestDirAsync(string key, string path)
     {
         await _client.RequestAsync("CallVendorRequest", new Dictionary<string, object?>
@@ -662,14 +514,6 @@ public sealed class ObsService
         });
     }
 
-    /// <summary>
-    /// Points the dock's "Move clips to:" destination folder at a path -- used to
-    /// tell it to move trimmed clips off the RAM disk (see Interop/RamDisk.cs)
-    /// onto persistent storage the moment trimming finishes. Needs the
-    /// set-dest-dir bridge PR merged into the plugin; older builds just error
-    /// here harmlessly. There's no manual fallback UI for this in the dock
-    /// itself (removed) since this app is the only thing that ever sets it.
-    /// </summary>
     public async Task SetReplayDestDirAsync(string path)
     {
         await _client.RequestAsync("CallVendorRequest", new Dictionary<string, object?>
@@ -680,13 +524,6 @@ public sealed class ObsService
         });
     }
 
-    /// <summary>
-    /// Pushes a new replay_duration (seconds) onto every Source Record filter
-    /// the plugin is currently tracking -- this is the buffer that gets
-    /// flushed to disk in full on every save, not the trimmed clip length (see
-    /// SetReplayRowLengthAsync for that). Needs the set-buffer-duration bridge
-    /// PR merged into the plugin; older builds just error here harmlessly.
-    /// </summary>
     public async Task SetReplayBufferDurationAsync(int seconds)
     {
         await _client.RequestAsync("CallVendorRequest", new Dictionary<string, object?>
@@ -697,10 +534,6 @@ public sealed class ObsService
         });
     }
 
-    /// <summary>
-    /// Queries all OBS sources for Source Record filters and updates any whose output path
-    /// is set to the RAM disk drive back to the specified target folder via obs-websocket.
-    /// </summary>
     public async Task RevertSourceRecordFilterPathsAsync(char driveLetter, string targetFolder)
     {
         if (!IsConnected)

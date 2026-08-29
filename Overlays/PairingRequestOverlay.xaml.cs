@@ -20,7 +20,6 @@ public partial class PairingRequestOverlay : Window
         _expiryTimer.Tick += (_, _) => Tick();
     }
 
-    /// <summary>Pops up centered and focused (unlike the passive overlays, this one needs a real decision), auto-denying after 60s so an ignored request doesn't sit there forever.</summary>
     public void ShowRequest(string deviceName, string code, Action onAllow, Action onDeny)
     {
         _onAllow = onAllow;

@@ -10,13 +10,6 @@ using System.Threading.Tasks;
 
 namespace Backtrack.Obs;
 
-/// <summary>
-/// A hand-rolled obs-websocket v5 client over <see cref="ClientWebSocket"/> --
-/// no third-party package, just the wire protocol: Hello -> Identify ->
-/// Identified, then Request/RequestResponse pairs matched by requestId, plus
-/// an Event stream for anything OBS pushes unprompted.
-/// </summary>
-/// <summary>Thrown when there's simply nothing to connect to (OBS closed, or its WebSocket server disabled) -- as opposed to a real protocol/auth error once a connection is actually made.</summary>
 public sealed class ObsUnreachableException : Exception
 {
     public ObsUnreachableException(string message, Exception inner) : base(message, inner) { }
@@ -41,19 +34,9 @@ public sealed class ObsClient : IAsyncDisposable
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            // Nothing there to connect to at all (OBS closed, or its WebSocket
-            // server disabled) -- distinct from a real protocol/auth failure
-            // below, which only happens once a connection is actually made.
             throw new ObsUnreachableException("OBS isn't running, or its WebSocket server is off", ex);
         }
 
-        // Everything below assumes the WebSocket-level connect above already
-        // succeeded (_ws is open) -- if the obs-websocket handshake itself
-        // fails (unexpected Hello, wrong password on Identified, etc.), that
-        // open socket was previously left dangling: nothing closed or
-        // disposed it, and RetryLoopAsync calls ConnectAsync again every 5s
-        // forever while disconnected, leaking one real OS socket handle per
-        // attempt. Catch and clean up here instead of leaving _ws open.
         try
         {
             JsonElement hello = await ReceiveOneAsync(ct);
@@ -66,10 +49,6 @@ public sealed class ObsClient : IAsyncDisposable
             var identify = new Dictionary<string, object?>
             {
                 ["rpcVersion"] = rpcVersion,
-                // General|Config|Scenes|Inputs|Transitions|Filters|Outputs|SceneItems|MediaInputs|Vendors
-                // ((1<<10)-1 = 1023) plus InputVolumeMeters (1<<16 = 65536) -- that one's a
-                // separate "high-volume" category not included in the low bits at all,
-                // needed for the mic status badge's live audio-level monitoring.
                 ["eventSubscriptions"] = 1023 | (1 << 16),
             };
 
@@ -88,7 +67,7 @@ public sealed class ObsClient : IAsyncDisposable
         }
         catch (Exception) when (CleanupFailedConnectWebSocket())
         {
-            throw; // unreachable -- the when-filter never returns true, it only runs cleanup as a side effect
+            throw;
         }
 
         IsConnected = true;
@@ -96,12 +75,6 @@ public sealed class ObsClient : IAsyncDisposable
         _ = Task.Run(() => ReceiveLoopAsync(_receiveCts.Token));
     }
 
-    /// <summary>
-    /// Disposes and clears a WebSocket left over from a failed post-connect
-    /// handshake. Run from an exception filter (always returns false, so the
-    /// original exception's stack trace is preserved) rather than a catch
-    /// block, purely so cleanup happens without needing a separate rethrow.
-    /// </summary>
     private bool CleanupFailedConnectWebSocket()
     {
         _ws?.Dispose();
@@ -109,9 +82,6 @@ public sealed class ObsClient : IAsyncDisposable
         return false;
     }
 
-    // Per the obs-websocket v5 auth spec:
-    //   secret = base64(sha256(password + salt))
-    //   authentication = base64(sha256(secret + challenge))
     private static string ComputeAuthString(string password, string salt, string challenge)
     {
         byte[] secretHash = SHA256.HashData(Encoding.UTF8.GetBytes(password + salt));
@@ -204,7 +174,6 @@ public sealed class ObsClient : IAsyncDisposable
         }
         catch
         {
-            // Connection dropped -- ObsService owns the reconnect policy.
         }
         finally
         {
@@ -227,7 +196,6 @@ public sealed class ObsClient : IAsyncDisposable
             }
             catch
             {
-                // best effort
             }
         }
         _ws?.Dispose();

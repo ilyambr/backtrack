@@ -22,7 +22,7 @@ namespace Backtrack;
 
 public partial class MainWindow : Window
 {
-    private void TrimCancel_Click(object sender, RoutedEventArgs e)
+    internal void TrimCancel_Click(object sender, RoutedEventArgs e)
     {
         _trimStart = null;
         _trimEnd = null;
@@ -35,26 +35,22 @@ public partial class MainWindow : Window
         StopPreviewLoop();
     }
 
-
-    private void TrimStartHandle_MouseDown(object sender, MouseButtonEventArgs e)
+    internal void TrimStartHandle_MouseDown(object sender, MouseButtonEventArgs e)
     {
         _trimDragMode = TrimDragMode.Start;
         TrimTimelineTrack.CaptureMouse();
-        
-        
+
         e.Handled = true;
     }
 
-
-    private void TrimEndHandle_MouseDown(object sender, MouseButtonEventArgs e)
+    internal void TrimEndHandle_MouseDown(object sender, MouseButtonEventArgs e)
     {
         _trimDragMode = TrimDragMode.End;
         TrimTimelineTrack.CaptureMouse();
         e.Handled = true;
     }
 
-
-        private void TrimTimelineTrack_MouseDown(object sender, MouseButtonEventArgs e)
+    internal void TrimTimelineTrack_MouseDown(object sender, MouseButtonEventArgs e)
     {
         _trimDragMode = TrimDragMode.Seek;
         _isScrubbing = true;
@@ -62,16 +58,14 @@ public partial class MainWindow : Window
         ProcessTrimTimelineInput(e.GetPosition(TrimTimelineTrack));
     }
 
-
-    private void TrimTimelineTrack_MouseMove(object sender, MouseEventArgs e)
+    internal void TrimTimelineTrack_MouseMove(object sender, MouseEventArgs e)
     {
         if (_trimDragMode == TrimDragMode.None)
             return;
         ProcessTrimTimelineInput(e.GetPosition(TrimTimelineTrack));
     }
 
-
-    private void TrimTimelineTrack_MouseUp(object sender, MouseButtonEventArgs e)
+    internal void TrimTimelineTrack_MouseUp(object sender, MouseButtonEventArgs e)
     {
         if (_trimDragMode == TrimDragMode.None)
             return;
@@ -87,15 +81,13 @@ public partial class MainWindow : Window
         _trimDragMode = TrimDragMode.None;
     }
 
-
-    private void TrimTimelineTrack_SizeChanged(object sender, SizeChangedEventArgs e)
+    internal void TrimTimelineTrack_SizeChanged(object sender, SizeChangedEventArgs e)
     {
         BuildTrimRuler();
         UpdateTrimTimelineUi();
     }
 
-
-        private void ProcessTrimTimelineInput(Point pos, bool immediate = false)
+    private void ProcessTrimTimelineInput(Point pos, bool immediate = false)
     {
         if (_vlcPlayer is null)
             return;
@@ -110,21 +102,21 @@ public partial class MainWindow : Window
         switch (_trimDragMode)
         {
             case TrimDragMode.Start:
-            {
-                long endMs = (long)(_trimEnd ?? TimeSpan.FromMilliseconds(lengthMs)).TotalMilliseconds;
-                ms = Math.Clamp(ms, 0, Math.Max(0, endMs - 1));
-                _trimStart = TimeSpan.FromMilliseconds(ms);
-                ShowTrimHandleTooltip(pos.X, ms);
-                break;
-            }
+                {
+                    long endMs = (long)(_trimEnd ?? TimeSpan.FromMilliseconds(lengthMs)).TotalMilliseconds;
+                    ms = Math.Clamp(ms, 0, Math.Max(0, endMs - 1));
+                    _trimStart = TimeSpan.FromMilliseconds(ms);
+                    ShowTrimHandleTooltip(pos.X, ms);
+                    break;
+                }
             case TrimDragMode.End:
-            {
-                long startMs = (long)(_trimStart ?? TimeSpan.Zero).TotalMilliseconds;
-                ms = Math.Clamp(ms, Math.Min(lengthMs, startMs + 1), lengthMs);
-                _trimEnd = TimeSpan.FromMilliseconds(ms);
-                ShowTrimHandleTooltip(pos.X, ms);
-                break;
-            }
+                {
+                    long startMs = (long)(_trimStart ?? TimeSpan.Zero).TotalMilliseconds;
+                    ms = Math.Clamp(ms, Math.Min(lengthMs, startMs + 1), lengthMs);
+                    _trimEnd = TimeSpan.FromMilliseconds(ms);
+                    ShowTrimHandleTooltip(pos.X, ms);
+                    break;
+                }
             case TrimDragMode.Seek:
                 _targetSeekMs = ms;
                 PlayerCurrentTime.Text = FormatDuration(ms);
@@ -147,7 +139,6 @@ public partial class MainWindow : Window
         UpdateTrimTimelineUi();
     }
 
-
     private void ShowTrimHandleTooltip(double x, long ms)
     {
         TrimHandleTooltipText.Text = FormatDuration(ms);
@@ -156,8 +147,7 @@ public partial class MainWindow : Window
         TrimHandleTooltipPopup.IsOpen = true;
     }
 
-
-        private void UpdateTrimTimelineUi()
+    private void UpdateTrimTimelineUi()
     {
         if (_vlcPlayer is null)
             return;
@@ -175,12 +165,6 @@ public partial class MainWindow : Window
         TrimSelectedRange.Margin = new Thickness(startX, 0, 0, 0);
         TrimSelectedRange.Width = Math.Max(0, endX - startX);
 
-        
-        
-        
-        
-        
-        
         const double handleWidth = 10;
         double maxHandleX = Math.Max(0, trackWidth - handleWidth);
         TrimStartHandle.Margin = new Thickness(Math.Clamp(startX - handleWidth / 2, 0, maxHandleX), 0, 0, 0);
@@ -195,8 +179,7 @@ public partial class MainWindow : Window
         TrimEndText.Text = FormatDuration(endMs);
     }
 
-
-        private void BuildTrimRuler()
+    private void BuildTrimRuler()
     {
         TrimRulerCanvas.Children.Clear();
         if (_vlcPlayer is null)
@@ -220,9 +203,7 @@ public partial class MainWindow : Window
 
             var label = new TextBlock { Text = FormatDuration(ms), FontSize = 9.5, Foreground = (Brush)FindResource("Text2") };
             label.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
-            
-            
-            
+
             double labelX = i == 0 ? x : i == tickCount - 1 ? x - label.DesiredSize.Width : x - label.DesiredSize.Width / 2;
             Canvas.SetLeft(label, labelX);
             Canvas.SetTop(label, 6);
@@ -230,14 +211,11 @@ public partial class MainWindow : Window
         }
     }
 
+    internal async void TrimReplace_Click(object sender, RoutedEventArgs e) => await RunTrimAsync(replaceOriginal: true);
 
-    private async void TrimReplace_Click(object sender, RoutedEventArgs e) => await RunTrimAsync(replaceOriginal: true);
+    internal async void TrimSaveNew_Click(object sender, RoutedEventArgs e) => await RunTrimAsync(replaceOriginal: false);
 
-
-    private async void TrimSaveNew_Click(object sender, RoutedEventArgs e) => await RunTrimAsync(replaceOriginal: false);
-
-
-        private async Task RunTrimAsync(bool replaceOriginal)
+    private async Task RunTrimAsync(bool replaceOriginal)
     {
         if (_trimStart is null || _trimEnd is null || _trimEnd <= _trimStart)
         {
@@ -245,12 +223,6 @@ public partial class MainWindow : Window
             return;
         }
 
-        
-        
-        
-        
-        
-        
         if (_currentPlayerFile is null)
         {
             if (_currentPlayerRemoteOrigin is not null)
@@ -259,16 +231,6 @@ public partial class MainWindow : Window
                 return;
             }
 
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            
             AppLog.Write("[trim_clip] RunTrimAsync: both _currentPlayerFile and _currentPlayerRemoteOrigin are null -- nothing to trim, this is the actual failure");
             MessageBox.Show(this, "Nothing to trim -- this clip isn't tracked as either a local file or a remote clip right now. Try reopening it.", "Backtrack");
             return;
@@ -280,11 +242,7 @@ public partial class MainWindow : Window
         FileInfo sourceFile = _currentPlayerFile;
         TimeSpan start = _trimStart.Value;
         TimeSpan end = _trimEnd.Value;
-        
-        
-        
-        
-        
+
         (string RelativePath, string DeviceId)? remoteOrigin = _currentPlayerRemoteOrigin;
 
         string tempOut = Path.Combine(Path.GetTempPath(), $"cc_trim_{Guid.NewGuid():N}{sourceFile.Extension}");
@@ -294,12 +252,6 @@ public partial class MainWindow : Window
         TrimSaveNewButton.IsEnabled = false;
         TrimStatusText.Text = "Trimming...";
 
-        
-        
-        
-        
-        
-        
         StopPlayerPlayback();
 
         try
@@ -328,8 +280,7 @@ public partial class MainWindow : Window
 
                 if (remoteOrigin is (string relPath, _))
                 {
-                    
-                    
+
                     _currentPlayerRemoteOrigin = remoteOrigin;
                     TrimStatusText.Text = $"Sending to {_settings.PairedPeerName}'s PC...";
                     (bool upSuccess, string? upError, _) = await _pairing.UploadRemoteClipAsync(relPath, _currentPlayerFile.FullName, overwrite: true);
@@ -363,10 +314,6 @@ public partial class MainWindow : Window
                 }
             }
 
-            
-            
-            
-            
             TrimPanel.Visibility = Visibility.Collapsed;
             PlayerTransportRow.Visibility = Visibility.Visible;
             MoveTransportControlsForTrim(intoTrimRow: false);
@@ -385,8 +332,7 @@ public partial class MainWindow : Window
         }
     }
 
-
-        private async Task<(bool Success, string? Error, string? NewFileName, long Size)> TrimClipForRemoteAsync(string fullPath, double startSeconds, double endSeconds, bool replaceOriginal)
+    private async Task<(bool Success, string? Error, string? NewFileName, long Size)> TrimClipForRemoteAsync(string fullPath, double startSeconds, double endSeconds, bool replaceOriginal)
     {
         var file = new FileInfo(fullPath);
         var start = TimeSpan.FromSeconds(startSeconds);
@@ -398,11 +344,6 @@ public partial class MainWindow : Window
         {
             await Task.Run(() => ExportTrim(fullPath, tempOut, start, end));
 
-            
-            
-            
-            
-            
             long tempOutSize = File.Exists(tempOut) ? new FileInfo(tempOut).Length : -1;
             AppLog.Write($"[trim_clip] ExportTrim finished -- tempOut {(tempOutSize < 0 ? "does not exist" : $"is {tempOutSize} bytes")}");
             if (tempOutSize <= 0)
@@ -410,15 +351,7 @@ public partial class MainWindow : Window
 
             if (replaceOriginal)
             {
-                
-                
-                
-                
-                
-                
-                
-                
-                
+
                 await CopyWithRetryAsync(tempOut, fullPath, overwrite: true);
                 File.Delete(tempOut);
                 long replacedSize = new FileInfo(fullPath).Length;
@@ -437,13 +370,12 @@ public partial class MainWindow : Window
         catch (Exception ex)
         {
             AppLog.WriteError("[trim_clip] TrimClipForRemoteAsync threw", ex);
-            try { File.Delete(tempOut); } catch {  }
+            try { File.Delete(tempOut); } catch { }
             return (false, ex.Message, null, 0);
         }
     }
 
-
-        private static string GetTrimmedFileName(string originalFileName, Func<string, bool> fileExists)
+    private static string GetTrimmedFileName(string originalFileName, Func<string, bool> fileExists)
     {
         string nameWithoutExt = Path.GetFileNameWithoutExtension(originalFileName);
         string ext = Path.GetExtension(originalFileName);
@@ -466,10 +398,8 @@ public partial class MainWindow : Window
         }
     }
 
-
     private static string GetTrimmedDestinationPath(string directory, string originalFileName) =>
         Path.Combine(directory, GetTrimmedFileName(originalFileName, name => File.Exists(Path.Combine(directory, name))));
-
 
     private void ExportTrim(string sourcePath, string destPath, TimeSpan start, TimeSpan end)
     {
@@ -487,13 +417,7 @@ public partial class MainWindow : Window
         bool encounteredError = false;
 
         exportPlayer.EndReached += (_, _) => done.Set();
-        
-        
-        
-        
-        
-        
-        
+
         exportPlayer.EncounteredError += (_, _) =>
         {
             encounteredError = true;
@@ -508,19 +432,11 @@ public partial class MainWindow : Window
         if (encounteredError)
             throw new InvalidOperationException("LibVLC reported an error during trim export.");
 
-        
-        
-        
-        
-        
         if (!File.Exists(destPath) || new FileInfo(destPath).Length == 0)
             throw new InvalidOperationException("Trim export produced no output file.");
     }
 
-
-
-
-        private async Task RunRemoteTrimAsync(bool replaceOriginal)
+    private async Task RunRemoteTrimAsync(bool replaceOriginal)
     {
         (string relPath, string _) = _currentPlayerRemoteOrigin!.Value;
         TimeSpan start = _trimStart!.Value;

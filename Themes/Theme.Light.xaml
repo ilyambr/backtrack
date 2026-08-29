@@ -1,24 +1,13 @@
 <ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
                     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
                     xmlns:sys="clr-namespace:System;assembly=mscorlib">
-    <!--
-      Light counterpart to Theme.Dark.xaml; same keys, same structure,
-      mirrored values. See that file's own comment for how/why this gets
-      merged in. Clean white/light-grey base with dark text; accent colors
-      (Rec/RecDark/Stream/Green) stay identical to dark mode on purpose,
-      see Theme.Dark.xaml's own comment on that.
-
-      ThemeDisplayName/ThemeSortOrder/ThemeBuiltIn: see Theme.Dark.xaml's own comment.
-    -->
+    
     <sys:String x:Key="ThemeDisplayName">Light</sys:String>
     <sys:Double x:Key="ThemeSortOrder">2</sys:Double>
     <sys:Boolean x:Key="ThemeBuiltIn">true</sys:Boolean>
     <SolidColorBrush x:Key="PanelBg" Color="#F7F7F8"/>
     <SolidColorBrush x:Key="PanelBgOpaque" Color="#ECF7F7F8"/>
-    <!-- Recessed card surface; see Theme.Dark.xaml's own comment on this key.
-         Noticeably darker than PanelBg here specifically, not just a lighter
-         variant of it, since a light-on-light card would barely read as a
-         card at all against this theme's near-white page background. -->
+    
     <SolidColorBrush x:Key="ThumbnailBg" Color="#E4E4E6"/>
     <SolidColorBrush x:Key="Hairline" Color="#1F000000"/>
     <SolidColorBrush x:Key="Text0" Color="#16171A"/>
@@ -30,13 +19,9 @@
     <SolidColorBrush x:Key="RecDark" Color="#7A1F1F"/>
     <SolidColorBrush x:Key="Stream" Color="#A855F7"/>
     <SolidColorBrush x:Key="Green" Color="#3ECF8E"/>
-    <!-- See Theme.Dark.xaml's own comment on this key: a fixed brand blue,
-         same reasoning as Rec/Stream/Green, not derived from Accent. -->
+    
     <SolidColorBrush x:Key="NewestClip" Color="#3B82F6"/>
 
-    <!-- Black-tinted instead of white-tinted; "add a bit of black" is what
-         reads as "slightly darker than the background" on a light panel,
-         the same relationship white-tinted overlays have on a dark one. -->
     <SolidColorBrush x:Key="RowBg" Color="#0B000000"/>
     <SolidColorBrush x:Key="RowHoverBg" Color="#17000000"/>
     <SolidColorBrush x:Key="TileHoverBg" Color="#0F000000"/>

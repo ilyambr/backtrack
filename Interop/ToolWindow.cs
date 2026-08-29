@@ -3,13 +3,6 @@ using System.Runtime.InteropServices;
 
 namespace Backtrack.Interop;
 
-/// <summary>
-/// Keeps a window out of Alt+Tab. ShowInTaskbar="False" alone only hides a window
-/// from the taskbar -- Alt+Tab decides inclusion from the WS_EX_TOOLWINDOW/
-/// WS_EX_APPWINDOW extended styles instead, which is why every one of this app's
-/// windows (MainWindow plus the Status/Toast/Scrim/Disclaimer/Logo overlays) was
-/// showing up as five or six separate entries despite ShowInTaskbar being off.
-/// </summary>
 public static class ToolWindow
 {
     private const int GWL_EXSTYLE = -20;

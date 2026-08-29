@@ -22,7 +22,7 @@ namespace Backtrack;
 
 public partial class MainWindow : Window
 {
-        private async Task RevertRamDiskDestDirsAsync(char driveLetter)
+    private async Task RevertRamDiskDestDirsAsync(char driveLetter)
     {
         if (!_obs.IsConnected)
             return;
@@ -42,13 +42,11 @@ public partial class MainWindow : Window
         }
         catch
         {
-            
-            
+
         }
     }
 
-
-    private void UninstallReplaySliderButton_Click(object sender, RoutedEventArgs e)
+    internal void UninstallReplaySliderButton_Click(object sender, RoutedEventArgs e)
     {
         ShowConfirmDialog(
             "Uninstall Replay Slider? OBS will be closed first if it's running.",
@@ -64,8 +62,7 @@ public partial class MainWindow : Window
             });
     }
 
-
-        private async Task PrefetchRowLabelsAsync()
+    private async Task PrefetchRowLabelsAsync()
     {
         if (!_obs.IsConnected)
             return;
@@ -78,12 +75,11 @@ public partial class MainWindow : Window
         }
         catch
         {
-            
+
         }
     }
 
-
-        private async Task RefreshRemoteRowHotkeysAsync()
+    private async Task RefreshRemoteRowHotkeysAsync()
     {
         foreach (var hk in _remoteRowHotkeys)
         {
@@ -200,9 +196,6 @@ public partial class MainWindow : Window
         }
     }
 
-
-    
-
     private FrameworkElement PanelFor(Screen screen) => screen switch
     {
         Screen.Idle => IdlePanel,
@@ -214,17 +207,10 @@ public partial class MainWindow : Window
         _ => IdlePanel,
     };
 
-
     private async Task RefreshStatusAsync()
     {
         _trayManager?.UpdateStatus(_obs.IsConnected, _statusOverlay.IsVisible);
 
-        
-        
-        
-        
-        
-        
         bool encoderOverloadedNow = DateTime.UtcNow - _lastEncoderOverloadEventUtc < TimeSpan.FromSeconds(4);
         if (encoderOverloadedNow != _encoderOverloadedShown)
         {
@@ -237,20 +223,6 @@ public partial class MainWindow : Window
             ConnDot.Fill = (Brush)FindResource("Rec");
             ConnStatusText.Text = "OBS Disconnected";
 
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            
             bool serverEnabledNow = _serverEnabledAtStartup;
             if (!_settings.ObsIsRemote)
             {
@@ -258,20 +230,6 @@ public partial class MainWindow : Window
                 {
                     (bool enabled, string? _) = ObsConfigReader.ReadLocalConfig();
 
-                    
-                    
-                    
-                    
-                    
-                    
-                    
-                    
-                    
-                    
-                    
-                    
-                    
-                    
                     if (!enabled && Process.GetProcessesByName("obs64").Length == 0 && ObsConfigReader.TryEnableServer())
                         return (true, true);
                     return (enabled, false);
@@ -281,12 +239,6 @@ public partial class MainWindow : Window
                     AppLog.Write("ObsConfigReader.TryEnableServer: OBS's WebSocket server was off and OBS wasn't running -- enabled it for the next launch.");
             }
 
-            
-            
-            
-            
-            
-            
             _serverEnabledAtStartup = serverEnabledNow;
 
             ConnStatusText.ToolTip = !serverEnabledNow
@@ -316,12 +268,7 @@ public partial class MainWindow : Window
 
         try
         {
-            
-            
-            
-            
-            
-            
+
             Task<RecordStatus> recStatusTask = _obs.GetRecordStatusAsync();
             Task<List<RecordRow>> recordRowsTask = _obs.ListRecordRowsAsync();
             Task<bool> replayBufferActiveTask = _obs.GetReplayBufferActiveAsync();
@@ -330,27 +277,12 @@ public partial class MainWindow : Window
             Task<bool> virtualCamActiveTask = _obs.GetVirtualCamActiveAsync();
 
             RecordStatus recStatus = await recStatusTask;
-            
-            
-            
-            
-            
-            
-            
-            
-            
+
             int activeRecordRowCount;
             try
             {
                 List<RecordRow> recordRows = await recordRowsTask;
 
-                
-                
-                
-                
-                
-                
-                
                 var activeKeys = new HashSet<string>();
                 var newlyStartedKeys = new List<string>();
                 foreach (RecordRow row in recordRows)
@@ -373,18 +305,6 @@ public partial class MainWindow : Window
                     }
                 }
 
-                
-                
-                
-                
-                
-                
-                
-                
-                
-                
-                
-                
                 if (_recordRowPollSeeded)
                 {
                     foreach (string key in newlyStartedKeys)
@@ -429,7 +349,6 @@ public partial class MainWindow : Window
                 }
                 _recordRowPollSeeded = true;
 
-                // Also ensure any explicitly cancelled row that is no longer active displays the cancellation toast
                 var orphanCancelledKeys = _cancelledRecordRows.Where(k => !activeKeys.Contains(k)).ToList();
                 foreach (string key in orphanCancelledKeys)
                 {
@@ -450,32 +369,10 @@ public partial class MainWindow : Window
             bool anyRecordRowActive = activeRecordRowCount > 0;
             bool recordingAnything = recStatus.Active || anyRecordRowActive;
 
-            
-            
-            
-            
-            
-            
             bool singleActiveTarget = (recStatus.Active && activeRecordRowCount == 0) || (!recStatus.Active && activeRecordRowCount == 1);
             RecordLabel.Text = singleActiveTarget ? "Stop Recording" : "Start Recording";
             SetRecordIcon(recordingAnything);
 
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            
             long? bestDurationMs = null;
             bool bestIsMainPaused = false;
             if (recStatus.Active)
@@ -490,7 +387,7 @@ public partial class MainWindow : Window
                 if (bestDurationMs is null || rowMs > bestDurationMs)
                 {
                     bestDurationMs = rowMs;
-                    bestIsMainPaused = false; 
+                    bestIsMainPaused = false;
                 }
             }
             RecordStatusText.Text = bestDurationMs is long ms
@@ -498,18 +395,6 @@ public partial class MainWindow : Window
                 : "--:--";
             _statusOverlay.SetRecording(recordingAnything);
 
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            
             bool replayBufferActive = await replayBufferActiveTask;
             bool anyRowActive;
             bool anyRowError;
@@ -523,10 +408,7 @@ public partial class MainWindow : Window
             }
             catch
             {
-                
-                
-                
-                
+
                 anyRowActive = _lastKnownAnyRowActive;
                 anyRowError = _lastKnownAnyRowError;
             }
@@ -539,10 +421,6 @@ public partial class MainWindow : Window
             SaveReplayIcon.Foreground = (Brush)FindResource(replayActive ? "Green" : showError ? "Rec" : "Text0");
             _statusOverlay.SetReplayOnline(replayActive);
 
-            
-            
-            
-            
             try
             {
                 _isStreaming = await streamActiveTask;
@@ -551,25 +429,21 @@ public partial class MainWindow : Window
             }
             catch
             {
-                
+
             }
 
-            
-            
-            
             try
             {
                 _statusOverlay.SetVirtualCamActive(await virtualCamActiveTask);
             }
             catch
             {
-                
+
             }
         }
         catch
         {
-            
-            
+
         }
     }
 }

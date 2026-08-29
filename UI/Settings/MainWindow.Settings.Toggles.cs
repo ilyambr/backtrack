@@ -28,7 +28,7 @@ namespace Backtrack;
 
 public partial class MainWindow : Window
 {
-    private void AutoDeleteOldClipsToggle_Click(object sender, RoutedEventArgs e)
+    internal void AutoDeleteOldClipsToggle_Click(object sender, RoutedEventArgs e)
     {
         _settings.AutoDeleteOldClipsEnabled = AutoDeleteOldClipsToggle.IsChecked == true;
         _settings.Save();
@@ -36,24 +36,21 @@ public partial class MainWindow : Window
         RestartAutoDeleteOldClipsTimer();
     }
 
-
-        private void ExperimentalHeader_Click(object sender, MouseButtonEventArgs e)
+    internal void ExperimentalHeader_Click(object sender, MouseButtonEventArgs e)
     {
         bool expand = ExperimentalContent.Visibility != Visibility.Visible;
         ExperimentalContent.Visibility = expand ? Visibility.Visible : Visibility.Collapsed;
         ExperimentalHeaderText.Text = expand ? "▾ EXPERIMENTAL" : "▸ EXPERIMENTAL";
     }
 
-
-        private void DestructiveHeader_Click(object sender, MouseButtonEventArgs e)
+    internal void DestructiveHeader_Click(object sender, MouseButtonEventArgs e)
     {
         bool expand = DestructiveContent.Visibility != Visibility.Visible;
         DestructiveContent.Visibility = expand ? Visibility.Visible : Visibility.Collapsed;
         DestructiveHeaderText.Text = expand ? "▾ MAINTENANCE" : "▸ MAINTENANCE";
     }
 
-
-    private void UninstallBacktrackButton_Click(object sender, RoutedEventArgs e)
+    internal void UninstallBacktrackButton_Click(object sender, RoutedEventArgs e)
     {
         ShowConfirmDialog(
             "Uninstall Backtrack? This removes the app, its Start Menu shortcut, and its registry entry. Your clips aren't touched.",
@@ -67,16 +64,12 @@ public partial class MainWindow : Window
                     MessageBox.Show(this, error ?? "Couldn't start the uninstall.", "Backtrack");
                     return;
                 }
-                
-                
-                
-                
+
                 Application.Current.Shutdown();
             });
     }
 
-
-    private void UninstallSourceRecordButton_Click(object sender, RoutedEventArgs e)
+    internal void UninstallSourceRecordButton_Click(object sender, RoutedEventArgs e)
     {
         ShowConfirmDialog(
             "Uninstall Source Record? OBS will be closed first if it's running.",
@@ -92,11 +85,9 @@ public partial class MainWindow : Window
             });
     }
 
+    internal void BufferDurationSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e) => RefreshBufferDurationUi();
 
-    private void BufferDurationSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e) => RefreshBufferDurationUi();
-
-
-    private async void ApplyBufferDuration_Click(object sender, RoutedEventArgs e)
+    internal async void ApplyBufferDuration_Click(object sender, RoutedEventArgs e)
     {
         int minutes = (int)BufferDurationSlider.Value;
         _settings.ReplayBufferMinutes = minutes;
@@ -112,19 +103,15 @@ public partial class MainWindow : Window
         }
     }
 
+    private ConfirmDialog? _activeConfirmDialog;
 
-        private ConfirmDialog? _activeConfirmDialog;
-
-
-
-    private void ShowStatusIndicatorToggle_Click(object sender, RoutedEventArgs e)
+    internal void ShowStatusIndicatorToggle_Click(object sender, RoutedEventArgs e)
     {
         ToggleStatusOverlay();
         _trayManager?.UpdateStatus(_obs.IsConnected, _statusOverlay.IsVisible);
     }
 
-
-    private void StatusIndicatorOrientationSelector_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    internal void StatusIndicatorOrientationSelector_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         _settings.StatusIndicatorOrientation = StatusIndicatorOrientationSelector.SelectedItem is ComboBoxItem { Tag: "Vertical" }
             ? StatusIndicatorOrientation.Vertical
@@ -134,21 +121,16 @@ public partial class MainWindow : Window
         UpdateStatusIndicatorPreview();
     }
 
-
-    private void StatusIndicatorLocationSelector_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    internal void StatusIndicatorLocationSelector_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        
-        
-        
-        
+
         _settings.StatusIndicatorLocation = (StatusIndicatorLocation)StatusIndicatorLocationSelector.SelectedIndex;
         _settings.Save();
         _statusOverlay.Reposition();
         UpdateStatusIndicatorPreview();
     }
 
-
-        private void UpdateStatusIndicatorPreview()
+    private void UpdateStatusIndicatorPreview()
     {
         bool horizontal = _settings.StatusIndicatorOrientation == StatusIndicatorOrientation.Horizontal;
         bool isLeft = _settings.StatusIndicatorLocation is StatusIndicatorLocation.TopLeft or StatusIndicatorLocation.BottomLeft;
@@ -158,8 +140,6 @@ public partial class MainWindow : Window
         StatusIndicatorPreviewPanel.HorizontalAlignment = isLeft ? HorizontalAlignment.Left : HorizontalAlignment.Right;
         StatusIndicatorPreviewPanel.VerticalAlignment = isTop ? VerticalAlignment.Top : VerticalAlignment.Bottom;
 
-        
-        
         Thickness gap = horizontal ? new Thickness(5, 0, 0, 0) : new Thickness(0, 5, 0, 0);
         for (int i = 0; i < StatusIndicatorPreviewPanel.Children.Count; i++)
         {
@@ -168,23 +148,17 @@ public partial class MainWindow : Window
         }
     }
 
-
-        private void StatusIndicatorPreviewBorder_SizeChanged(object sender, SizeChangedEventArgs e)
+    internal void StatusIndicatorPreviewBorder_SizeChanged(object sender, SizeChangedEventArgs e)
     {
         if (e.NewSize.Width <= 0)
             return;
         double targetHeight = e.NewSize.Width * 9.0 / 16.0;
-        
-        
-        
-        
+
         if (double.IsNaN(StatusIndicatorPreviewBorder.Height) || Math.Abs(StatusIndicatorPreviewBorder.Height - targetHeight) > 0.5)
             StatusIndicatorPreviewBorder.Height = targetHeight;
     }
 
-
-
-    private void ShowDisclaimerToggle_Click(object sender, RoutedEventArgs e)
+    internal void ShowDisclaimerToggle_Click(object sender, RoutedEventArgs e)
     {
         _settings.ShowDisclaimer = ShowDisclaimerToggle.IsChecked == true;
         _settings.Save();
@@ -194,30 +168,25 @@ public partial class MainWindow : Window
             _disclaimer.Show();
     }
 
-
-    private void DisableBacktrackAutoUpdateToggle_Click(object sender, RoutedEventArgs e)
+    internal void DisableBacktrackAutoUpdateToggle_Click(object sender, RoutedEventArgs e)
     {
         _settings.DisableBacktrackAutoUpdate = DisableBacktrackAutoUpdateToggle.IsChecked == true;
         _settings.Save();
     }
 
-
-    private void DisablePluginAutoUpdateToggle_Click(object sender, RoutedEventArgs e)
+    internal void DisablePluginAutoUpdateToggle_Click(object sender, RoutedEventArgs e)
     {
         _settings.DisablePluginAutoUpdate = DisablePluginAutoUpdateToggle.IsChecked == true;
         _settings.Save();
     }
 
-
-    private void EnableAnimationsToggle_Click(object sender, RoutedEventArgs e)
+    internal void EnableAnimationsToggle_Click(object sender, RoutedEventArgs e)
     {
         _settings.EnableAnimations = EnableAnimationsToggle.IsChecked == true;
         _settings.Save();
     }
 
-
-    private void DiagnosticLogToggle_Click(object sender, RoutedEventArgs e) => SetDiagnosticLogEnabled(DiagnosticLogToggle.IsChecked == true);
-
+    internal void DiagnosticLogToggle_Click(object sender, RoutedEventArgs e) => SetDiagnosticLogEnabled(DiagnosticLogToggle.IsChecked == true);
 
     private void SetDiagnosticLogEnabled(bool enabled)
     {
@@ -230,9 +199,7 @@ public partial class MainWindow : Window
             AppLog.Write("Diagnostic log file enabled");
     }
 
-
-    private void DeveloperModeToggle_Click(object sender, RoutedEventArgs e) => SetDeveloperModeEnabled(DeveloperModeToggle.IsChecked == true);
-
+    internal void DeveloperModeToggle_Click(object sender, RoutedEventArgs e) => SetDeveloperModeEnabled(DeveloperModeToggle.IsChecked == true);
 
     private void SetDeveloperModeEnabled(bool enabled)
     {
@@ -242,44 +209,24 @@ public partial class MainWindow : Window
         UpdateService.DeveloperModeEnabled = enabled;
         DeveloperModeToggle.IsChecked = enabled;
 
-        
-        
-        
-        
-        
-        
-        
-        
         if (enabled && !_settings.DiagnosticLogEnabled)
             SetDiagnosticLogEnabled(true);
 
-        
-        
-        
-        
-        
-        
-        
-        
         _settings.DisableBacktrackAutoUpdate = enabled;
         _settings.Save();
         DisableBacktrackAutoUpdateToggle.IsChecked = enabled;
         DisableBacktrackAutoUpdateToggle.IsEnabled = !enabled;
     }
 
-
-    private void DisableHardwareAccelToggle_Click(object sender, RoutedEventArgs e)
+    internal void DisableHardwareAccelToggle_Click(object sender, RoutedEventArgs e)
     {
-        
-        
-        
+
         _settings.DisableHardwareAcceleration = DisableHardwareAccelToggle.IsChecked == true;
         _settings.Save();
         MessageBox.Show(this, "This takes effect the next time Backtrack starts.", "Backtrack");
     }
 
-
-    private void OpenDiagnosticLogButton_Click(object sender, RoutedEventArgs e)
+    internal void OpenDiagnosticLogButton_Click(object sender, RoutedEventArgs e)
     {
         try
         {
@@ -296,12 +243,7 @@ public partial class MainWindow : Window
         }
     }
 
-
-    
-    
-    
-    
-    private void LaunchWithWindowsToggle_Click(object sender, RoutedEventArgs e)
+    internal void LaunchWithWindowsToggle_Click(object sender, RoutedEventArgs e)
     {
         bool enabled = LaunchWithWindowsToggle.IsChecked == true;
         try
@@ -321,17 +263,8 @@ public partial class MainWindow : Window
         }
     }
 
-
-    
-    
-    
-    
-    
-    
-    
     private static string SchtasksPath =>
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "schtasks.exe");
 
-
-    private void QuitApp_Click(object sender, RoutedEventArgs e) => Application.Current.Shutdown();
+    internal void QuitApp_Click(object sender, RoutedEventArgs e) => Application.Current.Shutdown();
 }

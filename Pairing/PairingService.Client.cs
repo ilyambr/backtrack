@@ -16,7 +16,6 @@ public sealed partial class PairingService
 {
     private static readonly TimeSpan TrimRequestTimeout = TimeSpan.FromMinutes(5);
 
-    /// <summary>Fetches the paired transmitter PC's current RAM disk configuration. Null if not paired, unreachable, or denied.</summary>
     public async Task<RamDiskSnapshot?> GetRemoteRamDiskSettingsAsync()
     {
         if (string.IsNullOrEmpty(_settings.PairedPeerHost) || string.IsNullOrEmpty(_settings.PairedPeerSecret))
@@ -41,7 +40,6 @@ public sealed partial class PairingService
         catch { return null; }
     }
 
-    /// <summary>Asks the paired transmitter PC to apply a new RAM disk configuration.</summary>
     public async Task<(bool Success, string? Error)> SetRemoteRamDiskSettingsAsync(bool enabled, char driveLetter, int sizeMb)
     {
         if (string.IsNullOrEmpty(_settings.PairedPeerHost) || string.IsNullOrEmpty(_settings.PairedPeerSecret))
@@ -75,7 +73,6 @@ public sealed partial class PairingService
         }
     }
 
-    /// <summary>Forward-slash relative path of the paired transmitter PC's own newest clip.</summary>
     public async Task<string?> GetRemoteNewestClipPathAsync()
     {
         if (string.IsNullOrEmpty(_settings.PairedPeerHost) || string.IsNullOrEmpty(_settings.PairedPeerSecret))
@@ -99,7 +96,6 @@ public sealed partial class PairingService
         catch { return null; }
     }
 
-    /// <summary>Lists one folder of the paired transmitter PC's clips.</summary>
     public async Task<RemoteGalleryListing?> ListRemoteGalleryAsync(string relativePath)
     {
         if (string.IsNullOrEmpty(_settings.PairedPeerHost) || string.IsNullOrEmpty(_settings.PairedPeerSecret))

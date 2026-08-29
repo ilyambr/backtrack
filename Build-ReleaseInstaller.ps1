@@ -1,9 +1,16 @@
 # Build-ReleaseInstaller.ps1
 param (
-    [string]$Version = "0.2.1"
+    [string]$Version = ""
 )
 
 $ErrorActionPreference = "Stop"
+
+if ([string]::IsNullOrWhiteSpace($Version)) {
+    [xml]$proj = Get-Content "./Backtrack.csproj"
+    $Version = $proj.Project.PropertyGroup.Version
+}
+
+Write-Host "Releasing Backtrack v$Version (Local release, no CI)..." -ForegroundColor Cyan
 
 Write-Host "1. Publishing Backtrack binaries..." -ForegroundColor Green
 dotnet publish -c Release -r win-x64 -o "./publish"
@@ -30,7 +37,12 @@ if ([System.IO.File]::Exists($installerExe)) {
     Write-Error "Failed to build installer executable."
 }
 
-Write-Host "4. Uploading release assets to GitHub Release v$Version..." -ForegroundColor Green
-gh release upload "v$Version" "Backtrack-Setup-v$Version.exe" "$releaseZipPath" --clobber
+Write-Host "4. Publishing GitHub Release v$Version..." -ForegroundColor Green
+$releaseExists = gh release view "v$Version" 2>$null
+if ($LASTEXITCODE -eq 0) {
+    gh release upload "v$Version" "Backtrack-Setup-v$Version.exe" "$releaseZipPath" --clobber
+} else {
+    gh release create "v$Version" "Backtrack-Setup-v$Version.exe" "$releaseZipPath" --title "v$Version" --generate-notes
+}
 
-Write-Host "Done! Release v$Version now includes Backtrack-Setup-v$Version.exe installer!" -ForegroundColor Cyan
+Write-Host "Done! Release v$Version published successfully to GitHub!" -ForegroundColor Cyan

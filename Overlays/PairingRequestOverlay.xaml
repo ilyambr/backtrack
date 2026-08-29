@@ -11,12 +11,7 @@
         ShowInTaskbar="False"
         ResizeMode="NoResize"
         Visibility="Hidden">
-    <!--
-      Not modal (no ShowDialog/Owner): a pairing request can arrive at any time,
-      whether or not the HUD happens to be open, same reasoning as the other
-      always-available overlays. Centered on screen and Topmost, but still a
-      normal click-through-disabled window since Allow/Deny need real clicks.
-    -->
+    
     <Border Background="{DynamicResource PanelBg}" BorderBrush="{DynamicResource Hairline}" BorderThickness="1" Padding="22,20">
         <StackPanel>
             <StackPanel Orientation="Horizontal">

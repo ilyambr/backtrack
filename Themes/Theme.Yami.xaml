@@ -1,30 +1,13 @@
 <ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
                     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
                     xmlns:sys="clr-namespace:System;assembly=mscorlib">
-    <!--
-      OBS Studio's own default "Yami" theme, ported from its real palette
-      (obs-studio's frontend/data/themes/Yami.obt, the grey/blue scale OBS
-      itself ships with) rather than invented; so this genuinely looks
-      like the OBS window it sits next to, not just "another dark theme".
-
-      Grey ramp used: grey8 #13141A (darkest) .. grey1 #5B6273 (lightest),
-      window bg is grey7, panel/row surfaces step up through grey6-grey4.
-      Accent blue is Yami's own "highlight_color" variable (blue1 #718CDC).
-
-      Rec/RecDark/Stream/Green stay Backtrack's own brand colors, same as
-      Dark/Light; see Theme.Dark.xaml's comment on why those don't change
-      per theme, only the neutrals borrow Yami's real values.
-
-      ThemeDisplayName/ThemeSortOrder/ThemeBuiltIn: see Theme.Dark.xaml's own comment.
-    -->
+    
     <sys:String x:Key="ThemeDisplayName">Yami (OBS)</sys:String>
     <sys:Double x:Key="ThemeSortOrder">3</sys:Double>
     <sys:Boolean x:Key="ThemeBuiltIn">true</sys:Boolean>
     <SolidColorBrush x:Key="PanelBg" Color="#1D1F26"/>
     <SolidColorBrush x:Key="PanelBgOpaque" Color="#EC1D1F26"/>
-    <!-- Recessed card surface; see Theme.Dark.xaml's own comment on this key.
-         Stays within this theme's own grey ramp (close to RowBg's step),
-         not an unrelated invented tone. -->
+    
     <SolidColorBrush x:Key="ThumbnailBg" Color="#252831"/>
     <SolidColorBrush x:Key="Hairline" Color="#3C404D"/>
     <SolidColorBrush x:Key="Text0" Color="#FFFFFF"/>
@@ -36,8 +19,7 @@
     <SolidColorBrush x:Key="RecDark" Color="#7A1F1F"/>
     <SolidColorBrush x:Key="Stream" Color="#A855F7"/>
     <SolidColorBrush x:Key="Green" Color="#3ECF8E"/>
-    <!-- See Theme.Dark.xaml's own comment on this key: a fixed brand blue,
-         same reasoning as Rec/Stream/Green, not derived from Accent. -->
+    
     <SolidColorBrush x:Key="NewestClip" Color="#3B82F6"/>
 
     <SolidColorBrush x:Key="RowBg" Color="#272A33"/>

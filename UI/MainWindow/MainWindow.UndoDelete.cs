@@ -93,16 +93,12 @@ public partial class MainWindow : Window
         }
     }
 
-
-        private void QueueRemoteDeleteWithUndo(string relativePath, string displayName, RemoteGalleryFile? file)
+    private void QueueRemoteDeleteWithUndo(string relativePath, string displayName, RemoteGalleryFile? file)
     {
         _pendingRemoteDeletePaths.Add(relativePath);
         if (GalleryPanel.Visibility == Visibility.Visible)
             LoadGallery();
-        
-        
-        
-        
+
         RefreshRecentClipsOverlay();
 
         _toastOverlay.ShowDeleteUndo(displayName,
@@ -122,17 +118,12 @@ public partial class MainWindow : Window
             });
     }
 
-
     private void QueueDeleteWithUndo(FileInfo file)
     {
         string fullPath = Path.GetFullPath(file.FullName);
         _pendingDeletePaths.Add(fullPath);
         LoadGallery();
-        
-        
-        
-        
-        
+
         RefreshRecentClipsOverlay();
 
         _toastOverlay.ShowDeleteUndo(file.Name,
@@ -163,14 +154,13 @@ public partial class MainWindow : Window
             });
     }
 
-
-        private void QueueMultiDeleteWithUndo(List<FileInfo> files)
+    private void QueueMultiDeleteWithUndo(List<FileInfo> files)
     {
         var fullPaths = files.Select(f => Path.GetFullPath(f.FullName)).ToList();
         foreach (string fullPath in fullPaths)
             _pendingDeletePaths.Add(fullPath);
         LoadGallery();
-        
+
         RefreshRecentClipsOverlay();
 
         _toastOverlay.ShowMultiDeleteUndo(files.Count,

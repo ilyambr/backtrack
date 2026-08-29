@@ -28,7 +28,7 @@ namespace Backtrack;
 
 public partial class MainWindow : Window
 {
-        private async Task<(bool Available, string InstalledVersion)> CheckSelfAvailabilityAsync()
+    private async Task<(bool Available, string InstalledVersion)> CheckSelfAvailabilityAsync()
     {
         Version installed = UpdateService.CurrentAppVersion;
         try
@@ -39,10 +39,7 @@ public partial class MainWindow : Window
                 return (false, installed.ToString(3));
 
             bool versionBumped = UpdateService.IsNewer(release.Version, installed);
-            
-            
-            
-            
+
             bool available = ShouldApplyUpdate(release, versionBumped, installedFileMissing: false,
                 () => _settings.LastAppliedBacktrackReleaseAt, v => _settings.LastAppliedBacktrackReleaseAt = v,
                 () => _settings.LastAppliedBacktrackDigest, v => _settings.LastAppliedBacktrackDigest = v);
@@ -54,21 +51,16 @@ public partial class MainWindow : Window
         }
     }
 
-
     private bool ShouldApplyUpdate(ReleaseInfo release, bool versionBumped, bool installedFileMissing,
         Func<DateTimeOffset?> getLastApplied, Action<DateTimeOffset?> setLastApplied,
         Func<string?> getLastDigest, Action<string?> setLastDigest)
     {
-        // 1. Missing file: definitely update!
         if (installedFileMissing)
             return true;
 
-        // 2. Version bumped (candidate > installed): definitely update!
-        // A previous failed update or cached digest must NEVER block updating to a newer version.
         if (versionBumped)
             return true;
 
-        // 3. For same-version checks (candidate <= installed), only update if GitHub release was re-published in-place with a new digest/timestamp.
         DateTimeOffset? lastApplied = getLastApplied();
         string? lastDigest = getLastDigest();
 
@@ -80,7 +72,6 @@ public partial class MainWindow : Window
             return false;
         }
 
-        // Never auto-downgrade if candidate version is strictly older than installed
         if (UpdateService.IsNewer(UpdateService.CurrentAppVersion.ToString(3), release.Version))
             return false;
 
@@ -95,7 +86,6 @@ public partial class MainWindow : Window
         return republishedByTimestamp;
     }
 
-
     private void RecordUpdateApplied(ReleaseInfo release, Action<DateTimeOffset?> setLastApplied, Action<string?> setLastDigest)
     {
         setLastApplied(release.PublishedAt ?? DateTimeOffset.UtcNow);
@@ -103,17 +93,7 @@ public partial class MainWindow : Window
         _settings.Save();
     }
 
-
-    
-    
-    
-    
-    
-    
-    
     private bool _obsReopenPendingFromPluginUpdates;
-
-
 
     private void RefreshRemotePluginStatusText()
     {
@@ -122,59 +102,20 @@ public partial class MainWindow : Window
             : $"Paired with {_settings.PairedPeerName}. Click \"Check & update\" to check its plugin versions.";
     }
 
-
     private readonly Dictionary<string, Border> _themeSwatches = new(StringComparer.OrdinalIgnoreCase);
 
-
-    
-
-    
-    
-    
     private Point? _themeSwatchesDragStart;
 
     private double _themeSwatchesDragStartOffset;
 
-    
-    
-    
-    
-    
-    
     private const double ThemeSwatchesDragThreshold = 4;
 
     private bool _themeSwatchesDragged;
 
-
-    
-
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
     private bool _settingsAutoscrollActive;
 
     private double _settingsAutoscrollStartY;
 
-
-    
-    
-    
-    
     private const double AutoscrollSensitivity = 0.06;
 
     private const double AutoscrollDeadZone = 4;

@@ -29,7 +29,6 @@ public partial class MainWindow : Window
         Rect screenBounds = TargetScreenBounds;
         double screenH = screenBounds.Height;
 
-        // PlayerVideoHost must stay exactly 16:9 (contentHeight) so video fits edge-to-edge with no black bars
         PlayerVideoHost.Height = contentHeight;
 
         double maxGalleryHeight = Math.Max(280, screenH - BigTop - 180);
@@ -38,8 +37,7 @@ public partial class MainWindow : Window
         Top = screenBounds.Y + BigTop;
     }
 
-
-    private void ToggleFullscreen_Click(object sender, RoutedEventArgs e)
+    internal void ToggleFullscreen_Click(object sender, RoutedEventArgs e)
     {
         if (_isPlayerFullscreen)
             ExitPlayerFullscreen();
@@ -47,15 +45,6 @@ public partial class MainWindow : Window
             EnterPlayerFullscreen();
     }
 
-
-    
-    
-    
-    
-    
-    
-    
-    
     private void ReopenPlayerFullscreenTransportPopup()
     {
         if (!PlayerFullscreenTransportPopup.IsOpen)
@@ -70,8 +59,7 @@ public partial class MainWindow : Window
         }
     }
 
-
-    private void PlayPauseButton_Click(object sender, RoutedEventArgs e)
+    internal void PlayPauseButton_Click(object sender, RoutedEventArgs e)
     {
         if (_vlcPlayer is null)
             return;
@@ -89,8 +77,7 @@ public partial class MainWindow : Window
         }
     }
 
-
-        private void RestartEndedPlayback(long resumeAtMs)
+    private void RestartEndedPlayback(long resumeAtMs)
     {
         if (_vlcPlayer is null)
             return;
@@ -100,26 +87,18 @@ public partial class MainWindow : Window
         _vlcPlayer.Play();
         if (resumeAtMs > 0)
             _vlcPlayer.Time = resumeAtMs;
-        _seekTimer?.Start(); 
+        _seekTimer?.Start();
     }
 
-
-        private void DetachPlayerVideo()
+    private void DetachPlayerVideo()
     {
-        
-        
-        
+
         _freezeFrameTimer?.Stop();
         PlayerFreezeFramePopup.IsOpen = false;
         PlayerMenuPopup.IsOpen = false;
         CompressPopup.IsOpen = false;
         BookmarkPopup.IsOpen = false;
 
-        
-        
-        
-        
-        
         if (_isPlayerFullscreen)
         {
             _isPlayerFullscreen = false;
@@ -139,29 +118,15 @@ public partial class MainWindow : Window
         }
 
         _seekTimer?.Stop();
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
+
         PlayerVideoView.MediaPlayer = null;
     }
 
-
-        private void StopPlayerPlayback()
+    private void StopPlayerPlayback()
     {
         DetachPlayerVideo();
         DisposeVlcPlayerSync();
     }
-
 
     private void DisposeVlcPlayerSync()
     {
@@ -175,8 +140,7 @@ public partial class MainWindow : Window
         }
     }
 
-
-        private void DisposeVlcPlayerAsync()
+    private void DisposeVlcPlayerAsync()
     {
         _currentPlayerMedia?.Dispose();
         _currentPlayerMedia = null;
@@ -185,9 +149,7 @@ public partial class MainWindow : Window
 
         LibVlc.MediaPlayer playerToDispose = _vlcPlayer;
         _vlcPlayer = null;
-        
-        
-        
+
         _pendingVlcDisposeTask = Task.Run(() =>
         {
             try
@@ -197,15 +159,12 @@ public partial class MainWindow : Window
             }
             catch
             {
-                
+
             }
         });
     }
 
-
-    
-
-    private void PlayerSpeedButton_Click(object sender, RoutedEventArgs e)
+    internal void PlayerSpeedButton_Click(object sender, RoutedEventArgs e)
     {
         if (_vlcPlayer is null)
             return;
@@ -215,19 +174,14 @@ public partial class MainWindow : Window
         PlayerSpeedText.Text = speed == (int)speed ? $"{(int)speed}x" : $"{speed}x";
     }
 
-
     private void ResetPlaybackSpeed()
     {
-        _playbackSpeedIndex = 1; 
+        _playbackSpeedIndex = 1;
         PlayerSpeedText.Text = "1x";
-        
-        
-        
-        
+
     }
 
-
-        private void PreviewLoopButton_Click(object sender, RoutedEventArgs e)
+    internal void PreviewLoopButton_Click(object sender, RoutedEventArgs e)
     {
         if (_vlcPlayer is null)
             return;
@@ -245,18 +199,13 @@ public partial class MainWindow : Window
         }
 
         _previewLooping = true;
-        
-        
-        
-        
-        
+
         PreviewLoopIcon.Visibility = Visibility.Collapsed;
         PreviewStopIcon.Visibility = Visibility.Visible;
         CommitSeek((long)_trimStart.Value.TotalMilliseconds);
         if (!_vlcPlayer.IsPlaying)
             _vlcPlayer.Play();
     }
-
 
     private long _lastRenderedMarkerDurationMs = -1;
     private double _lastRenderedTrackWidth = -1;
@@ -274,15 +223,13 @@ public partial class MainWindow : Window
             try { hk.Dispose(); } catch { }
         }
         _remoteRowHotkeys.Clear();
-        
-        
+
         if (_settings.RamDiskEnabled)
             RamDisk.Unmount(_settings.RamDiskDriveLetter);
         base.OnClosed(e);
     }
 
-
-        private void PlayerTrim_Click(object sender, RoutedEventArgs e)
+    internal void PlayerTrim_Click(object sender, RoutedEventArgs e)
     {
         PlayerMenuPopup.IsOpen = false;
         bool opening = TrimPanel.Visibility != Visibility.Visible;
@@ -303,19 +250,12 @@ public partial class MainWindow : Window
         }
     }
 
-
-        private void MoveTransportControlsForTrim(bool intoTrimRow)
+    private void MoveTransportControlsForTrim(bool intoTrimRow)
     {
         PlayPauseButton.Width = PlayPauseButton.Height = intoTrimRow ? PlayPauseButtonTrimSize : PlayPauseButtonNormalSize;
-        
-        
-        
-        
-        
+
         PlayPauseButton.Style = (Style)FindResource(intoTrimRow ? "BareIconButton" : "PlayerTransportButton");
-        
-        
-        
+
         PlayPauseButton.Margin = intoTrimRow ? new Thickness(0, 0, 10, 0) : default;
         Reparent(PlayPauseButton, intoTrimRow ? TrimActionButtons : PlayerTransportRow, intoTrimRow ? null : PlayPauseButtonHomeColumn, insertAtFront: intoTrimRow);
         Reparent(AudioTrackCombo, intoTrimRow ? TrimTransportExtras : PlayerTransportRow, intoTrimRow ? null : AudioTrackComboHomeColumn);

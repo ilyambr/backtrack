@@ -29,7 +29,6 @@ public partial class MainWindow : Window
         var thumbGrid = new Grid();
         thumbGrid.Children.Add(thumbImage);
 
-        // Compression progress overlay
         var compressOverlay = new Grid
         {
             Background = new SolidColorBrush(Color.FromArgb(0xDD, 0x12, 0x14, 0x1A)),
@@ -211,11 +210,6 @@ public partial class MainWindow : Window
         var tile = new Border { Child = content };
         _ = LoadThumbnailAndPruneIfGlitchedAsync(file, thumbImage, tile);
 
-        
-        
-        
-        
-        
         var contextMenu = new ContextMenu { Style = (Style)FindResource("DarkContextMenu") };
         var openFolderItem = new MenuItem { Header = "Open file location", Style = (Style)FindResource("DarkMenuItem") };
         openFolderItem.Click += (_, _) => RevealInExplorerAndClose(file.FullName);
@@ -233,7 +227,6 @@ public partial class MainWindow : Window
 
         return tile;
     }
-
 
     private void BeginRecentClipRename(TextBlock title, FileInfo file)
     {
@@ -303,7 +296,6 @@ public partial class MainWindow : Window
         }
     }
 
-
     private void BeginRecentRemoteClipRename(TextBlock title, string relativePath, RemoteGalleryFile file)
     {
         if (title.Parent is not Panel parent)
@@ -371,8 +363,7 @@ public partial class MainWindow : Window
         }
     }
 
-
-        private async Task LoadThumbnailAndPruneIfGlitchedAsync(FileInfo file, Image thumbImage, Border tile)
+    private async Task LoadThumbnailAndPruneIfGlitchedAsync(FileInfo file, Image thumbImage, Border tile)
     {
         await LoadThumbnailAsync(file, thumbImage);
         if (TryGetCachedDurationMs(file) is < 2000)

@@ -51,17 +51,12 @@ public partial class MainWindow : Window
                 onAllow: () =>
                 {
                     _pairing.ApproveRequest(requestId);
-                    
-                    
-                    
-                    
+
                     RefreshShareClipsUi();
                 },
                 onDeny: () => _pairing.DenyRequest(requestId));
         });
-        
-        
-        
+
         _pairing.StartDiscoveryListener();
         if (_settings.ShareClipsEnabled)
         {
@@ -75,7 +70,6 @@ public partial class MainWindow : Window
         });
 
     }
-
 
     private void WireObsEvents()
     {
@@ -125,13 +119,7 @@ public partial class MainWindow : Window
         });
         _obs.StreamingStateChanged += active => Dispatcher.BeginInvoke(() =>
         {
-            
-            
-            
-            
-            
-            
-            
+
             if (active == _isStreaming)
                 return;
             _toastOverlay.ShowStreaming(active);
@@ -140,30 +128,16 @@ public partial class MainWindow : Window
             _statusOverlay.SetStreaming(active);
             UpdateStreamingBoxVisibility();
         });
-        
-        
-        
-        
+
         _obs.VirtualCamStateChanged += active => Dispatcher.BeginInvoke(() =>
         {
             _statusOverlay.SetVirtualCamActive(active);
         });
         _obs.EncoderOverloadDetected += info => Dispatcher.BeginInvoke(() =>
         {
-            
-            
-            
-            
+
             _lastEncoderOverloadEventUtc = DateTime.UtcNow;
 
-            
-            
-            
-            
-            
-            
-            
-            
             if (DateTime.UtcNow - _lastEncoderOverloadToastUtc < TimeSpan.FromSeconds(30))
                 return;
             _lastEncoderOverloadToastUtc = DateTime.UtcNow;
@@ -184,44 +158,26 @@ public partial class MainWindow : Window
             _toastOverlay.ShowEncoderOverload(summary);
             AppLog.Write($"Encoder overload detected: {summary}");
         });
-        
-        
-        
+
         async Task<string> ResolveRowLabelAsync(string key)
         {
             if (!_rowLabels.TryGetValue(key, out string? label))
             {
-                
-                
-                
-                
-                
-                
-                
-                
-                
-                
-                
-                
-                
+
                 await PrefetchRowLabelsAsync();
                 _rowLabels.TryGetValue(key, out label);
             }
             label ??= key;
-            return DisplayLabel(label); 
+            return DisplayLabel(label);
         }
 
-        
-        
-        
-        
         _obs.ReplaySaving += key => Dispatcher.BeginInvoke(async () =>
         {
             var replayRows = await _obs.ListReplayRowsAsync();
             var match = replayRows.FirstOrDefault(r => r.Key == key);
             if (match is not null && match.Status == 0)
             {
-                
+
                 return;
             }
             string label = await ResolveRowLabelAsync(key);
@@ -231,11 +187,6 @@ public partial class MainWindow : Window
         {
             string label = await ResolveRowLabelAsync(key);
 
-            
-            
-            
-            
-            
             if (!string.IsNullOrEmpty(path))
             {
                 string clipKey = Path.GetFileName(path);
@@ -297,7 +248,6 @@ public partial class MainWindow : Window
 
     }
 
-
     private void WireVlcAndPairingDelegates()
     {
         _pairing.GetRamDiskSnapshot = () => new RamDiskSnapshot(
@@ -305,35 +255,19 @@ public partial class MainWindow : Window
             RamDisk.IsMounted(_settings.RamDiskDriveLetter));
         _pairing.ApplyRamDiskSnapshot = ApplyRamDiskConfigAsync;
 
-        
-        
-        
         _pairing.EnsureThumbnailCachedForRemote = async fullPath => await EnsureThumbnailCachedAsync(new FileInfo(fullPath));
-        
-        
+
         _pairing.GetCachedDurationMsForRemote = fullPath => TryGetCachedDurationMs(new FileInfo(fullPath));
-        
-        
-        
+
         _pairing.TrimClipForRemote = TrimClipForRemoteAsync;
         _pairing.CompressClipForRemote = CompressClipForRemoteHostAsync;
 
         AudioCues.IsRemoteModeActive = () => _settings.ObsIsRemote && !string.IsNullOrEmpty(_settings.PairedPeerSecret);
         AudioCues.RemoteCuePlayer = (cue, vol) => _pairing.SendPlayAudioCueAsync(cue, vol);
 
-        
-        
-        
-        
-        
-        
-        
         _pairing.CheckAndApplyPluginUpdatesRemotely = async () =>
         {
-            
-            
-            
-            
+
             PluginVersionInfo replaySlider = await await Dispatcher.InvokeAsync(() =>
                 CheckAndApplyPluginUpdateAsync("obs-replay-slider", "Replay Slider", "replay-slider.dll", ReplaySliderStatusDot, ReplaySliderVersionText,
                     name => name.Contains("windows", StringComparison.OrdinalIgnoreCase) && name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase),
@@ -350,22 +284,12 @@ public partial class MainWindow : Window
 
     }
 
-
     private void SetupTimersAndWindow()
     {
         _pollTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
         _pollTimer.Tick += async (_, _) =>
         {
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            
+
             if (_refreshStatusRunning)
                 return;
             _refreshStatusRunning = true;
@@ -382,14 +306,6 @@ public partial class MainWindow : Window
         _micTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
         _micTimer.Tick += (_, _) => _statusOverlay.SetMicStatus(_obs.GetMicStatus());
 
-        
-        
-        
-        
-        
-        
-        
-        
         _remoteSyncTimer = new DispatcherTimer { Interval = TimeSpan.FromMinutes(20) };
         _remoteSyncTimer.Tick += async (_, _) =>
         {
@@ -419,11 +335,6 @@ public partial class MainWindow : Window
             }
         };
 
-        
-        
-        
-        
-        
         _galleryFilterDebounceTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(250) };
         _galleryFilterDebounceTimer.Tick += (_, _) =>
         {
@@ -431,8 +342,6 @@ public partial class MainWindow : Window
             LoadGallery();
         };
 
-        
-        
         _freezeFrameTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(1000) };
         _freezeFrameTimer.Tick += (_, _) =>
         {
@@ -440,13 +349,6 @@ public partial class MainWindow : Window
             PlayerFreezeFramePopup.IsOpen = false;
         };
 
-        
-        
-        
-        
-        
-        
-        
         _volumePopupCloseDebounce = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(200) };
         _volumePopupCloseDebounce.Tick += (_, _) =>
         {
@@ -454,8 +356,6 @@ public partial class MainWindow : Window
             PlayerVolumePopup.IsOpen = false;
         };
 
-        
-        
         _actionFeedbackHideTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(650) };
         _actionFeedbackHideTimer.Tick += (_, _) =>
         {
@@ -464,28 +364,21 @@ public partial class MainWindow : Window
             fadeOut.Completed += (_, _) =>
             {
                 PlayerActionFeedbackPopup.IsOpen = false;
-                PlayerActionFeedbackBorder.Opacity = 1; 
+                PlayerActionFeedbackBorder.Opacity = 1;
             };
             PlayerActionFeedbackBorder.BeginAnimation(OpacityProperty, fadeOut);
         };
 
-        
-        
-        
         IntPtr hwnd = new WindowInteropHelper(this).EnsureHandle();
         Left = TargetScreenBounds.X + (TargetScreenBounds.Width - Width) / 2;
         Top = TargetScreenBounds.Y + CompactTop;
         Acrylic.TryEnableBlurBehind(hwnd, 16, 17, 19, 205);
-        
-        
-        
-        
+
         ToolWindow.Enable(hwnd);
 
         RegisterHotkeyFromSettings();
 
     }
-
 
     private void SetupTrayAndVlc()
     {
@@ -495,9 +388,7 @@ public partial class MainWindow : Window
         {
             if (!IsVisible) ToggleVisible();
             ShowScreen(Screen.Settings);
-            
-            
-            
+
             SettingsScrollHost.ScrollToTop();
         });
         _trayManager.OnOpenClipsFolderRequested += () => Dispatcher.BeginInvoke(() =>
@@ -514,38 +405,15 @@ public partial class MainWindow : Window
         });
         _trayManager.OnQuitRequested += () => Dispatcher.BeginInvoke(() => Application.Current.Shutdown());
 
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
         SystemEvents.DisplaySettingsChanged += (_, _) => Dispatcher.BeginInvoke(RepositionAllForDisplayChange);
 
         try
         {
             LibVlc.Core.Initialize();
-            
-            
-            
-            
-            
-            
+
             _libVlc = new LibVlc.LibVLC("--no-video-title-show", "--avcodec-hw=none");
             AudioCues.Initialize();
 
-            
-            
-            
-            
-            
-            
             var thumbnailSink = new Window { Width = 2, Height = 2, WindowStyle = WindowStyle.None, ShowInTaskbar = false, Left = -10000, Top = -10000 };
             _thumbnailSinkHwnd = new WindowInteropHelper(thumbnailSink).EnsureHandle();
         }
@@ -558,13 +426,7 @@ public partial class MainWindow : Window
         _pollTimer?.Start();
         _micTimer?.Start();
         _remoteSyncTimer?.Start();
-        
-        
-        
-        
-        
-        
-        
+
         if (!string.IsNullOrEmpty(_settings.PairedPeerSecret))
         {
             _remoteSyncRunning = true;

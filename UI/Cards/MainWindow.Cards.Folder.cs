@@ -16,7 +16,7 @@ namespace Backtrack;
 
 public partial class MainWindow : Window
 {
-        private Border BuildFolderCard(string name, Action onOpen, bool leadsToNewest = false, string? targetFolderPath = null)
+    private Border BuildFolderCard(string name, Action onOpen, bool leadsToNewest = false, string? targetFolderPath = null)
     {
         var iconHost = new Border
         {

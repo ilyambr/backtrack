@@ -21,7 +21,7 @@ namespace Backtrack;
 
 public partial class MainWindow : Window
 {
-    private void PlayerSeekTrack_MouseEnter(object sender, MouseEventArgs e)
+    internal void PlayerSeekTrack_MouseEnter(object sender, MouseEventArgs e)
     {
         _isHoveringSeekTrack = true;
         PlayerSeekBg.Height = 8;
@@ -30,8 +30,7 @@ public partial class MainWindow : Window
         PlayerSeekThumb.Visibility = Visibility.Visible;
     }
 
-
-    private void PlayerSeekTrack_MouseLeave(object sender, MouseEventArgs e)
+    internal void PlayerSeekTrack_MouseLeave(object sender, MouseEventArgs e)
     {
         _isHoveringSeekTrack = false;
         if (!_isScrubbing)
@@ -44,16 +43,14 @@ public partial class MainWindow : Window
         }
     }
 
-
-    private void PlayerSeekTrack_MouseDown(object sender, MouseButtonEventArgs e)
+    internal void PlayerSeekTrack_MouseDown(object sender, MouseButtonEventArgs e)
     {
         _isScrubbing = true;
         PlayerSeekTrack.CaptureMouse();
         ProcessSeekInput(e.GetPosition(PlayerSeekTrack));
     }
 
-
-    private void PlayerSeekTrack_MouseMove(object sender, MouseEventArgs e)
+    internal void PlayerSeekTrack_MouseMove(object sender, MouseEventArgs e)
     {
         Point pos = e.GetPosition(PlayerSeekTrack);
         double trackWidth = PlayerSeekTrack.ActualWidth;
@@ -74,8 +71,7 @@ public partial class MainWindow : Window
         }
     }
 
-
-    private void PlayerSeekTrack_MouseUp(object sender, MouseButtonEventArgs e)
+    internal void PlayerSeekTrack_MouseUp(object sender, MouseButtonEventArgs e)
     {
         if (_isScrubbing)
         {
@@ -94,7 +90,6 @@ public partial class MainWindow : Window
             ProcessSeekInput(e.GetPosition(PlayerSeekTrack), immediate: true);
         }
     }
-
 
     private void ProcessSeekInput(Point mousePos, bool immediate = false)
     {
@@ -125,23 +120,11 @@ public partial class MainWindow : Window
         }
     }
 
-
-    
-    
-    
-    
-    
-    
     private void CommitSeek(long ms)
     {
         if (_vlcPlayer is null)
             return;
 
-        
-        
-        
-        
-        
         if (_playerHasEnded)
         {
             RestartEndedPlayback(ms);
@@ -153,7 +136,6 @@ public partial class MainWindow : Window
 
         _vlcPlayer.Time = ms;
     }
-
 
     private bool TryGetMarkersForCurrentClip(out List<double> markers)
     {
@@ -304,8 +286,6 @@ public partial class MainWindow : Window
         if (lengthMs <= 0)
             return;
 
-        
-        
         if (_previewLooping && _trimStart is not null && _trimEnd is not null && timeMs >= _trimEnd.Value.TotalMilliseconds)
             CommitSeek((long)_trimStart.Value.TotalMilliseconds);
 

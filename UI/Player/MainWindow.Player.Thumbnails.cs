@@ -21,17 +21,13 @@ namespace Backtrack;
 
 public partial class MainWindow : Window
 {
-        private async Task<string?> EnsureThumbnailCachedAsync(FileInfo file)
+    private async Task<string?> EnsureThumbnailCachedAsync(FileInfo file)
     {
         if (!file.Exists || file.Length == 0)
             return null;
 
         string cachePath = GetThumbnailCachePath(file);
-        
-        
-        
-        
-        
+
         bool durationCached = File.Exists(GetDurationCachePath(file));
         if (File.Exists(cachePath) && durationCached)
             return cachePath;
@@ -53,8 +49,7 @@ public partial class MainWindow : Window
         return File.Exists(cachePath) ? cachePath : null;
     }
 
-
-        private async Task PrewarmGalleryThumbnailsAsync()
+    private async Task PrewarmGalleryThumbnailsAsync()
     {
         if (_libVlc is null || !Directory.Exists(_settings.ClipsFolder))
             return;
@@ -66,7 +61,7 @@ public partial class MainWindow : Window
                 .Where(f => VideoExtensions.Contains(Path.GetExtension(f).ToLowerInvariant()))
                 .Select(f => new FileInfo(f))
                 .Where(f => f.Exists && f.Length > 0)
-                .OrderByDescending(f => f.LastWriteTime) 
+                .OrderByDescending(f => f.LastWriteTime)
                 .ToList();
         }
         catch
@@ -78,16 +73,9 @@ public partial class MainWindow : Window
             await EnsureThumbnailCachedAsync(file);
     }
 
-
     private async Task GenerateThumbnailAsync(FileInfo file, string cachePath)
     {
-        
-        
-        
-        
-        
-        
-        
+
         await Task.Run(() =>
         {
             try
@@ -107,10 +95,8 @@ public partial class MainWindow : Window
                     return;
                 }
 
-                
-                
                 try { File.WriteAllText(Path.ChangeExtension(cachePath, ".duration"), player.Length.ToString()); }
-                catch {  }
+                catch { }
 
                 long seekTarget = Math.Min(2000, Math.Max(player.Length / 4, 0));
                 if (seekTarget > 0)
@@ -125,7 +111,7 @@ public partial class MainWindow : Window
             }
             catch
             {
-                
+
                 try
                 {
                     string durPath = Path.ChangeExtension(cachePath, ".duration");

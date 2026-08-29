@@ -24,7 +24,6 @@ public partial class LogoOverlay : Window
         };
     }
 
-    /// <summary>Re-reads the configured display -- called again from Settings if the user changes which monitor Backtrack shows on mid-session.</summary>
     public void Reposition()
     {
         Rect bounds = DisplayMonitors.ResolveBoundsDiu(AppSettings.Load().DisplayDeviceName);
@@ -32,11 +31,6 @@ public partial class LogoOverlay : Window
         Top = bounds.Y + 20;
     }
 
-    /// <summary>
-    /// Shows the window, playing the ilyambr -> Backtrack crossfade only the
-    /// first time this is called since the app launched -- every later HUD open
-    /// this session just shows the Backtrack logo directly, already settled.
-    /// </summary>
     public void ShowWithIntro()
     {
         Show();
@@ -56,16 +50,9 @@ public partial class LogoOverlay : Window
     {
         var ease = new QuadraticEase();
 
-        // ilyambr: fades in by 12%, holds fully visible through 62%, then fades
-        // back out to hand off to the Backtrack logo. Opacity only -- no scale/
-        // zoom, since animating that on top of a large source image forced a
-        // re-rasterize every frame and was the actual cause of the choppiness.
         IlyambrLogo.BeginAnimation(UIElement.OpacityProperty, BuildTimeline(ease,
             (0, 0), (0.12, 1), (0.62, 1), (1.0, 0)));
 
-        // Backtrack: stays hidden until ilyambr starts its exit (58%), then fades
-        // in the rest of the way and holds there (BeginAnimation's default
-        // FillBehavior keeps the final keyframe's value once it finishes).
         BacktrackLogo.BeginAnimation(UIElement.OpacityProperty, BuildTimeline(ease,
             (0, 0), (0.58, 0), (1.0, 1)));
     }

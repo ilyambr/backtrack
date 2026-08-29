@@ -31,9 +31,6 @@ public partial class MainWindow : Window
 {
     private readonly OverlayLogWindow _overlayLog = new();
 
-
-    
-
     private void InitializeOverlayLog()
     {
         AppLog.Write("Backtrack started");
@@ -46,8 +43,7 @@ public partial class MainWindow : Window
         }
     }
 
-
-        private void RefreshOverlayLogVisibilityAndMode()
+    private void RefreshOverlayLogVisibilityAndMode()
     {
         if (!_settings.OverlayLogEnabled || !IsVisible)
         {
@@ -64,7 +60,6 @@ public partial class MainWindow : Window
             RefreshBacktrackModeLog();
     }
 
-
     private void RefreshBacktrackModeLog()
     {
         if (!_settings.OverlayLogEnabled || !IsVisible || _settings.OverlayLogMode != "Backtrack")
@@ -74,8 +69,7 @@ public partial class MainWindow : Window
         _overlayLog.SetBacktrackLines(lines);
     }
 
-
-        private void ShowObsModeMessage(string text)
+    private void ShowObsModeMessage(string text)
     {
         if (!_settings.OverlayLogEnabled || !IsVisible || _settings.OverlayLogMode == "Backtrack")
             return;
@@ -83,8 +77,7 @@ public partial class MainWindow : Window
         _obsLogClearAtUtc = DateTime.UtcNow.AddSeconds(5);
     }
 
-
-        private async Task RefreshObsModeLogAsync()
+    private async Task RefreshObsModeLogAsync()
     {
         if (!_obs.IsConnected)
         {
@@ -100,10 +93,7 @@ public partial class MainWindow : Window
             string? warning = ComputeObsOverloadWarning(stats);
             if (warning is not null)
             {
-                
-                
-                
-                
+
                 _lastEncoderOverloadEventUtc = DateTime.UtcNow;
             }
 
@@ -120,20 +110,18 @@ public partial class MainWindow : Window
             if (_obsLogClearAtUtc is DateTime clearAt)
             {
                 if (DateTime.UtcNow < clearAt)
-                    return; 
+                    return;
                 _obsLogClearAtUtc = null;
             }
             _overlayLog.SetObsLine("");
         }
         catch
         {
-            
-            
+
         }
     }
 
-
-    private void OverlayLogToggle_Click(object sender, RoutedEventArgs e)
+    internal void OverlayLogToggle_Click(object sender, RoutedEventArgs e)
     {
         _settings.OverlayLogEnabled = OverlayLogToggle.IsChecked == true;
         _settings.Save();
@@ -141,8 +129,7 @@ public partial class MainWindow : Window
         RefreshOverlayLogVisibilityAndMode();
     }
 
-
-    private void OverlayLogModeSelector_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    internal void OverlayLogModeSelector_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         _settings.OverlayLogMode = OverlayLogModeSelector.SelectedItem is ComboBoxItem { Tag: string tag } ? tag : "Obs";
         _settings.Save();

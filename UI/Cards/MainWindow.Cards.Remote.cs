@@ -22,7 +22,6 @@ public partial class MainWindow : Window
         var thumbGrid = new Grid();
         thumbGrid.Children.Add(thumbImage);
 
-        // Compression progress overlay
         var compressOverlay = new Grid
         {
             Background = new SolidColorBrush(Color.FromArgb(0xDD, 0x12, 0x14, 0x1A)),
@@ -174,7 +173,6 @@ public partial class MainWindow : Window
         return tile;
     }
 
-
     private Border BuildRemoteClipCard(RemoteGalleryFile file, bool isNewest = false)
     {
         var iconHost = new Border
@@ -184,11 +182,7 @@ public partial class MainWindow : Window
             Cursor = Cursors.Hand,
             ClipToBounds = true,
         };
-        
-        
-        
-        
-        
+
         var playGlyph = new System.Windows.Shapes.Path
         {
             Data = Geometry.Parse("M8,5.14V19.14L19,12.14L8,5.14Z"),
@@ -241,7 +235,6 @@ public partial class MainWindow : Window
         iconGrid.Children.Add(thumbImage);
         iconGrid.Children.Add(starButton);
 
-        // Compression progress overlay
         var compressOverlay = new Grid
         {
             Background = new SolidColorBrush(Color.FromArgb(0xDD, 0x12, 0x14, 0x1A)),
@@ -344,10 +337,7 @@ public partial class MainWindow : Window
             Cursor = Cursors.IBeam,
         };
         double mb = file.Size / (1024.0 * 1024.0);
-        
-        
-        
-        
+
         DateTime modified = file.Modified.ToLocalTime();
         string dateText = modified.Date == DateTime.Today ? modified.ToString("h:mm tt") : modified.ToString("MMM d, h:mm tt");
         var sub = new TextBlock
@@ -365,10 +355,6 @@ public partial class MainWindow : Window
 
         var card = new Border { Width = 210, Child = content };
 
-        
-        
-        
-        
         _ = LoadRemoteThumbnailAsync(relativePath, file, thumbImage);
 
         Point? dragStart = null;
@@ -440,8 +426,7 @@ public partial class MainWindow : Window
         return card;
     }
 
-
-        private void BeginRenameRemote(Border card, TextBlock title, string relativePath, RemoteGalleryFile file)
+    private void BeginRenameRemote(Border card, TextBlock title, string relativePath, RemoteGalleryFile file)
     {
         if (title.Parent is not Panel parent)
             return;

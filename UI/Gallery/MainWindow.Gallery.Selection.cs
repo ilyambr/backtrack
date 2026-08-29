@@ -30,7 +30,6 @@ public partial class MainWindow : Window
         RefreshGallerySelectionUi();
     }
 
-
     private void RefreshGallerySelectionUi()
     {
         int count = _selectedClipPaths.Count;
@@ -43,11 +42,6 @@ public partial class MainWindow : Window
             circle.Background = selected ? (Brush)FindResource("Green") : new SolidColorBrush(Color.FromArgb(0x40, 0xFF, 0xFF, 0xFF));
             circle.BorderBrush = selected ? (Brush)FindResource("Green") : (Brush)FindResource("Text0");
 
-            
-            
-            
-            
-            
             if (count > 0)
                 circle.Visibility = Visibility.Visible;
             else if (!thumb.IsMouseOver)
@@ -55,15 +49,13 @@ public partial class MainWindow : Window
         }
     }
 
-
-    private void CancelSelection_Click(object sender, RoutedEventArgs e)
+    internal void CancelSelection_Click(object sender, RoutedEventArgs e)
     {
         _selectedClipPaths.Clear();
         RefreshGallerySelectionUi();
     }
 
-
-    private void DeleteSelected_Click(object sender, RoutedEventArgs e)
+    internal void DeleteSelected_Click(object sender, RoutedEventArgs e)
     {
         List<FileInfo> targets = _galleryCardSelection
             .Where(c => _selectedClipPaths.Contains(c.File.FullName))
@@ -88,7 +80,6 @@ public partial class MainWindow : Window
             }
         });
     }
-
 
     internal void MoveClipsToFolder(IEnumerable<string> filePaths, string destination)
     {
@@ -154,7 +145,7 @@ public partial class MainWindow : Window
         await LoadRemoteGalleryAsync();
     }
 
-    private void MoveSelected_Click(object sender, RoutedEventArgs e)
+    internal void MoveSelected_Click(object sender, RoutedEventArgs e)
     {
         List<FileInfo> targets = _galleryCardSelection
             .Where(c => _selectedClipPaths.Contains(c.File.FullName))
@@ -170,7 +161,6 @@ public partial class MainWindow : Window
         string destination = dialog.FolderName;
         MoveClipsToFolder(targets.Select(t => t.FullName), destination);
     }
-
 
     private void DeleteClip(FileInfo file, Border card)
     {

@@ -128,7 +128,6 @@ public class SystemTrayManager : IDisposable
                 g.Clear(System.Drawing.Color.Transparent);
             }
 
-            // Green / Red dot in bottom-right corner
             int dotSize = 10;
             int dotX = size - dotSize - 1;
             int dotY = size - dotSize - 1;
@@ -197,7 +196,6 @@ public class SystemTrayManager : IDisposable
             Style = contextMenuStyle
         };
 
-        // OBS Status Header Item
         var obsHeader = new System.Windows.Controls.MenuItem
         {
             Header = _obsConnected ? "OBS Connected" : "OBS Disconnected",
@@ -208,12 +206,10 @@ public class SystemTrayManager : IDisposable
         menu.Items.Add(obsHeader);
         menu.Items.Add(new System.Windows.Controls.Separator { Style = separatorStyle });
 
-        // Open Backtrack HUD
         var openHudItem = new System.Windows.Controls.MenuItem { Header = "Open Backtrack HUD", Style = menuItemStyle };
         openHudItem.Click += (_, _) => OnOpenHudRequested?.Invoke();
         menu.Items.Add(openHudItem);
 
-        // Toggle Status Overlay
         var toggleOverlayItem = new System.Windows.Controls.MenuItem
         {
             Header = _statusOverlayVisible ? "Hide Status Overlay" : "Show Status Overlay",
@@ -222,19 +218,16 @@ public class SystemTrayManager : IDisposable
         toggleOverlayItem.Click += (_, _) => OnToggleStatusOverlayRequested?.Invoke();
         menu.Items.Add(toggleOverlayItem);
 
-        // Open Clips Folder
         var openClipsItem = new System.Windows.Controls.MenuItem { Header = "Open Clips Folder", Style = menuItemStyle };
         openClipsItem.Click += (_, _) => OnOpenClipsFolderRequested?.Invoke();
         menu.Items.Add(openClipsItem);
 
-        // Settings
         var settingsItem = new System.Windows.Controls.MenuItem { Header = "Settings...", Style = menuItemStyle };
         settingsItem.Click += (_, _) => OnOpenSettingsRequested?.Invoke();
         menu.Items.Add(settingsItem);
 
         menu.Items.Add(new System.Windows.Controls.Separator { Style = separatorStyle });
 
-        // Quit
         var quitItem = new System.Windows.Controls.MenuItem { Header = "Quit Backtrack", Style = menuItemStyle };
         quitItem.Click += (_, _) => OnQuitRequested?.Invoke();
         menu.Items.Add(quitItem);
