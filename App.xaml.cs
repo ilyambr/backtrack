@@ -171,6 +171,10 @@ public partial class App : Application
             ?.Substring("--updated=".Length);
         if (!string.IsNullOrEmpty(updatedVersion))
         {
+            var settings = AppSettings.Load();
+            settings.LastAppliedBacktrackReleaseAt = DateTimeOffset.UtcNow;
+            settings.LastAppliedBacktrackDigest = null;
+            settings.Save();
             Dispatcher.BeginInvoke(() => _toasts.ShowUpdateApplied("Backtrack", updatedVersion), DispatcherPriority.Loaded);
         }
 

@@ -1,4 +1,4 @@
-﻿<Window x:Class="Backtrack.ScrimOverlay"
+<Window x:Class="Backtrack.ScrimOverlay"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="Backtrack"
@@ -9,6 +9,9 @@
         ShowInTaskbar="False"
         ResizeMode="NoResize"
         Visibility="Hidden"
+        AllowDrop="True"
+        DragEnter="Scrim_DragEnter"
+        DragOver="Scrim_DragOver"
         MouseDown="Scrim_MouseDown">
     <!--
       Sits behind MainWindow, in front of everything else, whenever the HUD is

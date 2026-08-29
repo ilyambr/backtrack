@@ -26,6 +26,15 @@
              DynamicResource now, not StaticResource; that's what makes the
              swap actually repaint this window instead of needing a restart. -->
 
+        <Style TargetType="ScrollViewer">
+            <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+            <Setter Property="Focusable" Value="False"/>
+        </Style>
+        <Style TargetType="WrapPanel">
+            <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+            <Setter Property="Focusable" Value="False"/>
+        </Style>
+
         <Style x:Key="TileButton" TargetType="Button">
             <Setter Property="Background" Value="Transparent"/>
             <Setter Property="BorderThickness" Value="0"/>
@@ -632,8 +641,8 @@
             <DockPanel x:Name="GalleryPanel" Visibility="Collapsed" Margin="16,14,16,16">
                 <Grid DockPanel.Dock="Top" Margin="0,0,0,12">
                     <Grid.ColumnDefinitions>
-                        <ColumnDefinition/>
-                        <ColumnDefinition Width="220"/>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="*"/>
                     </Grid.ColumnDefinitions>
                     <StackPanel Orientation="Horizontal">
                         <Grid Style="{StaticResource BackButtonHost}" MouseLeftButtonUp="BackToIdle_Click">
@@ -644,31 +653,6 @@
                     </StackPanel>
 
                     <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
-                        <!-- Starred Only Filter Toggle -->
-                        <ToggleButton x:Name="GalleryStarredFilterButton" ToolTip="Filter Starred Clips" Margin="0,0,8,0" Padding="10,6"
-                                      Background="{DynamicResource BorderSubtle}" Foreground="{DynamicResource Text1}" BorderThickness="0"
-                                      Cursor="Hand" Focusable="False" Click="GalleryStarredFilter_Click">
-                            <ToggleButton.Template>
-                                <ControlTemplate TargetType="ToggleButton">
-                                    <Border x:Name="Brd" Background="{TemplateBinding Background}" CornerRadius="4" Padding="{TemplateBinding Padding}">
-                                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                                            <TextBlock Text="★" FontSize="12" Foreground="#FFD700" Margin="0,0,5,0" VerticalAlignment="Center"/>
-                                            <TextBlock Text="Starred" FontSize="11" FontWeight="Bold" Foreground="{TemplateBinding Foreground}" VerticalAlignment="Center"/>
-                                        </StackPanel>
-                                    </Border>
-                                    <ControlTemplate.Triggers>
-                                        <Trigger Property="IsChecked" Value="True">
-                                            <Setter TargetName="Brd" Property="Background" Value="{DynamicResource BorderMedium}"/>
-                                            <Setter Property="Foreground" Value="{DynamicResource Text0}"/>
-                                        </Trigger>
-                                        <Trigger Property="IsMouseOver" Value="True">
-                                            <Setter TargetName="Brd" Property="Background" Value="{DynamicResource RowHoverBg}"/>
-                                        </Trigger>
-                                    </ControlTemplate.Triggers>
-                                </ControlTemplate>
-                            </ToggleButton.Template>
-                        </ToggleButton>
-
                         <!-- Sort / Filter Selector -->
                         <ComboBox x:Name="GallerySortComboBox" Width="140" Margin="0,0,8,0"
                                   Style="{StaticResource ModernComboBox}" SelectionChanged="GallerySortComboBox_SelectionChanged">
@@ -700,8 +684,9 @@
 
                 <!-- Folder breadcrumb -->
                 <StackPanel x:Name="GalleryPathBar" DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,12" Visibility="Collapsed">
-                    <Grid Style="{StaticResource BackButtonHost}" MouseLeftButtonUp="GalleryUp_Click" ToolTip="Up one folder">
-                        <Ellipse Fill="{DynamicResource BorderSubtle}"/>
+                    <Grid x:Name="GalleryBackButtonHost" Style="{StaticResource BackButtonHost}" MouseLeftButtonUp="GalleryUp_Click" ToolTip="Up one folder"
+                          AllowDrop="True" DragEnter="GalleryBackButton_DragEnter" DragOver="GalleryBackButton_DragOver" DragLeave="GalleryBackButton_DragLeave" Drop="GalleryBackButton_Drop">
+                        <Ellipse x:Name="GalleryBackButtonBg" Fill="{DynamicResource BorderSubtle}"/>
                         <TextBlock Style="{StaticResource BackButtonGlyph}"/>
                     </Grid>
                     <TextBlock x:Name="GalleryPathText" FontSize="11" Foreground="{DynamicResource Text2}" VerticalAlignment="Center"/>
@@ -746,8 +731,10 @@
                     </Grid>
                 </Border>
 
-                <ScrollViewer x:Name="GalleryScrollHost" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-                    <WrapPanel x:Name="GalleryGrid" ItemWidth="240" ItemHeight="168"/>
+                <ScrollViewer x:Name="GalleryScrollHost" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
+                              Focusable="False" FocusVisualStyle="{x:Null}"
+                              AllowDrop="True" DragEnter="GalleryScrollHost_DragEnter" DragOver="GalleryScrollHost_DragOver" Drop="GalleryScrollHost_Drop">
+                    <WrapPanel x:Name="GalleryGrid" ItemWidth="240" ItemHeight="168" Focusable="False" FocusVisualStyle="{x:Null}"/>
                 </ScrollViewer>
             </DockPanel>
 
@@ -763,8 +750,8 @@
                                 <Border x:Name="TrimTrackBg" Height="34" CornerRadius="4" Background="{DynamicResource SeekTrackBg}" VerticalAlignment="Center"/>
                                 <Border x:Name="TrimSelectedRange" Height="34" CornerRadius="4" Background="{DynamicResource Accent}" Opacity="0.35"
                                         HorizontalAlignment="Left" VerticalAlignment="Center" Width="0" IsHitTestVisible="False"/>
-                                <Canvas x:Name="TrimMarkerCanvas" Height="40" VerticalAlignment="Center" IsHitTestVisible="False"/>
-                                <Border x:Name="TrimPlayhead" Width="2" Height="40" Background="#FFFFFF"
+                                <Canvas x:Name="TrimMarkerCanvas" Height="34" VerticalAlignment="Center" IsHitTestVisible="False"/>
+                                <Border x:Name="TrimPlayhead" Width="2" Height="34" CornerRadius="1" Background="#FFFFFF"
                                         HorizontalAlignment="Left" VerticalAlignment="Center" IsHitTestVisible="False"/>
                                 <Border x:Name="TrimStartHandle" Width="10" Height="34" CornerRadius="3" Background="{DynamicResource Accent}"
                                         HorizontalAlignment="Left" VerticalAlignment="Center" Cursor="SizeWE" MouseDown="TrimStartHandle_MouseDown">
@@ -977,12 +964,12 @@
                                         <TextBlock Text="Compress" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource Text1}" HorizontalAlignment="Center"/>
                                     </StackPanel>
                                 </Button>
-                                <Button Style="{StaticResource PlayerActionTileButton}" Margin="2" Click="PlayerAddBookmark_Click">
+                                <Button Style="{StaticResource PlayerActionTileButton}" Margin="2" Click="PlayerBookmarks_Click">
                                     <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
                                         <!-- Bookmark icon -->
                                         <Path Data="M17,3H7c-1.1,0 -1.99,0.9 -1.99,2L5,21l7,-3 7,3V5c0,-1.1 -0.9,-2 -2,-2z"
                                               Fill="{DynamicResource Text1}" Width="15" Height="15" Stretch="Uniform" HorizontalAlignment="Center" Margin="0,0,0,4"/>
-                                        <TextBlock Text="Bookmark" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource Text1}" HorizontalAlignment="Center"/>
+                                        <TextBlock Text="Bookmarks" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource Text1}" HorizontalAlignment="Center"/>
                                     </StackPanel>
                                 </Button>
                                 <Button Style="{StaticResource PlayerActionTileButton}" Margin="2" Click="PlayerFolder_Click">
@@ -1049,39 +1036,101 @@
 
                 <!-- Floating Compress Dialog Popup -->
                 <Popup x:Name="CompressPopup" PlacementTarget="{Binding ElementName=PlayerMenuPill}" Placement="Bottom"
-                       HorizontalOffset="-230" VerticalOffset="8" AllowsTransparency="True" StaysOpen="False" Focusable="True" IsOpen="False">
+                       HorizontalOffset="-230" VerticalOffset="8" AllowsTransparency="True" StaysOpen="True" Focusable="False" IsOpen="False">
                     <Border Background="{DynamicResource PanelBgOpaque}" BorderBrush="{DynamicResource Hairline}" BorderThickness="1"
                             Padding="14" Width="260">
                         <Border.Effect>
                             <DropShadowEffect BlurRadius="16" ShadowDepth="3" Color="Black" Opacity="0.6"/>
                         </Border.Effect>
                         <StackPanel>
-                            <TextBlock Text="Compress Clip" FontWeight="Bold" FontSize="13" Foreground="{DynamicResource Text0}" Margin="0,0,0,10"/>
+                            <Grid Margin="0,0,0,10">
+                                <TextBlock Text="Compress Clip" FontWeight="Bold" FontSize="13" Foreground="{DynamicResource Text0}" VerticalAlignment="Center"/>
+                                <Button Style="{StaticResource BareIconButton}" HorizontalAlignment="Right" Padding="4,2" Click="CloseCompressPopup_Click" ToolTip="Close">
+                                    <Path Data="M19,6.41L17.59,5 12,10.59 6.41,5 5,6.41 10.59,12 5,17.59 6.41,19 12,13.41 17.59,19 19,17.59 13.41,12z"
+                                          Fill="{DynamicResource Text2}" Width="10" Height="10" Stretch="Uniform"/>
+                                </Button>
+                            </Grid>
                             <TextBlock Text="Choose target file size:" FontSize="11" Foreground="{DynamicResource Text2}" Margin="0,0,0,8"/>
                             
                             <!-- Preset Buttons Grid -->
-                            <UniformGrid Columns="3" Margin="0,0,0,10">
-                                <Button Content="10 MB" Style="{StaticResource FlatButton}" Margin="2" Padding="4,6" Click="CompressPreset_Click" Tag="10"/>
-                                <Button Content="25 MB" Style="{StaticResource FlatButton}" Margin="2" Padding="4,6" Click="CompressPreset_Click" Tag="25" ToolTip="Discord Standard"/>
-                                <Button Content="50 MB" Style="{StaticResource FlatButton}" Margin="2" Padding="4,6" Click="CompressPreset_Click" Tag="50" ToolTip="Discord Nitro Basic"/>
-                                <Button Content="100 MB" Style="{StaticResource FlatButton}" Margin="2" Padding="4,6" Click="CompressPreset_Click" Tag="100"/>
-                                <Button Content="250 MB" Style="{StaticResource FlatButton}" Margin="2" Padding="4,6" Click="CompressPreset_Click" Tag="250"/>
+                            <UniformGrid x:Name="CompressPresetsGrid" Columns="3" Margin="0,0,0,8">
+                                <Button x:Name="CompressPreset10" Content="10 MB" Style="{StaticResource FlatButton}" Margin="2" Padding="4,6" Click="CompressPreset_Click" Tag="10"/>
+                                <Button x:Name="CompressPreset25" Content="25 MB" Style="{StaticResource FlatButton}" Margin="2" Padding="4,6" Click="CompressPreset_Click" Tag="25" ToolTip="Discord Standard"/>
+                                <Button x:Name="CompressPreset50" Content="50 MB" Style="{StaticResource FlatButton}" Margin="2" Padding="4,6" Click="CompressPreset_Click" Tag="50" ToolTip="Discord Nitro Basic"/>
+                                <Button x:Name="CompressPreset100" Content="100 MB" Style="{StaticResource FlatButton}" Margin="2" Padding="4,6" Click="CompressPreset_Click" Tag="100"/>
+                                <Button x:Name="CompressPreset250" Content="250 MB" Style="{StaticResource FlatButton}" Margin="2" Padding="4,6" Click="CompressPreset_Click" Tag="250"/>
                                 <Button x:Name="CompressCustomButton" Content="Custom" Style="{StaticResource FlatButton}" Margin="2" Padding="4,6" Click="CompressCustomButton_Click"/>
                             </UniformGrid>
 
                             <!-- Custom Size Input Row -->
-                            <Grid x:Name="CompressCustomRow" Visibility="Collapsed" Margin="0,0,0,10">
+                            <Grid x:Name="CompressCustomRow" Visibility="Collapsed" Margin="0,0,0,8">
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="*"/>
                                     <ColumnDefinition Width="Auto"/>
                                 </Grid.ColumnDefinitions>
                                 <TextBox x:Name="CompressCustomMbBox" Background="{DynamicResource RowBg}" Foreground="{DynamicResource Text0}"
                                          Padding="8,5" BorderThickness="0" Text="15"/>
-                                <Button Grid.Column="1" Content="Go" Style="{StaticResource FlatButton}" Margin="6,0,0,0" Padding="10,5"
-                                        Click="CompressCustomExecute_Click"/>
+                                <TextBlock Grid.Column="1" Text="MB" FontSize="11.5" FontWeight="SemiBold" Foreground="{DynamicResource Text1}" VerticalAlignment="Center" Margin="6,0,0,0"/>
                             </Grid>
 
-                            <TextBlock x:Name="CompressStatusText" Text="" FontSize="11" Foreground="{DynamicResource Accent}" TextWrapping="Wrap" Margin="0,2,0,0"/>
+                            <!-- Action Buttons: Replace & Save New -->
+                            <Grid Margin="0,4,0,0">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <Button x:Name="CompressReplaceButton" Grid.Column="0" Style="{StaticResource FlatButton}" Margin="0,0,3,0" Padding="4,7" Click="CompressReplace_Click"
+                                        ToolTip="Compress and replace original clip">
+                                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                                        <Path Data="M17,3H5c-1.11,0 -2,0.9 -2,2v14c0,1.1 0.89,2 2,2h14c1.1,0 2,-0.9 2,-2V7l-4,-4zm-5,16c-1.66,0 -3,-1.34 -3,-3s1.34,-3 3,-3 3,1.34 3,3 -1.34,3 -3,3zm3,-10H5V5h10v4z"
+                                              Fill="{DynamicResource Text0}" Width="12" Height="12" Stretch="Uniform" Margin="0,0,4,0" VerticalAlignment="Center"/>
+                                        <TextBlock Text="Replace" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource Text0}" VerticalAlignment="Center"/>
+                                    </StackPanel>
+                                </Button>
+                                <Button x:Name="CompressSaveNewButton" Grid.Column="1" Style="{StaticResource FlatButton}" Margin="3,0,0,0" Padding="4,7" Click="CompressSaveNew_Click"
+                                        ToolTip="Compress and save as new clip">
+                                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                                        <Path Data="M16,1H4c-1.1,0 -2,0.9 -2,2v14h2V3h12V1zm3,4H8c-1.1,0 -2,0.9 -2,2v14c0,1.1 0.9,2 2,2h11c1.1,0 2,-0.9 2,-2V7c0,-1.1 -0.9,-2 -2,-2zm0,16H8V7h11V21z"
+                                              Fill="{DynamicResource Text0}" Width="12" Height="12" Stretch="Uniform" Margin="0,0,4,0" VerticalAlignment="Center"/>
+                                        <TextBlock Text="Save New" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource Text0}" VerticalAlignment="Center"/>
+                                    </StackPanel>
+                                </Button>
+                            </Grid>
+
+                            <TextBlock x:Name="CompressStatusText" Text="" FontSize="11" Foreground="{DynamicResource Accent}" TextWrapping="Wrap" Margin="0,4,0,0"/>
+                        </StackPanel>
+                    </Border>
+                </Popup>
+
+                <!-- Floating Bookmarks Dialog Popup -->
+                <Popup x:Name="BookmarkPopup" PlacementTarget="{Binding ElementName=PlayerMenuPill}" Placement="Bottom"
+                       HorizontalOffset="-230" VerticalOffset="8" AllowsTransparency="True" StaysOpen="True" Focusable="False" IsOpen="False">
+                    <Border Background="{DynamicResource PanelBgOpaque}" BorderBrush="{DynamicResource Hairline}" BorderThickness="1"
+                            Padding="14" Width="260" MaxHeight="340">
+                        <Border.Effect>
+                            <DropShadowEffect BlurRadius="16" ShadowDepth="3" Color="Black" Opacity="0.6"/>
+                        </Border.Effect>
+                        <StackPanel>
+                            <Grid Margin="0,0,0,10">
+                                <TextBlock Text="Bookmarks" FontWeight="Bold" FontSize="13" Foreground="{DynamicResource Text0}" VerticalAlignment="Center"/>
+                                <Button Style="{StaticResource BareIconButton}" HorizontalAlignment="Right" Padding="4,2" Click="CloseBookmarkPopup_Click" ToolTip="Close">
+                                    <Path Data="M19,6.41L17.59,5 12,10.59 6.41,5 5,6.41 10.59,12 5,17.59 6.41,19 12,13.41 17.59,19 19,17.59 13.41,12z"
+                                          Fill="{DynamicResource Text2}" Width="10" Height="10" Stretch="Uniform"/>
+                                </Button>
+                            </Grid>
+
+                            <Button x:Name="AddBookmarkDialogButton" Style="{StaticResource FlatButton}" Margin="0,0,0,10" Padding="8,7" Click="AddBookmarkDialogButton_Click">
+                                <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                                    <Path Data="M19,13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z" Fill="{DynamicResource Text0}" Width="12" Height="12" Stretch="Uniform" Margin="0,0,6,0" VerticalAlignment="Center"/>
+                                    <TextBlock Text="Add Bookmark" FontSize="11.5" FontWeight="SemiBold" Foreground="{DynamicResource Text0}" VerticalAlignment="Center"/>
+                                </StackPanel>
+                            </Button>
+
+                            <Border BorderBrush="{DynamicResource Hairline}" BorderThickness="0,1,0,0" Margin="0,2,0,8"/>
+
+                            <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" MaxHeight="190">
+                                <StackPanel x:Name="BookmarkListContainer"/>
+                            </ScrollViewer>
                         </StackPanel>
                     </Border>
                 </Popup>

@@ -22,6 +22,8 @@ public partial class ScrimOverlay : Window
     private static extern int SetWindowLong(IntPtr hwnd, int index, int newStyle);
 
     public event Action? Dismissed;
+    public event Action? DragEntered;
+    public event Action<Point>? DragHovered;
 
     public ScrimOverlay()
     {
@@ -86,6 +88,20 @@ public partial class ScrimOverlay : Window
         if (DateTime.UtcNow < _ignoreClicksUntilUtc)
             return;
         Dismissed?.Invoke();
+    }
+
+    private void Scrim_DragEnter(object sender, DragEventArgs e)
+    {
+        DragEntered?.Invoke();
+        if (NativeMethods.GetCursorPos(out var pt))
+            DragHovered?.Invoke(new Point(pt.X, pt.Y));
+    }
+
+    private void Scrim_DragOver(object sender, DragEventArgs e)
+    {
+        DragEntered?.Invoke();
+        if (NativeMethods.GetCursorPos(out var pt))
+            DragHovered?.Invoke(new Point(pt.X, pt.Y));
     }
 
     /// <summary>

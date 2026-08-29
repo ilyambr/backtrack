@@ -66,11 +66,7 @@ public partial class ToastOverlay : Window
 
     public void ShowRecording(bool started, string? resolvedPath)
     {
-        if (started)
-        {
-            AudioCues.PlayRecordingStarted();
-        }
-        else
+        if (!started)
         {
             AudioCues.PlayRecordingSaved();
         }
@@ -166,6 +162,22 @@ public partial class ToastOverlay : Window
             VerticalAlignment = VerticalAlignment.Top,
         };
         Show(icon, Green, "Trim Saved", resolvedPath is null ? null : $"Saved at '{resolvedPath}'", truncateSubMessage: true);
+    }
+
+    public void ShowCompressSaved(string? resolvedPath)
+    {
+        AudioCues.PlayClipSaved();
+        var icon = new Path
+        {
+            Data = Geometry.Parse("M19,9h-4V3H9v6H5l7,7 7,-7zM5,18v2h14v-2H5z"),
+            Fill = Green,
+            Width = 14,
+            Height = 14,
+            Stretch = Stretch.Uniform,
+            Margin = new Thickness(0, 1, 10, 0),
+            VerticalAlignment = VerticalAlignment.Top,
+        };
+        Show(icon, Green, "Compression Saved", resolvedPath is null ? null : $"Saved at '{resolvedPath}'", truncateSubMessage: true);
     }
 
     // Keyed by row key, not label -- CompleteProcessingClip needs to find the

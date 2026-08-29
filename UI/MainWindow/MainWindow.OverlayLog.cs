@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
@@ -39,8 +39,11 @@ public partial class MainWindow : Window
         AppLog.Write("Backtrack started");
         AppLog.Changed += () => Dispatcher.BeginInvoke(RefreshBacktrackModeLog);
 
-        _obsStatsTimer.Tick += async (_, _) => await RefreshObsModeLogAsync();
-        _obsStatsTimer.Start();
+        if (_obsStatsTimer != null)
+        {
+            _obsStatsTimer.Tick += async (_, _) => await RefreshObsModeLogAsync();
+            _obsStatsTimer.Start();
+        }
     }
 
 

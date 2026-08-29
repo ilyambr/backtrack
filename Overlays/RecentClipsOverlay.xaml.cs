@@ -15,6 +15,7 @@ public partial class RecentClipsOverlay : Window
     public RecentClipsOverlay()
     {
         InitializeComponent();
+        ShellDragHelper.EnableDropPreview(this, this);
         // No ClickThrough.Enable here -- see the XAML's own comment on why
         // this one, unlike StreamingStatusOverlay, needs to stay interactive.
         Loaded += (_, _) => ToolWindow.Enable(new WindowInteropHelper(this).Handle);

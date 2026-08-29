@@ -81,7 +81,7 @@ public static class AudioCues
 
     public static void PlayRecordingStarted()
     {
-        PlayCue("recording_started", _recStartedWav, "ps3-game-startup-chime.wav", "ps3-game-startup-chime.mp3");
+        // Sound removed as requested
     }
 
     public static void PlayRecordingSaved()

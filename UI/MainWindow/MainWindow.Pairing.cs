@@ -191,4 +191,58 @@ public partial class MainWindow : Window
         return new Border { BorderBrush = (Brush)FindResource("Hairline"), BorderThickness = new Thickness(0, 1, 0, 0), Padding = new Thickness(0, 8, 0, 8), Child = row };
     }
 
+
+        private async void ManualPairButton_Click(object sender, RoutedEventArgs e)
+    {
+        string input = ManualPairAddressBox.Text.Trim();
+        if (string.IsNullOrEmpty(input))
+        {
+            ManualPairStatusText.Text = "Enter an address first.";
+            return;
+        }
+
+        string address = input;
+        int port = PairingService.DefaultPairingPort;
+        int colonIndex = input.LastIndexOf(':');
+        if (colonIndex > 0 && int.TryParse(input[(colonIndex + 1)..], out int parsedPort))
+        {
+            address = input[..colonIndex];
+            port = parsedPort;
+        }
+
+        var peer = new DiscoveredPeer(DeviceId: "manual", DeviceName: address, Address: address, PairingPort: port, LastSeen: DateTime.UtcNow);
+
+        ManualPairButton.IsEnabled = false;
+        var cts = new CancellationTokenSource(TimeSpan.FromSeconds(70));
+        try
+        {
+            PairingResult result = await _pairing.RequestPairingAsync(peer,
+                onCodeReceived: code => Dispatcher.BeginInvoke(() => ManualPairStatusText.Text = $"Code: {code}, waiting for approval..."),
+                cts.Token);
+
+            switch (result.Outcome)
+            {
+                case PairingOutcome.Approved:
+                    ManualPairStatusText.Text = "Paired!";
+                    RefreshPairingStatusUi();
+                    RenderDiscoveredDevices();
+                    return;
+                case PairingOutcome.Denied:
+                    ManualPairStatusText.Text = string.IsNullOrEmpty(result.Error) ? "Request denied." : result.Error;
+                    break;
+                case PairingOutcome.TimedOut:
+                    ManualPairStatusText.Text = "Request timed out. Check the address and that the other PC has \"Share my clips\" on.";
+                    break;
+                default:
+                    ManualPairStatusText.Text = $"Failed: {result.Error}";
+                    break;
+            }
+        }
+        finally
+        {
+            ManualPairButton.IsEnabled = true;
+        }
+    }
+
+
 }

@@ -4,8 +4,6 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Text;
-using System.Text.RegularExpressions;
-using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
@@ -13,17 +11,13 @@ using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
-using System.Windows.Media.Animation;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using Backtrack.Core;
 using Backtrack.Interop;
 using Backtrack.Obs;
 using Backtrack.Pairing;
-using Backtrack.Streaming;
-using Backtrack.Updates;
 using Microsoft.Win32;
-using LibVlc = LibVLCSharp.Shared;
 
 namespace Backtrack;
 
@@ -31,18 +25,9 @@ public partial class MainWindow : Window
 {
     private string GalleryFolder => _currentGalleryFolder ?? _settings.ClipsFolder;
 
-    private void GalleryStarredFilter_Click(object sender, RoutedEventArgs e)
-    {
-        if (_settings is null) return;
-        _settings.GalleryStarredOnly = GalleryStarredFilterButton.IsChecked == true;
-        _settings.Save();
-        LoadGallery();
-    }
-
     private void SyncGalleryToolbarUi()
     {
-        if (_settings is null || GalleryStarredFilterButton is null || GallerySortComboBox is null) return;
-        GalleryStarredFilterButton.IsChecked = _settings.GalleryStarredOnly;
+        if (_settings is null || GallerySortComboBox is null) return;
         foreach (var item in GallerySortComboBox.Items)
         {
             if (item is ComboBoxItem cbi && cbi.Tag is string tag && string.Equals(tag, _settings.GallerySortMode, StringComparison.OrdinalIgnoreCase))
@@ -67,9 +52,45 @@ public partial class MainWindow : Window
 
     private void ToggleStarClip(string clipKey)
     {
-        if (!_settings.StarredClips.Add(clipKey))
+        if (string.IsNullOrWhiteSpace(clipKey)) return;
+        string fileName = Path.GetFileName(clipKey);
+        bool isStarred = _settings.StarredClips.Contains(clipKey) || _settings.StarredClips.Contains(fileName);
+        bool newStarred = !isStarred;
+
+        if (newStarred)
+        {
+            _settings.StarredClips.Add(clipKey);
+            _settings.StarredClips.Add(fileName);
+        }
+        else
+        {
             _settings.StarredClips.Remove(clipKey);
+            _settings.StarredClips.Remove(fileName);
+        }
+
         _settings.Save();
+        if (_pairing is not null)
+        {
+            _ = _pairing.SendSyncStarredAsync(clipKey, newStarred);
+        }
+    }
+
+    private void SaveClipMarkers(string clipKey, List<double> markers, bool syncToRemote = true)
+    {
+        if (string.IsNullOrWhiteSpace(clipKey)) return;
+        string fileName = Path.GetFileName(clipKey);
+        markers.Sort();
+        _settings.ClipMarkers[clipKey] = markers;
+        if (!string.Equals(fileName, clipKey, StringComparison.OrdinalIgnoreCase))
+        {
+            _settings.ClipMarkers[fileName] = markers;
+        }
+        _settings.Save();
+
+        if (syncToRemote && _pairing is not null)
+        {
+            _ = _pairing.SendSyncClipMarkersAsync(clipKey, markers);
+        }
     }
 
     private IEnumerable<FileInfo> ApplyGallerySort(IEnumerable<FileInfo> files)
@@ -121,6 +142,62 @@ public partial class MainWindow : Window
 
             if (_galleryIsRemote)
             {
+                if (_lastRemoteStorageInfo is not null)
+                {
+                    if (_lastRemoteStorageInfo.StorageLimitEnabled && _lastRemoteStorageInfo.StorageLimitGb > 0)
+                    {
+                        double usedGb = _lastRemoteStorageInfo.ClipsFolderBytes / (double)BytesPerGb;
+                        double limitGb = _lastRemoteStorageInfo.StorageLimitGb;
+                        double ratio = Math.Clamp(usedGb / limitGb, 0.0, 1.0);
+
+                        const double maxBarWidth = 110.0;
+                        GalleryStorageProgressBar.Width = ratio * maxBarWidth;
+
+                        bool isOver85 = ratio >= 0.85;
+                        if (isOver85)
+                        {
+                            GalleryStorageProgressBar.Background = (Brush)FindResource("Rec");
+                            GalleryStorageText.Foreground = (Brush)FindResource("Rec");
+                        }
+                        else
+                        {
+                            GalleryStorageProgressBar.SetResourceReference(Border.BackgroundProperty, "Accent");
+                            GalleryStorageText.SetResourceReference(TextBlock.ForegroundProperty, "Text1");
+                        }
+
+                        GalleryStorageText.Text = $"{usedGb:0.0} out of {limitGb:0.#} GB used";
+                        return;
+                    }
+                    else if (_lastRemoteStorageInfo.DriveTotalBytes > 0)
+                    {
+                        long totalBytes = _lastRemoteStorageInfo.DriveTotalBytes;
+                        long freeBytes = _lastRemoteStorageInfo.DriveFreeBytes;
+                        long usedBytes = Math.Max(0, totalBytes - freeBytes);
+
+                        double usedRatio = Math.Clamp((double)usedBytes / totalBytes, 0.0, 1.0);
+                        double freeGb = freeBytes / (double)BytesPerGb;
+
+                        const double maxBarWidth = 110.0;
+                        GalleryStorageProgressBar.Width = usedRatio * maxBarWidth;
+
+                        bool isOver85 = usedRatio >= 0.85;
+                        if (isOver85)
+                        {
+                            GalleryStorageProgressBar.Background = (Brush)FindResource("Rec");
+                            GalleryStorageText.Foreground = (Brush)FindResource("Rec");
+                        }
+                        else
+                        {
+                            GalleryStorageProgressBar.SetResourceReference(Border.BackgroundProperty, "Accent");
+                            GalleryStorageText.SetResourceReference(TextBlock.ForegroundProperty, "Text1");
+                        }
+
+                        string freeGbText = freeGb >= 100 ? $"{freeGb:0} GBs Free" : $"{freeGb:0.0} GBs Free";
+                        GalleryStorageText.Text = freeGbText;
+                        return;
+                    }
+                }
+
                 GalleryStorageProgressBar.Width = 0;
                 GalleryStorageText.Text = $"{_settings.PairedPeerName ?? "Remote"} PC";
                 GalleryStorageText.Foreground = (Brush)FindResource("Text2");
@@ -301,18 +378,6 @@ public partial class MainWindow : Window
     }
 
 
-    private void GalleryRemoteTab_Click(object sender, RoutedEventArgs e)
-    {
-        if (_galleryIsRemote || string.IsNullOrEmpty(_settings.PairedPeerSecret))
-            return;
-        GalleryFilterBox.Text = string.Empty; 
-        _galleryIsRemote = true;
-        _currentRemoteGalleryFolder = null;
-        RefreshGallerySourceTabsVisibility();
-        LoadGallery();
-    }
-
-
         private void RunAutoDeleteOldClips()
     {
         if (!_settings.AutoDeleteOldClipsEnabled)
@@ -387,343 +452,11 @@ public partial class MainWindow : Window
     }
 
 
-        private async Task<int> CountRemoteClipsRecursiveAsync(string relativePath)
-    {
-        RemoteGalleryListing? listing = await _pairing.ListRemoteGalleryAsync(relativePath);
-        if (listing is null)
-            return 0;
-
-        int count = listing.Files.Count;
-        foreach (string folder in listing.Folders)
-            count += await CountRemoteClipsRecursiveAsync($"{relativePath}/{folder}");
-        return count;
-    }
-
-
     private void GalleryFilterBox_TextChanged(object sender, TextChangedEventArgs e)
     {
         GalleryFilterPlaceholder.Visibility = GalleryFilterBox.Text.Length == 0 ? Visibility.Visible : Visibility.Collapsed;
-        _galleryFilterDebounceTimer.Stop();
-        _galleryFilterDebounceTimer.Start();
-    }
-
-
-        private void OpenRemoteGalleryFolder(string name)
-    {
-        GalleryFilterBox.Text = string.Empty; 
-        _currentRemoteGalleryFolder = _currentRemoteGalleryFolder is null ? name : $"{_currentRemoteGalleryFolder}/{name}";
-        LoadGallery();
-    }
-
-
-    private string RemoteClipRelativePath(string fileName) =>
-        _currentRemoteGalleryFolder is null ? fileName : $"{_currentRemoteGalleryFolder}/{fileName}";
-
-
-        private async Task<List<(string RelativePath, RemoteGalleryFile File)>?> ListAllRemoteClipsAsync()
-    {
-        var foldersToWalk = new Queue<string?>();
-        foldersToWalk.Enqueue(null); 
-        var all = new List<(string RelativePath, RemoteGalleryFile File)>();
-
-        while (foldersToWalk.Count > 0)
-        {
-            string? folder = foldersToWalk.Dequeue();
-            RemoteGalleryListing? listing = await _pairing.ListRemoteGalleryAsync(folder ?? "");
-            if (listing is null)
-                return null;
-
-            foreach (string subfolder in listing.Folders)
-                foldersToWalk.Enqueue(folder is null ? subfolder : $"{folder}/{subfolder}");
-
-            foreach (RemoteGalleryFile file in listing.Files)
-                all.Add((folder is null ? file.Name : $"{folder}/{file.Name}", file));
-        }
-
-        return all;
-    }
-
-
-        private async Task SyncRemoteClipsAsync(IProgress<double>? progress = null)
-    {
-        List<(string RelativePath, RemoteGalleryFile File)>? all = await ListAllRemoteClipsAsync();
-        
-        
-        if (all is null)
-            return;
-
-        var toDownload = new List<(string RelativePath, RemoteGalleryFile File, string DestPath)>();
-        foreach ((string relativePath, RemoteGalleryFile file) in all)
-        {
-            if (_pendingRemoteDeletePaths.Contains(relativePath))
-                continue;
-
-            string destPath = GetRemoteClipCachePath(relativePath, file.Name);
-            if (File.Exists(destPath))
-                continue;
-
-            toDownload.Add((relativePath, file, destPath));
-        }
-
-        if (toDownload.Count == 0)
-        {
-            progress?.Report(1.0);
-            return;
-        }
-
-        for (int i = 0; i < toDownload.Count; i++)
-        {
-            (string relativePath, RemoteGalleryFile file, string destPath) = toDownload[i];
-            int completed = i; 
-            
-            
-            
-            
-            
-            var fileProgress = progress is null ? null : new Progress<double>(p => progress.Report((completed + p) / toDownload.Count));
-
-            
-            
-            
-            
-            await _pairing.DownloadRemoteClipAsync(relativePath, destPath, fileProgress);
-            progress?.Report((double)(i + 1) / toDownload.Count);
-        }
-    }
-
-
-        private async Task OpenRemoteClipFileLocationAsync(string relativePath, RemoteGalleryFile file)
-    {
-        string destPath = GetRemoteClipCachePath(relativePath, file.Name);
-        if (!File.Exists(destPath))
-        {
-            Directory.CreateDirectory(Path.GetDirectoryName(destPath)!);
-            (bool success, string? error) = await _pairing.DownloadRemoteClipAsync(relativePath, destPath);
-            if (!success)
-            {
-                MessageBox.Show(this, $"Couldn't download that clip: {error}", "Backtrack");
-                return;
-            }
-        }
-        RevealInExplorerAndClose(destPath);
-    }
-
-
-        private async Task CopyRemoteClipPathAsync(string relativePath, RemoteGalleryFile file)
-    {
-        string destPath = GetRemoteClipCachePath(relativePath, file.Name);
-        if (!File.Exists(destPath))
-        {
-            Directory.CreateDirectory(Path.GetDirectoryName(destPath)!);
-            (bool success, string? error) = await _pairing.DownloadRemoteClipAsync(relativePath, destPath);
-            if (!success)
-            {
-                MessageBox.Show(this, $"Couldn't download that clip: {error}", "Backtrack");
-                return;
-            }
-        }
-        Clipboard.SetText(destPath);
-    }
-
-
-        private void DeleteRemoteClip(string relativePath, RemoteGalleryFile file)
-    {
-        ShowConfirmDialog(
-            $"Are you sure you want to delete \"{file.Name}\"? This deletes the real clip on {_settings.PairedPeerName}'s PC (sent to its recycle bin there), not just this view.",
-            "Delete",
-            confirmed =>
-            {
-                if (confirmed)
-                    QueueRemoteDeleteWithUndo(relativePath, file.Name, file);
-            });
-    }
-
-
-    private async Task FinishRemoteDeleteAsync(string relativePath, string displayName, RemoteGalleryFile? file)
-    {
-        (bool success, string? error) = await _pairing.DeleteRemoteClipAsync(relativePath);
-        if (!success)
-        {
-            
-            
-            
-            
-            
-            _ = Dispatcher.BeginInvoke(() => MessageBox.Show(this, $"Couldn't delete \"{displayName}\": {error}", "Backtrack"));
-        }
-        else if (file is not null)
-        {
-            
-            
-            
-            try { File.Delete(GetRemoteClipCachePath(relativePath, file.Name)); } catch {  }
-            string? thumbCache = GetRemoteThumbnailCachePath(relativePath, file.Modified, file.Size);
-            if (thumbCache is not null)
-            {
-                try { File.Delete(thumbCache); } catch {  }
-            }
-        }
-
-        _ = Dispatcher.BeginInvoke(() =>
-        {
-            if (GalleryPanel.Visibility == Visibility.Visible)
-                LoadGallery();
-            else
-                _ = RefreshGalleryCountAsync();
-        });
-    }
-
-
-        private string? GetRemoteThumbnailCachePath(string relativePath, DateTime modified, long size)
-    {
-        if (string.IsNullOrEmpty(_settings.PairedPeerDeviceId))
-            return null;
-
-        string cacheDir = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "Backtrack", "RemoteThumbnails", _settings.PairedPeerDeviceId);
-        string key = $"{relativePath}|{modified.Ticks}|{size}";
-        string hash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(key)));
-        return Path.Combine(cacheDir, $"{hash}.jpg");
-    }
-
-
-    private async Task LoadRemoteThumbnailAsync(string relativePath, RemoteGalleryFile file, Image target)
-    {
-        string? cachePath = GetRemoteThumbnailCachePath(relativePath, file.Modified, file.Size);
-        if (cachePath is null)
-            return;
-        Directory.CreateDirectory(Path.GetDirectoryName(cachePath)!);
-
-        if (!File.Exists(cachePath))
-        {
-            (bool success, _) = await _pairing.DownloadRemoteThumbnailAsync(relativePath, cachePath);
-            if (!success)
-                return;
-        }
-
-        BitmapImage? bitmap = null;
-        if (File.Exists(cachePath))
-        {
-            try
-            {
-                bitmap = new BitmapImage();
-                bitmap.BeginInit();
-                bitmap.CacheOption = BitmapCacheOption.OnLoad;
-                bitmap.UriSource = new Uri(cachePath, UriKind.Absolute);
-                bitmap.EndInit();
-                bitmap.Freeze();
-            }
-            catch
-            {
-                bitmap = null;
-            }
-        }
-
-        if (bitmap is not null)
-        {
-            await target.Dispatcher.InvokeAsync(() => target.Source = bitmap);
-        }
-    }
-
-
-    private void ToggleClipSelected(FileInfo file)
-    {
-        if (!_selectedClipPaths.Add(file.FullName))
-            _selectedClipPaths.Remove(file.FullName);
-        RefreshGallerySelectionUi();
-    }
-
-
-    private void RefreshGallerySelectionUi()
-    {
-        int count = _selectedClipPaths.Count;
-        GallerySelectionBar.Visibility = count > 0 ? Visibility.Visible : Visibility.Collapsed;
-        GallerySelectionCountText.Text = count == 1 ? "1 selected" : $"{count} selected";
-
-        foreach (var (file, circle, thumb) in _galleryCardSelection)
-        {
-            bool selected = _selectedClipPaths.Contains(file.FullName);
-            circle.Background = selected ? (Brush)FindResource("Green") : new SolidColorBrush(Color.FromArgb(0x40, 0xFF, 0xFF, 0xFF));
-            circle.BorderBrush = selected ? (Brush)FindResource("Green") : (Brush)FindResource("Text0");
-
-            
-            
-            
-            
-            
-            if (count > 0)
-                circle.Visibility = Visibility.Visible;
-            else if (!thumb.IsMouseOver)
-                circle.Visibility = Visibility.Collapsed;
-        }
-    }
-
-
-    private void CancelSelection_Click(object sender, RoutedEventArgs e)
-    {
-        _selectedClipPaths.Clear();
-        RefreshGallerySelectionUi();
-    }
-
-
-    private void DeleteSelected_Click(object sender, RoutedEventArgs e)
-    {
-        List<FileInfo> targets = _galleryCardSelection
-            .Where(c => _selectedClipPaths.Contains(c.File.FullName))
-            .Select(c => c.File)
-            .ToList();
-        if (targets.Count == 0)
-            return;
-
-        string message = targets.Count == 1
-            ? $"Are you sure you want to delete \"{targets[0].Name}\"? This will send it to your recycle bin."
-            : $"Are you sure you want to delete {targets.Count} clips? This will send them to your recycle bin.";
-
-        ShowConfirmDialog(message, "Delete", confirmed =>
-        {
-            if (confirmed)
-            {
-                _selectedClipPaths.Clear();
-                if (targets.Count == 1)
-                    QueueDeleteWithUndo(targets[0]);
-                else
-                    QueueMultiDeleteWithUndo(targets);
-            }
-        });
-    }
-
-
-    private void MoveSelected_Click(object sender, RoutedEventArgs e)
-    {
-        List<FileInfo> targets = _galleryCardSelection
-            .Where(c => _selectedClipPaths.Contains(c.File.FullName))
-            .Select(c => c.File)
-            .ToList();
-        if (targets.Count == 0)
-            return;
-
-        var dialog = new OpenFolderDialog { InitialDirectory = GalleryFolder };
-        if (dialog.ShowDialog(this) != true)
-            return;
-
-        string destination = dialog.FolderName;
-        foreach (FileInfo file in targets)
-        {
-            try
-            {
-                string dest = Path.Combine(destination, file.Name);
-                if (File.Exists(dest))
-                    dest = Path.Combine(destination, $"{Path.GetFileNameWithoutExtension(file.Name)}_{DateTime.Now:HHmmss}{file.Extension}");
-                File.Move(file.FullName, dest);
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show(this, $"Couldn't move \"{file.Name}\": {ex.Message}", "Backtrack");
-            }
-        }
-
-        LoadGallery();
+        _galleryFilterDebounceTimer?.Stop();
+        _galleryFilterDebounceTimer?.Start();
     }
 
 
@@ -784,21 +517,6 @@ public partial class MainWindow : Window
     }
 
 
-    private void DeleteClip(FileInfo file, Border card)
-    {
-        ShowConfirmDialog(
-            $"Are you sure you want to delete \"{file.Name}\"? This will send it to your recycle bin.",
-            "Delete",
-            confirmed =>
-            {
-                if (confirmed)
-                {
-                    QueueDeleteWithUndo(file);
-                }
-            });
-    }
-
-
     private void RefreshPairingStatusUi()
     {
         if (!string.IsNullOrEmpty(_settings.PairedPeerName))
@@ -834,4 +552,140 @@ public partial class MainWindow : Window
         }
     }
 
+
+    private void LoadGallery()
+    {
+        if (_galleryIsRemote)
+        {
+            _ = LoadRemoteGalleryAsync();
+            return;
+        }
+
+        GalleryGrid.Children.Clear();
+        _galleryCardSelection.Clear();
+        _selectedClipPaths.Clear();
+        RefreshGallerySelectionUi();
+        UpdateGalleryPathBar();
+
+        string folder = GalleryFolder;
+
+        if (!Directory.Exists(folder))
+        {
+            GalleryGrid.Children.Add(new TextBlock
+            {
+                Text = $"Folder doesn't exist yet: {folder}\n\nSet a folder that actually has your clips in Settings.",
+                FontSize = 12,
+                Foreground = (Brush)FindResource("Text2"),
+                TextWrapping = TextWrapping.Wrap,
+                Width = BigWidth() - 40,
+            });
+            return;
+        }
+
+        
+        
+        
+        string filter = GalleryFilterBox.Text.Trim();
+
+        List<DirectoryInfo> subfolders;
+        List<FileInfo> files;
+        try
+        {
+            subfolders = Directory.GetDirectories(folder)
+                .Select(d => new DirectoryInfo(d))
+                .Where(d => filter.Length == 0 || d.Name.Contains(filter, StringComparison.OrdinalIgnoreCase))
+                .OrderBy(d => d.Name, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            files = Directory.EnumerateFiles(folder)
+                .Where(f => VideoExtensions.Contains(Path.GetExtension(f).ToLowerInvariant()) && !_pendingDeletePaths.Contains(Path.GetFullPath(f)))
+                .Where(f => filter.Length == 0 || Path.GetFileNameWithoutExtension(f).Contains(filter, StringComparison.OrdinalIgnoreCase))
+                .Select(f => new FileInfo(f))
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                .Where(f => f.Exists && f.Length > 0 && TryGetCachedDurationMs(f) is not < 2000)
+                .ToList();
+
+            if (_settings.GalleryStarredOnly)
+            {
+                files = files.Where(f => _settings.StarredClips.Contains(f.Name) || _settings.StarredClips.Contains(f.FullName)).ToList();
+            }
+
+            files = ApplyGallerySort(files).ToList();
+        }
+        catch (Exception ex)
+        {
+            GalleryGrid.Children.Add(new TextBlock { Text = $"Couldn't read that folder: {ex.Message}", Foreground = (Brush)FindResource("Rec"), TextWrapping = TextWrapping.Wrap });
+            return;
+        }
+
+        if (subfolders.Count == 0 && files.Count == 0)
+        {
+            GalleryGrid.Children.Add(new TextBlock
+            {
+                Text = filter.Length == 0 ? "No clips in this folder yet." : $"Nothing here matches \"{filter}\".",
+                FontSize = 12,
+                Foreground = (Brush)FindResource("Text2"),
+            });
+            GalleryStatus.Text = "0 clips";
+            UpdateGalleryFooterStats(0, 0, _currentGalleryFolder is null ? null : Path.GetFileName(_currentGalleryFolder));
+            return;
+        }
+
+        string? newestClipPath = GetNewestClipPath();
+
+        foreach (DirectoryInfo dir in subfolders)
+        {
+            string dirFull = Path.GetFullPath(dir.FullName);
+            bool leadsToNewest = newestClipPath is not null
+                && newestClipPath.StartsWith(dirFull + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
+            GalleryGrid.Children.Add(BuildFolderCard(dir.Name, () => OpenGalleryFolder(dir.FullName), leadsToNewest, dir.FullName));
+        }
+
+        foreach (FileInfo file in files)
+            GalleryGrid.Children.Add(BuildClipCard(file,
+                isNewest: newestClipPath is not null && string.Equals(Path.GetFullPath(file.FullName), newestClipPath, StringComparison.OrdinalIgnoreCase)));
+
+        int totalClipsCount;
+        long totalFolderBytes;
+        try
+        {
+            var allFilesInTree = Directory.EnumerateFiles(folder, "*", SearchOption.AllDirectories)
+                .Where(f => VideoExtensions.Contains(Path.GetExtension(f).ToLowerInvariant()) && !_pendingDeletePaths.Contains(Path.GetFullPath(f)))
+                .Select(f => new FileInfo(f))
+                .Where(f => f.Exists && f.Length > 0)
+                .ToList();
+
+            if (_settings.GalleryStarredOnly)
+            {
+                allFilesInTree = allFilesInTree.Where(f => _settings.StarredClips.Contains(f.Name) || _settings.StarredClips.Contains(f.FullName)).ToList();
+            }
+
+            totalClipsCount = allFilesInTree.Count;
+            totalFolderBytes = allFilesInTree.Sum(f => f.Length);
+        }
+        catch
+        {
+            totalClipsCount = files.Count;
+            totalFolderBytes = files.Sum(f => f.Length);
+        }
+
+        UpdateGalleryFooterStats(totalClipsCount, totalFolderBytes, _currentGalleryFolder is null ? null : Path.GetFileName(_currentGalleryFolder));
+
+        if (_currentGalleryFolder is null && subfolders.Count > 0)
+            _ = RefreshGalleryCountAsync();
+        else
+            GalleryStatus.Text = files.Count == 1 ? "1 clip" : $"{files.Count} clips";
+    }
 }

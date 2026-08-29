@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
@@ -144,9 +144,19 @@ public partial class MainWindow : Window
                     return;
                 }
                 _toastOverlay.ShowUpdateInProgress(displayName);
-                bool obsWasRunning = await _updates.InstallPluginUpdateAsync(release.DownloadUrl, release.Digest, reopenAfterInstall: !deferObsReopen);
+                (bool obsWasRunning, bool installSuccess) = await _updates.InstallPluginUpdateAsync(release.DownloadUrl, release.Digest, reopenAfterInstall: !deferObsReopen);
                 if (deferObsReopen && obsWasRunning)
                     _obsReopenPendingFromPluginUpdates = true;
+
+                Version newInstalled = _updates.GetInstalledPluginVersion(dllFileName);
+                if (!installSuccess || (newInstalled < installed && newInstalled == UpdateService.MissingPluginVersion))
+                {
+                    AppLog.Write($"[Updates] {displayName} installer failed or was aborted.");
+                    _toastOverlay.ClearUpdateInProgress(displayName);
+                    SetUpdateStatus(dot, versionText, installed.ToString(3), ok: false);
+                    return;
+                }
+
                 RecordUpdateApplied(release, setLastApplied, setLastDigest);
                 AppLog.Write($"{displayName} updated to {release.Version}");
                 _toastOverlay.ShowUpdateApplied(displayName, release.Version);
@@ -277,12 +287,8 @@ public partial class MainWindow : Window
             async Task ApplyAsync()
             {
                 _toastOverlay.ShowUpdateInProgress("Backtrack");
-                RecordUpdateApplied(release, v => _settings.LastAppliedBacktrackReleaseAt = v, v => _settings.LastAppliedBacktrackDigest = v);
                 AppLog.Write($"Backtrack updating to {release.Version} (relaunching)");
                 await _updates.ApplySelfUpdateAsync(release.DownloadUrl, release.Version, release.Digest);
-                SetUpdateStatus(BacktrackStatusDot, BacktrackVersionText, release.Version, ok: true);
-                
-                
                 Application.Current.Shutdown();
             }
 

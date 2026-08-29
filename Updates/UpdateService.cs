@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Diagnostics;
 using System.IO;
 using System.IO.Compression;
@@ -283,24 +283,30 @@ public sealed class UpdateService
     /// one succeeded. Returns whether OBS was actually running (and so got
     /// closed) either way, so the caller knows whether it owes a reopen.
     /// </summary>
-    public async Task<bool> InstallPluginUpdateAsync(string downloadUrl, string? expectedDigest = null, bool reopenAfterInstall = true)
+    public async Task<(bool WasObsRunning, bool Success)> InstallPluginUpdateAsync(string downloadUrl, string? expectedDigest = null, bool reopenAfterInstall = true)
     {
         string tempPath = Path.Combine(Path.GetTempPath(), $"cc_update_{Guid.NewGuid():N}.exe");
         await DownloadFileAsync(downloadUrl, tempPath, expectedDigest);
 
         bool wasObsRunning = await CloseObsIfRunningAsync();
 
+        int exitCode = -1;
         var psi = new ProcessStartInfo(tempPath, InnoSetupSilentArgs) { UseShellExecute = true };
-        using Process? installer = Process.Start(psi);
-        if (installer is not null)
-            await installer.WaitForExitAsync();
+        using (Process? installer = Process.Start(psi))
+        {
+            if (installer is not null)
+            {
+                await installer.WaitForExitAsync();
+                exitCode = installer.ExitCode;
+            }
+        }
 
         try { File.Delete(tempPath); } catch { /* best-effort cleanup */ }
 
         if (reopenAfterInstall && wasObsRunning)
             RelaunchObsIfInstalled();
 
-        return wasObsRunning;
+        return (wasObsRunning, exitCode == 0);
     }
 
     /// <summary>Extracted so a caller managing OBS lifecycle across several plugin installs (see reopenAfterInstall above) can call this itself, once, after the whole batch.</summary>
