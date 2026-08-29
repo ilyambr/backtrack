@@ -286,6 +286,7 @@ public partial class MainWindow : Window
 
             async Task ApplyAsync()
             {
+                RecordUpdateApplied(release, v => _settings.LastAppliedBacktrackReleaseAt = v, v => _settings.LastAppliedBacktrackDigest = v);
                 _toastOverlay.ShowUpdateInProgress("Backtrack");
                 AppLog.Write($"Backtrack updating to {release.Version} (relaunching)");
                 await _updates.ApplySelfUpdateAsync(release.DownloadUrl, release.Version, release.Digest);
@@ -410,4 +411,9 @@ public partial class MainWindow : Window
         }
     }
 
+    public void MarkSelfUpdateApplied(string version)
+    {
+        _settings.LastAppliedBacktrackReleaseAt = DateTimeOffset.UtcNow;
+        _settings.Save();
+    }
 }

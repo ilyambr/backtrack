@@ -80,6 +80,10 @@ public partial class MainWindow : Window
             return false;
         }
 
+        // Never auto-downgrade if candidate version is strictly older than installed
+        if (UpdateService.IsNewer(UpdateService.CurrentAppVersion.ToString(3), release.Version))
+            return false;
+
         bool digestKnownBothSides = release.Digest is not null && lastDigest is not null;
         if (digestKnownBothSides)
         {

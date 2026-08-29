@@ -418,7 +418,15 @@ public sealed class UpdateService
 
     // --------------------------------------------------------------- self
 
-    public static Version CurrentAppVersion => Assembly.GetExecutingAssembly().GetName().Version ?? new Version(0, 0, 0);
+    public static Version CurrentAppVersion
+    {
+        get
+        {
+            Version? v = Assembly.GetExecutingAssembly().GetName().Version;
+            if (v is null) return new Version(0, 0, 0);
+            return new Version(Math.Max(v.Major, 0), Math.Max(v.Minor, 0), Math.Max(v.Build, 0));
+        }
+    }
 
     /// <summary>
     /// Downloads a "backtrack-{version}-windows-x64.zip" release asset, extracts

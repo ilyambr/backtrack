@@ -4,6 +4,16 @@ All notable changes to Backtrack are documented in this file.
 
 ---
 
+## [v0.3.11] - 2026-08-26
+
+### Fixes & Auto-Update Loop Resolution
+
+- **Auto-Update Loop Fix**: Fixed a bug where self-updates would repeatedly download, extract, and relaunch in an infinite loop because `RecordUpdateApplied` was not persisting the applied release digest prior to restart.
+- **Normalized Version Comparison**: Standardized `UpdateService.CurrentAppVersion` to always return 3-part version tuples (`Major.Minor.Build`), eliminating revision mismatches (`0.3.10.0` vs `0.3.10`).
+- **Downgrade Safeguard**: Added safeguards in `ShouldApplyUpdate` to prevent accidental loops or automated downgrades.
+
+---
+
 ## [v0.3.10] - 2026-08-26
 
 ### Fixes & Remote Enhancements
