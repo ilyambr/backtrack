@@ -429,6 +429,17 @@ public partial class MainWindow : Window
                 }
                 _recordRowPollSeeded = true;
 
+                // Also ensure any explicitly cancelled row that is no longer active displays the cancellation toast
+                var orphanCancelledKeys = _cancelledRecordRows.Where(k => !activeKeys.Contains(k)).ToList();
+                foreach (string key in orphanCancelledKeys)
+                {
+                    _cancelledRecordRows.Remove(key);
+                    string label = _recordRowInfoByKey.TryGetValue(key, out var cInfo) ? DisplayLabel(cInfo.Label) : "";
+                    string? dur = stoppedDurations.TryGetValue(key, out var d) ? d : null;
+                    _toastOverlay.ShowRecordingCancelled(string.IsNullOrEmpty(label) ? null : label, dur);
+                    _recordRowInfoByKey.Remove(key);
+                }
+
                 activeRecordRowCount = activeKeys.Count;
                 _lastKnownActiveRecordRowCount = activeRecordRowCount;
             }

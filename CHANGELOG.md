@@ -4,6 +4,17 @@ All notable changes to Backtrack are documented in this file.
 
 ---
 
+## [v0.3.10] - 2026-08-26
+
+### Fixes & Remote Enhancements
+
+- **Remote Recording Cancellation Toast**: Fixed an issue where cancelling recordings over remote OBS/transmitter connections would not display the "Recording Canceled" toast notification.
+- **Safe Remote Path Deletion & RPC Cleanup**: Added safe cross-platform path handling and remote clip recycling over `PairingService` when cancelling in-progress remote recordings.
+- **Record Row Cancellation Reliability**: Guaranteed instant cancel toast display and label preservation for all active Source Record rows.
+- **Zero Compiler Warnings**: Resolved all nullable CS8602 compiler warnings across the entire codebase.
+
+---
+
 ## [v0.3.9] - 2026-08-26
 
 ### Architecture & Fixes

@@ -91,7 +91,14 @@ public partial class MainWindow : Window
                     _activeRecordingMarkers.Clear();
                     if (path is not null)
                     {
-                        await DeleteOrRecycleCancelledFileAsync(path);
+                        try
+                        {
+                            await DeleteOrRecycleCancelledFileAsync(path);
+                        }
+                        catch (Exception ex)
+                        {
+                            AppLog.Write($"DeleteOrRecycleCancelledFileAsync skipped/failed: {ex.Message}");
+                        }
                     }
                     _toastOverlay.ShowRecordingCancelled("Full Scene", dur);
                     AppLog.Write($"Main recording cancelled and recycled: '{path}'");

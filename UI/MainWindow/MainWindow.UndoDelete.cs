@@ -25,7 +25,16 @@ public partial class MainWindow : Window
 {
     private async Task DeleteOrRecycleCancelledFileAsync(string path)
     {
-        string fullPath = Path.GetFullPath(path);
+        string fullPath;
+        try
+        {
+            fullPath = Path.GetFullPath(path);
+        }
+        catch
+        {
+            fullPath = path;
+        }
+
         _pendingDeletePaths.Add(fullPath);
         Dispatcher.Invoke(() =>
         {
@@ -38,21 +47,36 @@ public partial class MainWindow : Window
 
         try
         {
-            for (int attempt = 0; attempt < 15; attempt++)
+            if (!_settings.ObsIsRemote)
             {
-                if (!File.Exists(path))
-                    break;
+                for (int attempt = 0; attempt < 15; attempt++)
+                {
+                    if (!File.Exists(path))
+                        break;
+                    try
+                    {
+                        if (RecycleBin.Delete(path))
+                            break;
+                        File.Delete(path);
+                        break;
+                    }
+                    catch
+                    {
+                        await Task.Delay(100);
+                    }
+                }
+            }
+            else
+            {
                 try
                 {
-                    if (RecycleBin.Delete(path))
-                        break;
-                    File.Delete(path);
-                    break;
+                    string fileName = Path.GetFileName(path.Replace('/', '\\'));
+                    if (!string.IsNullOrEmpty(fileName))
+                    {
+                        _ = _pairing.DeleteRemoteClipAsync(fileName);
+                    }
                 }
-                catch
-                {
-                    await Task.Delay(100);
-                }
+                catch { }
             }
         }
         finally

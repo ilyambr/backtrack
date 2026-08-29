@@ -119,6 +119,7 @@ public partial class MainWindow : Window
             foreach (RecordRow row in activeRows)
             {
                 _cancelledRecordRows.Add(row.Key);
+                _recordRowInfoByKey[row.Key] = (row.Label, row.SourceName, row.FilterName);
                 await _obs.CancelRecordRowAsync(row.Key);
             }
         }
