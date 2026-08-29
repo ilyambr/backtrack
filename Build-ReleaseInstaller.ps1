@@ -12,8 +12,15 @@ if ([string]::IsNullOrWhiteSpace($Version)) {
 
 Write-Host "Releasing Backtrack v$Version (Local release, no CI)..." -ForegroundColor Cyan
 
-Write-Host "1. Publishing Backtrack binaries..." -ForegroundColor Green
-dotnet publish -c Release -r win-x64 -o "./publish"
+Write-Host "1. Publishing Backtrack binaries (Self-Contained win-x64)..." -ForegroundColor Green
+dotnet publish -c Release -r win-x64 --self-contained true -o "./publish"
+
+# Ensure StreamDeck plugin is copied to publish
+$streamDeckPluginSrc = "StreamDeck/Backtrack.streamDeckPlugin"
+if (Test-Path $streamDeckPluginSrc) {
+    Copy-Item $streamDeckPluginSrc -Destination "./publish/Backtrack.streamDeckPlugin" -Force
+    Copy-Item $streamDeckPluginSrc -Destination "./Backtrack.streamDeckPlugin" -Force
+}
 
 Write-Host "2. Creating payload ZIP..." -ForegroundColor Green
 $payloadZipPath = [System.IO.Path]::GetFullPath("installer/payload.zip")
@@ -38,9 +45,8 @@ if ([System.IO.File]::Exists($installerExe)) {
 }
 
 Write-Host "4. Publishing GitHub Release v$Version..." -ForegroundColor Green
-$releaseExists = gh release view "v$Version" 2>$null
-if ($LASTEXITCODE -eq 0) {
-    gh release upload "v$Version" "Backtrack-Setup-v$Version.exe" "$releaseZipPath" --clobber
+if (Test-Path "Backtrack.streamDeckPlugin") {
+    gh release create "v$Version" "Backtrack-Setup-v$Version.exe" "$releaseZipPath" "Backtrack.streamDeckPlugin" --title "v$Version" --generate-notes
 } else {
     gh release create "v$Version" "Backtrack-Setup-v$Version.exe" "$releaseZipPath" --title "v$Version" --generate-notes
 }

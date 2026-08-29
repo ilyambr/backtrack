@@ -4,6 +4,21 @@ All notable changes to Backtrack are documented in this file.
 
 ---
 
+## [v0.3.13] - 2026-08-28
+
+### Native Stream Deck Integration & Zero-Prerequisite Self-Contained Release
+
+- **Official Elgato Stream Deck Plugin (`Backtrack.streamDeckPlugin`)**: Native two-way control integration connecting Stream Deck hardware/app to Backtrack over local WebSocket (`127.0.0.1:44558`).
+  - **Clip Replay Buffer**: Flushes and saves instant replay buffer for any selected source with dynamic buffer duration readout.
+  - **Record Source**: Starts/stops recording for any source with live stopwatch ticker on keycap.
+  - **Cancel Recording**: Instantly purges and cancels active recording with status feedback.
+  - **Bookmark Segment**: Drops chapter star marker into clip metadata on the fly.
+  - **Toggle Backtrack HUD**: Toggles overlay on screen with live OBS connection dot.
+- **Dynamic HTML5 Canvas Keycap Engine**: Custom-rendered keycaps with corner-radius safe insets, high-contrast typography, and automatic desaturated/dimmed offline states when Backtrack or OBS is disconnected.
+- **Self-Contained Deployment**: Release binaries and installer are published with `--self-contained true` packaging the .NET 8 desktop runtime, eliminating any missing runtime errors on fresh Windows installations.
+- **Modular View Architecture Updates**: Fully hardened modular partial view structure across ReplayRecord, Gallery, Player, Settings, and Styles.
+
+---
 ## [v0.3.11] - 2026-08-26
 
 ### Fixes & Auto-Update Loop Resolution

@@ -3,7 +3,6 @@ obj/
 publish/
 dist/
 backup/
-claude-comments.md
 *.zip
 *.exe
 !Assets/*.exe

@@ -1,0 +1,133 @@
+{
+  "$schema": "https://schemas.elgato.com/streamdeck/plugins/manifest.json",
+  "UUID": "com.ilyambr.backtrack",
+  "SDKVersion": 3,
+  "Name": "Backtrack",
+  "Description": "Native two-way control for Backtrack Replay Buffer and Source Recording.",
+  "Author": "ilyambr",
+  "Version": "1.0.0.0",
+  "Icon": "images/pluginIcon",
+  "Category": "Backtrack",
+  "CategoryIcon": "images/categoryIcon",
+  "CodePath": "index.html",
+  "OS": [
+    {
+      "Platform": "windows",
+      "MinimumVersion": "10"
+    },
+    {
+      "Platform": "mac",
+      "MinimumVersion": "10.14"
+    }
+  ],
+  "Software": {
+    "MinimumVersion": "6.9"
+  },
+  "Actions": [
+    {
+      "UUID": "com.ilyambr.backtrack.clip",
+      "Name": "Clip Replay Buffer",
+      "Icon": "images/action_clip",
+      "Tooltip": "Flushes and saves the instant replay buffer for the selected source",
+      "PropertyInspectorPath": "pi/index.html",
+      "Controllers": [
+        "Keypad"
+      ],
+      "VisibleInActionsList": true,
+      "States": [
+        {
+          "Image": "images/action_clip",
+          "TitleAlignment": "middle",
+          "FontSize": 9,
+          "FontFamily": "Segoe UI",
+          "FontStyle": "Bold",
+          "TitleColor": "#ffffff"
+        }
+      ]
+    },
+    {
+      "UUID": "com.ilyambr.backtrack.record",
+      "Name": "Record Source",
+      "Icon": "images/action_record",
+      "Tooltip": "Toggles recording for the selected source with live stopwatch timer",
+      "PropertyInspectorPath": "pi/index.html",
+      "Controllers": [
+        "Keypad"
+      ],
+      "VisibleInActionsList": true,
+      "States": [
+        {
+          "Image": "images/action_record",
+          "TitleAlignment": "middle",
+          "FontSize": 9,
+          "FontFamily": "Segoe UI",
+          "FontStyle": "Bold",
+          "TitleColor": "#ffffff"
+        }
+      ]
+    },
+    {
+      "UUID": "com.ilyambr.backtrack.cancel",
+      "Name": "Cancel Recording",
+      "Icon": "images/action_cancel",
+      "Tooltip": "Instantly purges and cancels active recording",
+      "PropertyInspectorPath": "pi/index.html",
+      "Controllers": [
+        "Keypad"
+      ],
+      "VisibleInActionsList": true,
+      "States": [
+        {
+          "Image": "images/action_cancel",
+          "TitleAlignment": "middle",
+          "FontSize": 9,
+          "FontFamily": "Segoe UI",
+          "FontStyle": "Bold",
+          "TitleColor": "#ffffff"
+        }
+      ]
+    },
+    {
+      "UUID": "com.ilyambr.backtrack.bookmark",
+      "Name": "Bookmark Segment",
+      "Icon": "images/action_bookmark",
+      "Tooltip": "Drops a chapter star bookmark into the current clip metadata",
+      "PropertyInspectorPath": "pi/index.html",
+      "Controllers": [
+        "Keypad"
+      ],
+      "VisibleInActionsList": true,
+      "States": [
+        {
+          "Image": "images/action_bookmark",
+          "TitleAlignment": "middle",
+          "FontSize": 9,
+          "FontFamily": "Segoe UI",
+          "FontStyle": "Bold",
+          "TitleColor": "#ffffff"
+        }
+      ]
+    },
+    {
+      "UUID": "com.ilyambr.backtrack.hud",
+      "Name": "Toggle Backtrack HUD",
+      "Icon": "images/action_hud",
+      "Tooltip": "Toggles Backtrack main HUD overlay and shows OBS connection status",
+      "PropertyInspectorPath": "pi/index.html",
+      "Controllers": [
+        "Keypad"
+      ],
+      "VisibleInActionsList": true,
+      "States": [
+        {
+          "Image": "images/action_hud",
+          "TitleAlignment": "middle",
+          "FontSize": 9,
+          "FontFamily": "Segoe UI",
+          "FontStyle": "Bold",
+          "TitleColor": "#ffffff"
+        }
+      ]
+    }
+  ]
+}

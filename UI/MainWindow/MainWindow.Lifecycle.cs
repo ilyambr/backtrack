@@ -185,6 +185,7 @@ public partial class MainWindow : Window
         });
         _obs.ReplaySaved += (key, path) => Dispatcher.BeginInvoke(async () =>
         {
+            _lastReplaySaveUtc[key] = DateTime.UtcNow;
             string label = await ResolveRowLabelAsync(key);
 
             if (!string.IsNullOrEmpty(path))

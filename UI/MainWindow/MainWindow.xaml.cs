@@ -19,6 +19,7 @@ using Backtrack.Core;
 using Backtrack.Interop;
 using Backtrack.Obs;
 using Backtrack.Pairing;
+using Backtrack.StreamDeck;
 using Backtrack.Streaming;
 using Backtrack.Updates;
 using Microsoft.Win32;
@@ -56,6 +57,8 @@ public partial class MainWindow : Window
     private bool _refreshStatusRunning;
 
     private readonly Dictionary<string, DateTime> _recordRowActiveSinceUtc = new();
+
+    private readonly Dictionary<string, DateTime> _lastReplaySaveUtc = new(StringComparer.OrdinalIgnoreCase);
 
     private readonly Dictionary<string, (string Label, string SourceName, string FilterName)> _recordRowInfoByKey = new();
 
@@ -112,6 +115,8 @@ public partial class MainWindow : Window
     private PairingService _pairing = null!;
 
     private RemoteClipStreamServer _remoteStreamServer = null!;
+
+    private StreamDeckIpcServer? _streamDeckServer;
 
     private readonly Dictionary<string, string> _rowLabels = new();
 
@@ -307,6 +312,12 @@ public partial class MainWindow : Window
         WireVlcAndPairingDelegates();
         SetupTimersAndWindow();
         SetupTrayAndVlc();
+
+        _streamDeckServer = new StreamDeckIpcServer(_obs, _settings,
+            () => Dispatcher.BeginInvoke(ToggleVisible),
+            () => Dispatcher.BeginInvoke(OnBookmarkHotkeyPressed),
+            key => _recordRowActiveSinceUtc.TryGetValue(key, out var dt) ? dt : null);
+        _streamDeckServer.Start();
 
         ShowScreen(Screen.Idle);
         SyncGalleryToolbarUi();

@@ -5,6 +5,7 @@ using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
+using System.Windows.Media.Animation;
 using System.Windows.Shapes;
 using System.Windows.Threading;
 using Backtrack.Core;
@@ -152,7 +153,7 @@ public partial class ToastOverlay : Window
         Show(icon, Green, "Compression Saved", resolvedPath is null ? null : $"Saved at '{resolvedPath}'", truncateSubMessage: true);
     }
 
-    private readonly Dictionary<string, (Border Toast, Border Fill, DispatcherTimer Timer)> _processingToasts = new();
+    private readonly Dictionary<string, (Border Toast, ScaleTransform Scale)> _processingToasts = new();
     private readonly Dictionary<string, DateTime> _recentlyCompletedProcessing = new();
 
     public void ShowProcessingClip(string key, string label)
@@ -193,8 +194,15 @@ public partial class ToastOverlay : Window
         row.Children.Add(GlyphIcon("\u21bb", Grey));
         row.Children.Add(body);
 
+        var scale = new ScaleTransform(0.0, 1.0);
         var progressTrack = new Grid { Height = 3, Background = ThemeBrush("BorderMedium"), VerticalAlignment = VerticalAlignment.Bottom };
-        var progressFill = new Border { Background = Grey, HorizontalAlignment = HorizontalAlignment.Left, Width = 0 };
+        var progressFill = new Border
+        {
+            Background = Grey,
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            RenderTransformOrigin = new Point(0, 0.5),
+            RenderTransform = scale
+        };
         progressTrack.Children.Add(progressFill);
 
         var cardContent = new StackPanel();
@@ -215,32 +223,17 @@ public partial class ToastOverlay : Window
         ToastStack.Children.Insert(0, toast);
 
         const double rampSec = 6.0;
-        const double maxTimeoutSec = 20.0;
-        var startTime = DateTime.UtcNow;
-        double CurrentFraction() => Math.Clamp((DateTime.UtcNow - startTime).TotalSeconds / rampSec, 0.0, 1.0);
-        double Eased(double t) => 1.0 - Math.Pow(1.0 - t, 3);
-
-        var timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(16) };
-        timer.Tick += (_, _) =>
+        var anim = new DoubleAnimation
         {
-            double elapsed = (DateTime.UtcNow - startTime).TotalSeconds;
-            if (elapsed >= maxTimeoutSec)
-            {
-                RemoveProcessingToast(key);
-                return;
-            }
-
-            double t = CurrentFraction();
-            progressFill.Width = Eased(t) * toast.ActualWidth;
-            if (t >= 1.0)
-            {
-                progressFill.Width = toast.ActualWidth;
-            }
+            From = 0.0,
+            To = 1.0,
+            Duration = TimeSpan.FromSeconds(rampSec),
+            EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut },
+            FillBehavior = FillBehavior.HoldEnd
         };
-        toast.SizeChanged += (_, _) => progressFill.Width = Eased(CurrentFraction()) * toast.ActualWidth;
-        timer.Start();
+        scale.BeginAnimation(ScaleTransform.ScaleXProperty, anim);
 
-        _processingToasts[key] = (toast, progressFill, timer);
+        _processingToasts[key] = (toast, scale);
     }
 
     public void CompleteProcessingClip(string key, string label, string resolvedPath)
@@ -253,32 +246,26 @@ public partial class ToastOverlay : Window
             return;
         }
 
-        entry.Timer.Stop();
-
         const double finishSec = 0.25;
-        double startWidth = entry.Fill.Width;
-        var startTime = DateTime.UtcNow;
-        var finishTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(16) };
-        finishTimer.Tick += (_, _) =>
+        var finishAnim = new DoubleAnimation
         {
-            double t = Math.Clamp((DateTime.UtcNow - startTime).TotalSeconds / finishSec, 0.0, 1.0);
-            double fullWidth = entry.Toast.ActualWidth;
-            entry.Fill.Width = startWidth + (fullWidth - startWidth) * t;
-            if (t < 1.0)
-                return;
-
-            finishTimer.Stop();
+            To = 1.0,
+            Duration = TimeSpan.FromSeconds(finishSec),
+            FillBehavior = FillBehavior.HoldEnd
+        };
+        finishAnim.Completed += (_, _) =>
+        {
             ToastStack.Children.Remove(entry.Toast);
             ShowReplaySaved(label, resolvedPath);
         };
-        finishTimer.Start();
+        entry.Scale.BeginAnimation(ScaleTransform.ScaleXProperty, finishAnim);
     }
 
     private void RemoveProcessingToast(string key)
     {
         if (!_processingToasts.Remove(key, out var entry))
             return;
-        entry.Timer.Stop();
+        entry.Scale.BeginAnimation(ScaleTransform.ScaleXProperty, null);
         ToastStack.Children.Remove(entry.Toast);
     }
 
@@ -286,7 +273,7 @@ public partial class ToastOverlay : Window
     {
         foreach (var entry in _processingToasts.Values)
         {
-            entry.Timer.Stop();
+            entry.Scale.BeginAnimation(ScaleTransform.ScaleXProperty, null);
             ToastStack.Children.Remove(entry.Toast);
         }
         _processingToasts.Clear();
@@ -446,8 +433,15 @@ public partial class ToastOverlay : Window
         mainRow.Children.Add(body);
         mainRow.Children.Add(undoButton);
 
+        var scale = new ScaleTransform(1.0, 1.0);
         var progressTrack = new Grid { Height = 3, Background = ThemeBrush("BorderMedium"), VerticalAlignment = VerticalAlignment.Bottom };
-        var progressFill = new Border { Background = Rec, HorizontalAlignment = HorizontalAlignment.Left };
+        var progressFill = new Border
+        {
+            Background = Rec,
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            RenderTransformOrigin = new Point(0, 0.5),
+            RenderTransform = scale
+        };
         progressTrack.Children.Add(progressFill);
 
         var cardContent = new StackPanel();
@@ -468,26 +462,22 @@ public partial class ToastOverlay : Window
         ToastStack.Children.Insert(0, toast);
 
         const double durationSec = 5.0;
-        var startTime = DateTime.UtcNow;
-        var timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(16) };
-
-        timer.Tick += (_, _) =>
+        var anim = new DoubleAnimation
         {
-            double elapsed = (DateTime.UtcNow - startTime).TotalSeconds;
-            double progress = Math.Clamp(1.0 - (elapsed / durationSec), 0.0, 1.0);
-            progressFill.Width = progress * toast.ActualWidth;
-
-            if (progress <= 0)
-            {
-                timer.Stop();
-                Finish();
-                onExpire();
-            }
+            From = 1.0,
+            To = 0.0,
+            Duration = TimeSpan.FromSeconds(durationSec),
+            FillBehavior = FillBehavior.HoldEnd
+        };
+        anim.Completed += (_, _) =>
+        {
+            Finish();
+            onExpire();
         };
 
         undoButton.Click += (_, _) =>
         {
-            timer.Stop();
+            scale.BeginAnimation(ScaleTransform.ScaleXProperty, null);
             Finish();
             onUndo?.Invoke();
         };
@@ -503,8 +493,7 @@ public partial class ToastOverlay : Window
             }
         }
 
-        toast.SizeChanged += (_, _) => progressFill.Width = toast.ActualWidth;
-        timer.Start();
+        scale.BeginAnimation(ScaleTransform.ScaleXProperty, anim);
     }
 
     private void Show(UIElement icon, Brush accentColor, string message, string? subMessage, double durationSec = 4.0, bool truncateSubMessage = false)
@@ -545,8 +534,15 @@ public partial class ToastOverlay : Window
         row.Children.Add(icon);
         row.Children.Add(body);
 
+        var scale = new ScaleTransform(1.0, 1.0);
         var progressTrack = new Grid { Height = 3, Background = ThemeBrush("BorderMedium"), VerticalAlignment = VerticalAlignment.Bottom };
-        var progressFill = new Border { Background = accentColor, HorizontalAlignment = HorizontalAlignment.Left };
+        var progressFill = new Border
+        {
+            Background = accentColor,
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            RenderTransformOrigin = new Point(0, 0.5),
+            RenderTransform = scale
+        };
         progressTrack.Children.Add(progressFill);
 
         var cardContent = new StackPanel();
@@ -566,23 +562,17 @@ public partial class ToastOverlay : Window
 
         ToastStack.Children.Insert(0, toast);
 
-        var startTime = DateTime.UtcNow;
-        var timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(16) };
-
-        timer.Tick += (_, _) =>
+        var anim = new DoubleAnimation
         {
-            double elapsed = (DateTime.UtcNow - startTime).TotalSeconds;
-            double progress = Math.Clamp(1.0 - (elapsed / durationSec), 0.0, 1.0);
-            progressFill.Width = progress * toast.ActualWidth;
-
-            if (progress <= 0)
-            {
-                timer.Stop();
-                ToastStack.Children.Remove(toast);
-            }
+            From = 1.0,
+            To = 0.0,
+            Duration = TimeSpan.FromSeconds(durationSec),
+            FillBehavior = FillBehavior.HoldEnd
         };
-
-        toast.SizeChanged += (_, _) => progressFill.Width = toast.ActualWidth;
-        timer.Start();
+        anim.Completed += (_, _) =>
+        {
+            ToastStack.Children.Remove(toast);
+        };
+        scale.BeginAnimation(ScaleTransform.ScaleXProperty, anim);
     }
 }

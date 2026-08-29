@@ -190,6 +190,23 @@ public partial class MainWindow : Window
             button.IsEnabled = false;
             try
             {
+                int preferredSeconds = _settings.PreferredClipLengthSeconds > 0 ? _settings.PreferredClipLengthSeconds : 60;
+                if (_lastReplaySaveUtc.TryGetValue(row.Key, out DateTime lastSave))
+                {
+                    double elapsed = (DateTime.UtcNow - lastSave).TotalSeconds;
+                    if (elapsed > 1 && elapsed < preferredSeconds)
+                    {
+                        int effectiveSeconds = (int)Math.Ceiling(elapsed);
+                        AppLog.Write($"[Replay] Smart deduplication for {row.Label}: clipping {effectiveSeconds}s since last save");
+                        try { await _obs.SetReplayRowLengthAsync(row.Key, effectiveSeconds); } catch { }
+                    }
+                    else if (preferredSeconds > 0)
+                    {
+                        try { await _obs.SetReplayRowLengthAsync(row.Key, preferredSeconds); } catch { }
+                    }
+                }
+                _lastReplaySaveUtc[row.Key] = DateTime.UtcNow;
+
                 await _obs.SaveReplayRowAsync(row.Key);
             }
             catch (Exception ex)
@@ -246,6 +263,7 @@ public partial class MainWindow : Window
             int seconds = SliderPosToSeconds(slider.Value, maxSeconds);
             _settings.PreferredClipLengthSeconds = seconds;
             _settings.Save();
+            _ = _streamDeckServer?.BroadcastStateSnapshotAsync();
 
             foreach (ReplayRow row in _lastReplayRows)
             {
@@ -259,6 +277,7 @@ public partial class MainWindow : Window
                     break;
                 }
             }
+            _ = _streamDeckServer?.BroadcastStateSnapshotAsync();
         };
 
         var row2 = new Grid { Margin = new Thickness(2, 12, 2, 0) };

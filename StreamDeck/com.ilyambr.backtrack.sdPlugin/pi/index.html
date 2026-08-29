@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Backtrack Property Inspector</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #2d2d2d; color: #eee; margin: 12px; font-size: 11px; }
+    .sdpi-item { display: flex; align-items: center; margin-bottom: 10px; }
+    .sdpi-item-label { width: 80px; font-weight: bold; color: #aaa; }
+    .sdpi-item-value { flex: 1; }
+    select, input { width: 100%; background: #1e1e1e; border: 1px solid #444; color: #fff; padding: 6px 8px; border-radius: 4px; font-size: 11px; }
+    select:focus, input:focus { border-color: #3ECF8E; outline: none; }
+    .status-badge { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; color: #3ECF8E; font-weight: bold; margin-bottom: 12px; }
+    .status-dot { width: 8px; height: 8px; border-radius: 50%; background: #3ECF8E; }
+  </style>
+</head>
+<body>
+  <div class="status-badge">
+    <div class="status-dot"></div>
+    <span>Backtrack Local IPC Connected</span>
+  </div>
+
+  <div id="sourceTargetContainer" class="sdpi-item">
+    <div class="sdpi-item-label">Source Target</div>
+    <div class="sdpi-item-value">
+      <select id="sourceSelect" onchange="saveSettings()">
+        <option value="main">Main / Active Window</option>
+        <option value="Screen">Screen</option>
+      </select>
+    </div>
+  </div>
+
+  <div id="actionInfoContainer" style="display:none; color:#aaa; line-height:1.4; padding: 4px 0 8px 0;">
+  </div>
+
+  <script>
+    let websocket = null;
+    let uuid = null;
+    let actionInfo = {};
+
+    function normalizeName(str) {
+      if (!str) return '';
+      let s = String(str).trim();
+      s = s.replace(/\s*-\s*source\s*record$/i, '');
+      s = s.replace(/\s*-\s*source-record$/i, '');
+      return s.trim();
+    }
+
+    function connectElgatoStreamDeckSocket(inPort, inPropertyInspectorUUID, inRegisterEvent, inInfo, inActionInfo) {
+      uuid = inPropertyInspectorUUID;
+      actionInfo = JSON.parse(inActionInfo);
+      websocket = new WebSocket('ws://127.0.0.1:' + inPort);
+
+      websocket.onopen = function () {
+        websocket.send(JSON.stringify({ event: inRegisterEvent, uuid: inPropertyInspectorUUID }));
+        configureActionView();
+        loadSavedSettings();
+        fetchLiveSources();
+      };
+    }
+
+    function configureActionView() {
+      const action = actionInfo.action;
+      const targetBox = document.getElementById('sourceTargetContainer');
+      const infoBox = document.getElementById('actionInfoContainer');
+
+      if (action === 'com.ilyambr.backtrack.cancel') {
+        targetBox.style.display = 'none';
+        infoBox.style.display = 'block';
+        infoBox.innerText = 'Cancels all active recordings across all sources and main output.';
+      } else if (action === 'com.ilyambr.backtrack.hud') {
+        targetBox.style.display = 'none';
+        infoBox.style.display = 'block';
+        infoBox.innerText = 'Toggles the Backtrack HUD overlay.';
+      } else if (action === 'com.ilyambr.backtrack.bookmark') {
+        targetBox.style.display = 'none';
+        infoBox.style.display = 'block';
+        infoBox.innerText = 'Drops a chapter bookmark into the active recording or player timeline.';
+      } else {
+        targetBox.style.display = 'flex';
+        infoBox.style.display = 'none';
+      }
+    }
+
+    function loadSavedSettings() {
+      const settings = actionInfo.payload.settings || {};
+      if (settings.source) {
+        document.getElementById('sourceSelect').value = settings.source;
+      }
+    }
+
+    function fetchLiveSources() {
+      fetch('http://127.0.0.1:44558/status')
+        .then(r => r.json())
+        .then(data => {
+          if (data && data.snapshot) {
+            const select = document.getElementById('sourceSelect');
+            const currentVal = select.value;
+            const seen = new Set(['main']);
+            select.innerHTML = '<option value="main">Main / Active Window</option>';
+
+            const action = actionInfo.action;
+            const isClip = action === 'com.ilyambr.backtrack.clip';
+
+            const list = isClip ? (data.snapshot.replay_buffers || []) : (data.snapshot.record_sources || []);
+
+            list.forEach(item => {
+              const cleanName = normalizeName(item.label);
+              if (cleanName && !seen.has(cleanName)) {
+                seen.add(cleanName);
+                const opt = document.createElement('option');
+                opt.value = cleanName;
+                opt.innerText = cleanName;
+                select.appendChild(opt);
+              }
+            });
+
+            select.value = currentVal;
+          }
+        })
+        .catch(() => {});
+    }
+
+    function saveSettings() {
+      if (!websocket || websocket.readyState !== WebSocket.OPEN) return;
+      const val = document.getElementById('sourceSelect').value;
+      const json = {
+        event: 'setSettings',
+        context: uuid,
+        payload: {
+          source: val
+        }
+      };
+      websocket.send(JSON.stringify(json));
+    }
+  </script>
+</body>
+</html>

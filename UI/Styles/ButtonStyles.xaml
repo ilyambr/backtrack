@@ -67,6 +67,8 @@
         <Setter Property="BorderThickness" Value="0"/>
         <Setter Property="Foreground" Value="{DynamicResource Text0}"/>
         <Setter Property="Cursor" Value="Hand"/>
+        <Setter Property="Focusable" Value="False"/>
+        <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
         <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
         <Setter Property="Margin" Value="0,0,0,2"/>
         <Setter Property="Template" Value="{StaticResource BufRowTemplate}"/>
@@ -82,6 +84,8 @@
         <Setter Property="BorderThickness" Value="0"/>
         <Setter Property="Foreground" Value="{DynamicResource Text0}"/>
         <Setter Property="Cursor" Value="Hand"/>
+        <Setter Property="Focusable" Value="False"/>
+        <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
         <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
         <Setter Property="Margin" Value="0,0,0,2"/>
         <Setter Property="Template" Value="{StaticResource BufRowTemplate}"/>
