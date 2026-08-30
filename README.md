@@ -130,7 +130,7 @@ Press **Escape** to back out of whatever you're doing, or to close the HUD entir
 
 - **Stream Deck Native Plugin**: Official two-way Elgato Stream Deck plugin with dynamic live timer canvas rendering and source control.
 - **Fullscreen clip player**: VLC-backed playback with interactive timeline trimming, audio track selection, and true edge-to-edge fullscreen mode with floating transport controls.
-- **Themes**: Dark, Light, Yami (matches OBS's own default theme), AMOLED, and Yami Acrylic.
+- **Themes**: Dark, Light, Yami (matches OBS's own default theme), AMOLED, and Yami Acri.
 - **Clip length slider memory**: Remembers whatever clip duration you set on the slider automatically across sessions.
 - **Starred clips & filtering**: Star favorite clips, filter by starred status, search by filename, and sort by date, size, or name.
 - **Video compression**: Built-in background MP4 compression presets powered by bundled FFmpeg.
