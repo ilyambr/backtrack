@@ -93,7 +93,7 @@
                 <ScrollViewer x:Name="GalleryScrollHost" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
                               Focusable="False" FocusVisualStyle="{x:Null}"
                               AllowDrop="True" DragEnter="GalleryScrollHost_DragEnter" DragOver="GalleryScrollHost_DragOver" Drop="GalleryScrollHost_Drop">
-                    <WrapPanel x:Name="GalleryGrid" ItemWidth="240" ItemHeight="168" Focusable="False" FocusVisualStyle="{x:Null}"/>
+                    <WrapPanel x:Name="GalleryGrid" ItemWidth="230" ItemHeight="168" HorizontalAlignment="Center" Focusable="False" FocusVisualStyle="{x:Null}"/>
                 </ScrollViewer>
             </DockPanel>
 

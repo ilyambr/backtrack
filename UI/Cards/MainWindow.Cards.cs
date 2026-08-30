@@ -289,7 +289,7 @@ public partial class MainWindow : Window
 
         _ = LoadThumbnailAsync(file, thumbImage, knownDurationMs is null ? durationText : null);
 
-        var card = new Border { Width = 210, Child = content };
+        var card = new Border { Width = GetGalleryCardWidth(), Child = content };
 
         if (IsNetworkPath(_settings.ClipsFolder))
         {

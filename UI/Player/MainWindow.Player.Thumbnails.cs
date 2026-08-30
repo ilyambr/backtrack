@@ -23,7 +23,7 @@ public partial class MainWindow : Window
 {
     private async Task<string?> EnsureThumbnailCachedAsync(FileInfo file)
     {
-        if (!file.Exists || file.Length == 0)
+        if (!file.Exists || file.Length < 10240)
             return null;
 
         string cachePath = GetThumbnailCachePath(file);
@@ -60,7 +60,7 @@ public partial class MainWindow : Window
             files = Directory.EnumerateFiles(_settings.ClipsFolder, "*.*", SearchOption.AllDirectories)
                 .Where(f => VideoExtensions.Contains(Path.GetExtension(f).ToLowerInvariant()))
                 .Select(f => new FileInfo(f))
-                .Where(f => f.Exists && f.Length > 0)
+                .Where(f => f.Exists && f.Length >= 10240)
                 .OrderByDescending(f => f.LastWriteTime)
                 .ToList();
         }

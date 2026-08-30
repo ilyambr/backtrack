@@ -59,6 +59,7 @@ public partial class MainWindow
     public TextBlock PlayerCurrentTime => PlayerView.PlayerCurrentTime;
     public TextBlock PlayerDurationText => PlayerView.PlayerDurationText;
     public Image PlayerFreezeFrame => PlayerView.PlayerFreezeFrame;
+    public Border PlayerFreezeFrameDimmer => PlayerView.PlayerFreezeFrameDimmer;
     public Popup PlayerFreezeFramePopup => PlayerView.PlayerFreezeFramePopup;
     public Button PlayerFullscreenButton => PlayerView.PlayerFullscreenButton;
     public Path PlayerFullscreenIcon => PlayerView.PlayerFullscreenIcon;
@@ -152,6 +153,8 @@ public partial class MainWindow
     public ToggleButton DeveloperModeToggle => SettingsView.DeveloperModeToggle;
     public ToggleButton DiagnosticLogToggle => SettingsView.DiagnosticLogToggle;
     public ToggleButton DisableAudioCuesToggle => SettingsView.DisableAudioCuesToggle;
+    public Border DisableAudioCuesRow => SettingsView.DisableAudioCuesRow;
+    public TextBlock DisableAudioCuesSubtext => SettingsView.DisableAudioCuesSubtext;
     public ToggleButton DisableBacktrackAutoUpdateToggle => SettingsView.DisableBacktrackAutoUpdateToggle;
     public ToggleButton DisableHardwareAccelToggle => SettingsView.DisableHardwareAccelToggle;
     public ToggleButton DisablePluginAutoUpdateToggle => SettingsView.DisablePluginAutoUpdateToggle;

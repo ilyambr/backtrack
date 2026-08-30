@@ -145,13 +145,13 @@ public sealed class RemoteClipStreamServer
         finally
         {
             upstreamClient?.Dispose();
-            try { context.Response.Close(); } catch { /* best effort -- may already be closed/broken */ }
+            try { context.Response.Close(); } catch { }
         }
     }
 
     public void Stop()
     {
-        try { _listener?.Stop(); } catch { /* best effort */ }
+        try { _listener?.Stop(); } catch { }
         _listener = null;
     }
 }

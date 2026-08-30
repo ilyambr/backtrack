@@ -303,6 +303,8 @@ public partial class MainWindow : Window
         _scrim.DragHovered += (screenPt) => CheckDragExitThreshold(screenPt);
         ShellDragHelper.EnableDropPreview(this, this);
         KeyDown += MainWindow_KeyDown;
+        PreviewMouseMove += MainWindow_PreviewMouseMove;
+        PreviewMouseDown += MainWindow_PreviewMouseDown;
 
         string url;
         string? password;
@@ -316,7 +318,14 @@ public partial class MainWindow : Window
         _streamDeckServer = new StreamDeckIpcServer(_obs, _settings,
             () => Dispatcher.BeginInvoke(ToggleVisible),
             () => Dispatcher.BeginInvoke(OnBookmarkHotkeyPressed),
-            key => _recordRowActiveSinceUtc.TryGetValue(key, out var dt) ? dt : null);
+            key => _recordRowActiveSinceUtc.TryGetValue(key, out var dt) ? dt : null,
+            duration => Dispatcher.BeginInvoke(() =>
+            {
+                if (SaveReplayPanel.Visibility == Visibility.Visible)
+                {
+                    _ = LoadReplayRowsAsync();
+                }
+            }));
         _streamDeckServer.Start();
 
         ShowScreen(Screen.Idle);

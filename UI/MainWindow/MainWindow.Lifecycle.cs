@@ -100,11 +100,18 @@ public partial class MainWindow : Window
                 return;
             }
 
-            _toastOverlay.ShowRecording(active, path);
             if (active)
                 AppLog.Write("Recording started");
             else if (path is not null)
             {
+                if (File.Exists(path) && new FileInfo(path).Length < 10240)
+                {
+                    try { File.Delete(path); } catch { }
+                    AppLog.Write($"Aborted empty recording removed: '{path}'");
+                    return;
+                }
+
+                _toastOverlay.ShowRecording(active, path);
                 if (_activeRecordingMarkers.Count > 0)
                 {
                     string clipKey = Path.GetFileName(path);
@@ -115,7 +122,10 @@ public partial class MainWindow : Window
                 AppLog.Write($"Recording saved to '{path}'");
                 ShowObsModeMessage($"Recording saved to '{path}'");
                 RefreshRecentClipsOverlay();
+                return;
             }
+
+            _toastOverlay.ShowRecording(active, path);
         });
         _obs.StreamingStateChanged += active => Dispatcher.BeginInvoke(() =>
         {
@@ -412,7 +422,7 @@ public partial class MainWindow : Window
         {
             LibVlc.Core.Initialize();
 
-            _libVlc = new LibVlc.LibVLC("--no-video-title-show", "--avcodec-hw=none");
+            _libVlc = new LibVlc.LibVLC("--no-video-title-show", "--no-snapshot-preview", "--no-osd", "--avcodec-hw=none");
             AudioCues.Initialize();
 
             var thumbnailSink = new Window { Width = 2, Height = 2, WindowStyle = WindowStyle.None, ShowInTaskbar = false, Left = -10000, Top = -10000 };

@@ -20,6 +20,10 @@ public static class AudioCues
     private static extern bool PlaySound(string? pszSound, IntPtr hmod, uint fdwSound);
 
     private static string AssetsAudioDir => Path.Combine(AppContext.BaseDirectory, "Assets", "Audio");
+    public static string AudioDirectory => AssetsAudioDir;
+
+    private static readonly string[] StartCueCandidates = { "start.wav", "start.mp3", "start.ogg", "ps3-game-startup-chime.wav", "ps3-game-startup-chime.mp3" };
+    private static readonly string[] SaveCueCandidates = { "save.wav", "stop.wav", "save.mp3", "stop.mp3", "save.ogg", "stop.ogg", "ps3-trophy-sound-effect.wav", "ps3-trophy-sound-effect.mp3" };
 
     private static byte[]? _clipSavedWav;
     private static byte[]? _recSavedWav;
@@ -33,9 +37,9 @@ public static class AudioCues
     {
         try
         {
-            _clipSavedWav = LoadWavBytes("ps3-trophy-sound-effect.wav");
-            _recSavedWav = LoadWavBytes("ps3-trophy-sound-effect.wav");
-            _recStartedWav = LoadWavBytes("ps3-game-startup-chime.wav");
+            _clipSavedWav = LoadWavBytes(SaveCueCandidates);
+            _recSavedWav = LoadWavBytes(SaveCueCandidates);
+            _recStartedWav = LoadWavBytes(StartCueCandidates);
 
             _initialized = true;
             AppLog.Write("[AudioCues] Initialized successfully with in-memory Win32 PlaySound");
@@ -44,6 +48,20 @@ public static class AudioCues
         {
             AppLog.WriteError("[AudioCues] Initialize failed", ex);
         }
+    }
+
+    private static byte[]? LoadWavBytes(string[] candidates)
+    {
+        foreach (string fileName in candidates)
+        {
+            if (!fileName.EndsWith(".wav", StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            byte[]? bytes = LoadWavBytes(fileName);
+            if (bytes != null && bytes.Length > 0)
+                return bytes;
+        }
+        return null;
     }
 
     private static byte[]? LoadWavBytes(string fileName)
@@ -75,16 +93,29 @@ public static class AudioCues
 
     public static void PlayRecordingStarted()
     {
+        var settings = AppSettings.Load();
+        if (settings.DisableAudioCues || settings.DisableStartAudioCue)
+            return;
+
+        PlayCue("recording_started", _recStartedWav, StartCueCandidates);
     }
 
     public static void PlayRecordingSaved()
     {
-        PlayCue("recording_saved", _recSavedWav, "ps3-trophy-sound-effect.wav", "ps3-trophy-sound-effect.mp3");
+        var settings = AppSettings.Load();
+        if (settings.DisableAudioCues || settings.DisableSaveAudioCue)
+            return;
+
+        PlayCue("recording_saved", _recSavedWav, SaveCueCandidates);
     }
 
     public static void PlayClipSaved()
     {
-        PlayCue("clip_saved", _clipSavedWav, "ps3-trophy-sound-effect.wav", "ps3-trophy-sound-effect.mp3");
+        var settings = AppSettings.Load();
+        if (settings.DisableAudioCues || settings.DisableSaveAudioCue)
+            return;
+
+        PlayCue("clip_saved", _clipSavedWav, SaveCueCandidates);
     }
 
     public static void PlayPreview(int volume)
@@ -92,7 +123,7 @@ public static class AudioCues
         if (!_initialized)
             Initialize();
 
-        PlayLocalCueDirect(_clipSavedWav, "ps3-trophy-sound-effect.wav", "ps3-trophy-sound-effect.mp3", volume);
+        PlayLocalCueDirect(_clipSavedWav, SaveCueCandidates, volume);
     }
 
     public static void PlayCueByName(string cueName, int volume = -1)
@@ -100,17 +131,22 @@ public static class AudioCues
         if (!_initialized)
             Initialize();
 
+        var settings = AppSettings.Load();
         if (string.Equals(cueName, "recording_started", StringComparison.OrdinalIgnoreCase))
         {
-            PlayLocalCueDirect(_recStartedWav, "ps3-game-startup-chime.wav", "ps3-game-startup-chime.mp3", volume);
+            if (settings.DisableAudioCues || settings.DisableStartAudioCue)
+                return;
+            PlayLocalCueDirect(_recStartedWav, StartCueCandidates, volume);
         }
         else
         {
-            PlayLocalCueDirect(_clipSavedWav, "ps3-trophy-sound-effect.wav", "ps3-trophy-sound-effect.mp3", volume);
+            if (settings.DisableAudioCues || settings.DisableSaveAudioCue)
+                return;
+            PlayLocalCueDirect(_clipSavedWav, SaveCueCandidates, volume);
         }
     }
 
-    private static void PlayCue(string cueName, byte[]? memoryBuffer, string wavFileName, string mp3FallbackFileName)
+    private static void PlayCue(string cueName, byte[]? memoryBuffer, string[] candidateFileNames)
     {
         try
         {
@@ -129,15 +165,15 @@ public static class AudioCues
                 return;
             }
 
-            PlayLocalCueDirect(memoryBuffer, wavFileName, mp3FallbackFileName, volume);
+            PlayLocalCueDirect(memoryBuffer, candidateFileNames, volume);
         }
         catch (Exception ex)
         {
-            AppLog.WriteError($"[AudioCues] Failed to play cue {wavFileName}", ex);
+            AppLog.WriteError($"[AudioCues] Failed to play cue {cueName}", ex);
         }
     }
 
-    private static void PlayLocalCueDirect(byte[]? memoryBuffer, string wavFileName, string mp3FallbackFileName, int volume)
+    private static void PlayLocalCueDirect(byte[]? memoryBuffer, string[] candidateFileNames, int volume)
     {
         try
         {
@@ -157,43 +193,52 @@ public static class AudioCues
 
             double volumeFraction = Math.Clamp(volume / 100.0, 0.0, 1.0);
 
+            if (Directory.Exists(AssetsAudioDir))
+            {
+                foreach (string candidate in candidateFileNames)
+                {
+                    string diskPath = Path.Combine(AssetsAudioDir, candidate);
+                    if (File.Exists(diskPath))
+                    {
+                        string ext = Path.GetExtension(candidate).ToLowerInvariant();
+                        if (ext == ".wav")
+                        {
+                            byte[] raw = File.ReadAllBytes(diskPath);
+                            byte[]? scaled = ScalePcmWav(raw, volumeFraction);
+                            if (scaled != null && scaled.Length > 0)
+                            {
+                                PlaySound(scaled, IntPtr.Zero, SND_MEMORY | SND_ASYNC | SND_NODEFAULT);
+                                AppLog.Write($"[AudioCues] Played custom disk WAV cue ({candidate}) at {volume}% volume");
+                                return;
+                            }
+                        }
+                        else
+                        {
+                            var player = new System.Windows.Media.MediaPlayer();
+                            player.Volume = volumeFraction;
+                            player.Open(new Uri(diskPath, UriKind.Absolute));
+                            player.Play();
+                            AppLog.Write($"[AudioCues] Played custom disk audio cue ({candidate}) at {volume}% volume");
+                            return;
+                        }
+                    }
+                }
+            }
+
             if (memoryBuffer != null && memoryBuffer.Length > 0)
             {
                 byte[]? scaledBuffer = ScalePcmWav(memoryBuffer, volumeFraction);
                 if (scaledBuffer != null && scaledBuffer.Length > 0)
                 {
                     PlaySound(scaledBuffer, IntPtr.Zero, SND_MEMORY | SND_ASYNC | SND_NODEFAULT);
-                    AppLog.Write($"[AudioCues] Played in-memory cue ({wavFileName}) at {volume}% volume");
+                    AppLog.Write($"[AudioCues] Played in-memory cue at {volume}% volume");
                     return;
                 }
-            }
-
-            string wavPath = Path.Combine(AssetsAudioDir, wavFileName);
-            if (File.Exists(wavPath))
-            {
-                byte[] raw = File.ReadAllBytes(wavPath);
-                byte[]? scaled = ScalePcmWav(raw, volumeFraction);
-                if (scaled != null && scaled.Length > 0)
-                {
-                    PlaySound(scaled, IntPtr.Zero, SND_MEMORY | SND_ASYNC | SND_NODEFAULT);
-                    AppLog.Write($"[AudioCues] Played disk WAV cue ({wavFileName}) at {volume}% volume");
-                    return;
-                }
-            }
-
-            string mp3Path = Path.Combine(AssetsAudioDir, mp3FallbackFileName);
-            if (File.Exists(mp3Path))
-            {
-                var player = new System.Windows.Media.MediaPlayer();
-                player.Volume = volumeFraction;
-                player.Open(new Uri(mp3Path));
-                player.Play();
-                AppLog.Write($"[AudioCues] Played disk MP3 fallback cue ({mp3FallbackFileName}) at {volume}% volume");
             }
         }
         catch (Exception ex)
         {
-            AppLog.WriteError($"[AudioCues] Failed to play local cue {wavFileName}", ex);
+            AppLog.WriteError("[AudioCues] Failed to play local cue", ex);
         }
     }
 

@@ -26,6 +26,7 @@ public partial class SettingsView : UserControl
     private void LaunchWithWindowsToggle_Click(object sender, RoutedEventArgs e) => Main?.LaunchWithWindowsToggle_Click(sender, e);
     private void ShowDisclaimerToggle_Click(object sender, RoutedEventArgs e) => Main?.ShowDisclaimerToggle_Click(sender, e);
     private void DisableAudioCuesToggle_Click(object sender, RoutedEventArgs e) => Main?.DisableAudioCuesToggle_Click(sender, e);
+    private void DisableAudioCuesRow_MouseRightButtonUp(object sender, MouseButtonEventArgs e) => Main?.DisableAudioCuesRow_MouseRightButtonUp(sender, e);
     private void AudioCueVolumeSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e) => Main?.AudioCueVolumeSlider_ValueChanged(sender, e);
     private void DefaultAudioTrackSelector_SelectionChanged(object sender, SelectionChangedEventArgs e) => Main?.DefaultAudioTrackSelector_SelectionChanged(sender, e);
     private void ChangeClipsFolder_Click(object sender, RoutedEventArgs e) => Main?.ChangeClipsFolder_Click(sender, e);
@@ -53,7 +54,6 @@ public partial class SettingsView : UserControl
     private void RamDiskToggle_Click(object sender, RoutedEventArgs e) => Main?.RamDiskToggle_Click(sender, e);
     private void SuggestRamDiskSize_Click(object sender, RoutedEventArgs e) => Main?.SuggestRamDiskSize_Click(sender, e);
     private void ApplyRamDiskSettings_Click(object sender, RoutedEventArgs e) => Main?.ApplyRamDiskSettings_Click(sender, e);
-    private void RemoteRamDiskToggle_Click(object sender, RoutedEventArgs e) => Main?.RamDiskToggle_Click(sender, e);
     private void ApplyRemoteRamDiskSettings_Click(object sender, RoutedEventArgs e) => Main?.ApplyRemoteRamDiskSettings_Click(sender, e);
     private void OverlayLogToggle_Click(object sender, RoutedEventArgs e) => Main?.OverlayLogToggle_Click(sender, e);
     private void OverlayLogModeSelector_SelectionChanged(object sender, SelectionChangedEventArgs e) => Main?.OverlayLogModeSelector_SelectionChanged(sender, e);

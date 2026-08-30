@@ -55,7 +55,7 @@ public partial class MainWindow : Window
         content.Children.Add(titleRow);
         content.Children.Add(sub);
 
-        var card = new Border { Width = 210, Child = content, Cursor = Cursors.Hand };
+        var card = new Border { Width = GetGalleryCardWidth(), Child = content, Cursor = Cursors.Hand };
 
         var contextMenu = new ContextMenu { Style = (Style)FindResource("DarkContextMenu") };
         var openFolderItem = new MenuItem { Header = "Open file location", Style = (Style)FindResource("DarkMenuItem") };

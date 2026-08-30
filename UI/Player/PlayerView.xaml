@@ -162,7 +162,8 @@
 
                 <Popup x:Name="PlayerOverlayPopup" PlacementTarget="{Binding ElementName=PlayerVideoView}" Placement="Relative"
                        HorizontalOffset="10" VerticalOffset="10" AllowsTransparency="True" StaysOpen="True" Focusable="False" IsOpen="False">
-                    <Grid x:Name="PlayerTitleBarHost" Width="{Binding ElementName=PlayerVideoView, Path=ActualWidth}" Height="46">
+                    <Grid x:Name="PlayerTitleBarHost" Width="{Binding ElementName=PlayerVideoView, Path=ActualWidth}" Height="46"
+                          MouseMove="PlayerControl_MouseMove" MouseDown="PlayerControl_MouseDown">
                         <Border x:Name="PlayerTitlePill" Background="{DynamicResource PanelBgOpaque}" CornerRadius="18" Padding="10,7"
                                 HorizontalAlignment="Left" VerticalAlignment="Center">
                             <Border.Effect>
@@ -268,7 +269,8 @@
 
                 <Popup x:Name="PlayerFullscreenTransportPopup" PlacementTarget="{Binding ElementName=PlayerVideoView}" Placement="Relative"
                        HorizontalOffset="0" AllowsTransparency="True" StaysOpen="True" Focusable="False" IsOpen="False">
-                    <Border x:Name="PlayerFullscreenTransportBorder" Background="{DynamicResource PanelBgOpaque}" Padding="20,6">
+                    <Border x:Name="PlayerFullscreenTransportBorder" Background="{DynamicResource PanelBgOpaque}" Padding="20,6"
+                            MouseMove="PlayerControl_MouseMove" MouseDown="PlayerControl_MouseDown">
                         <Border.Effect>
                             <DropShadowEffect BlurRadius="14" ShadowDepth="2" Color="Black" Opacity="0.5"/>
                         </Border.Effect>
@@ -277,9 +279,13 @@
 
                 <Popup x:Name="PlayerFreezeFramePopup" PlacementTarget="{Binding ElementName=PlayerVideoView}" Placement="Relative"
                        HorizontalOffset="0" VerticalOffset="0" AllowsTransparency="True" StaysOpen="True" Focusable="False" IsOpen="False">
-                    <Image x:Name="PlayerFreezeFrame" Stretch="Uniform"
-                           Width="{Binding ElementName=PlayerVideoView, Path=ActualWidth}"
-                           Height="{Binding ElementName=PlayerVideoView, Path=ActualHeight}"/>
+                    <Grid Width="{Binding ElementName=PlayerVideoView, Path=ActualWidth}"
+                          Height="{Binding ElementName=PlayerVideoView, Path=ActualHeight}">
+                        <Image x:Name="PlayerFreezeFrame" Stretch="Uniform"
+                               Width="{Binding ElementName=PlayerVideoView, Path=ActualWidth}"
+                               Height="{Binding ElementName=PlayerVideoView, Path=ActualHeight}"/>
+                        <Border x:Name="PlayerFreezeFrameDimmer" Background="#40000000" Visibility="Collapsed"/>
+                    </Grid>
                 </Popup>
 
                 <Popup x:Name="PlayerActionFeedbackPopup" PlacementTarget="{Binding ElementName=PlayerVideoView}" Placement="Relative"

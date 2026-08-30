@@ -252,7 +252,8 @@ public partial class MainWindow : Window
         TrimSaveNewButton.IsEnabled = false;
         TrimStatusText.Text = "Trimming...";
 
-        StopPlayerPlayback();
+        await CaptureAndShowPlayerFreezeFrameAsync(sourceFile);
+        StopPlayerPlayback(keepFreezeFrame: true);
 
         try
         {
@@ -269,13 +270,13 @@ public partial class MainWindow : Window
                 if (userConfirmed != true)
                 {
                     File.Delete(tempOut);
-                    OpenInPlayer(sourceFile);
+                    OpenInPlayer(sourceFile, keepCurrentFreezeFrame: true);
                     return;
                 }
                 File.Copy(tempOut, sourceFile.FullName, overwrite: true);
                 File.Delete(tempOut);
                 _currentPlayerFile = new FileInfo(sourceFile.FullName);
-                OpenInPlayer(_currentPlayerFile);
+                OpenInPlayer(_currentPlayerFile, keepCurrentFreezeFrame: true);
                 _toastOverlay.ShowTrimSaved(sourceFile.FullName);
 
                 if (remoteOrigin is (string relPath, _))
@@ -296,7 +297,7 @@ public partial class MainWindow : Window
                 _ = RefreshGalleryCountAsync();
                 var newFileInfo = new FileInfo(destPath);
                 _currentPlayerFile = newFileInfo;
-                OpenInPlayer(newFileInfo);
+                OpenInPlayer(newFileInfo, keepCurrentFreezeFrame: true);
                 _toastOverlay.ShowTrimSaved(destPath);
 
                 if (remoteOrigin is (string relPath, _))
@@ -456,7 +457,8 @@ public partial class MainWindow : Window
             }
         }
 
-        DetachPlayerVideo();
+        await CaptureAndShowPlayerFreezeFrameAsync();
+        DetachPlayerVideo(keepFreezeFrame: true);
         DisposeVlcPlayerAsync();
 
         _isTrimming = true;
@@ -496,6 +498,80 @@ public partial class MainWindow : Window
             _isTrimming = false;
             TrimReplaceButton.IsEnabled = true;
             TrimSaveNewButton.IsEnabled = true;
+        }
+    }
+
+    private async Task CaptureAndShowPlayerFreezeFrameAsync(FileInfo? file = null)
+    {
+        try
+        {
+            string snapPath = Path.Combine(Path.GetTempPath(), $"bt_trim_snap_{Guid.NewGuid():N}.png");
+            bool snapOk = false;
+            if (_vlcPlayer is not null)
+            {
+                try
+                {
+                    if (_vlcPlayer.TakeSnapshot(0, snapPath, 480, 0))
+                    {
+                        for (int i = 0; i < 15; i++)
+                        {
+                            if (File.Exists(snapPath) && new FileInfo(snapPath).Length > 0)
+                            {
+                                snapOk = true;
+                                break;
+                            }
+                            await Task.Delay(20);
+                        }
+                    }
+                }
+                catch { }
+            }
+
+            if (snapOk && File.Exists(snapPath))
+            {
+                try
+                {
+                    var bmp = new System.Windows.Media.Imaging.BitmapImage();
+                    bmp.BeginInit();
+                    bmp.CacheOption = System.Windows.Media.Imaging.BitmapCacheOption.OnLoad;
+                    bmp.UriSource = new Uri(snapPath);
+                    bmp.EndInit();
+                    bmp.Freeze();
+                    PlayerFreezeFrame.Source = bmp;
+                    try { File.Delete(snapPath); } catch { }
+                }
+                catch { }
+            }
+            else if (file != null && File.Exists(file.FullName))
+            {
+                await LoadThumbnailAsync(file, PlayerFreezeFrame);
+            }
+            else if (_currentPlayerRemoteOrigin is (string relPath, _))
+            {
+                string? thumbPath = GetRemoteThumbnailCachePath(relPath, DateTime.UtcNow, _remoteStreamTotalBytes);
+                if (thumbPath != null && File.Exists(thumbPath))
+                {
+                    var bmp = new System.Windows.Media.Imaging.BitmapImage();
+                    bmp.BeginInit();
+                    bmp.CacheOption = System.Windows.Media.Imaging.BitmapCacheOption.OnLoad;
+                    bmp.UriSource = new Uri(thumbPath);
+                    bmp.EndInit();
+                    bmp.Freeze();
+                    PlayerFreezeFrame.Source = bmp;
+                }
+            }
+
+            PlayerFreezeFrame.Effect = null;
+            if (PlayerFreezeFrameDimmer != null)
+                PlayerFreezeFrameDimmer.Visibility = Visibility.Collapsed;
+
+            PlayerFreezeFramePopup.IsOpen = true;
+            _freezeFrameTimer?.Stop();
+            ReopenPlayerOverlayPopup();
+        }
+        catch (Exception ex)
+        {
+            AppLog.WriteError("[Trim] CaptureAndShowPlayerFreezeFrameAsync failed", ex);
         }
     }
 }

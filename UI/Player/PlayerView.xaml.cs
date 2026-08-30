@@ -53,4 +53,6 @@ public partial class PlayerView : UserControl
     private void CompressSaveNew_Click(object sender, RoutedEventArgs e) => Main?.CompressSaveNew_Click(sender, e);
     private void CloseBookmarkPopup_Click(object sender, RoutedEventArgs e) => Main?.CloseBookmarkPopup_Click(sender, e);
     private void AddBookmarkDialogButton_Click(object sender, RoutedEventArgs e) => Main?.AddBookmarkDialogButton_Click(sender, e);
+    private void PlayerControl_MouseMove(object sender, MouseEventArgs e) => Main?.NotifyFullscreenActivity();
+    private void PlayerControl_MouseDown(object sender, MouseButtonEventArgs e) => Main?.NotifyFullscreenActivity();
 }

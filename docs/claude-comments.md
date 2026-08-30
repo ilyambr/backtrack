@@ -5256,3 +5256,98 @@ This document is the comprehensive archive of all original architectural comment
                 // (a whole release behind) before anyone noticed, since nothing forced
                 // it to be touched on a version bump. This way it can't drift again.
 ```
+
+
+---
+
+## Newly Archived Comments (v0.3.14 Refactor)
+
+### `App.xaml`
+
+- **Line 8**: `//application:,,,/Backtrack;component/UI/Styles/Converters.xaml"/>`
+- **Line 9**: `//application:,,,/Backtrack;component/UI/Styles/ButtonStyles.xaml"/>`
+- **Line 10**: `//application:,,,/Backtrack;component/UI/Styles/ControlStyles.xaml"/>`
+- **Line 11**: `//application:,,,/Backtrack;component/UI/Styles/PlayerStyles.xaml"/>`
+- **Line 12**: `//application:,,,/Backtrack;component/UI/Styles/MenuStyles.xaml"/>`
+
+### `Core/AppLog.cs`
+
+- **Line 55**: `/* best effort */`
+
+### `Core/AppSettings.cs`
+
+- **Line 199**: `// If bookmarks.json does not exist yet, check if settings.json contains legacy ClipMarkers to migrate`
+- **Line 257**: `/* best effort -- e.g. file briefly locked; caller still restarts either way */`
+
+### `Interop/FirewallRules.cs`
+
+- **Line 54**: `/* best effort -- still report the exit code below either way */`
+- **Line 76**: `/* best effort cleanup */`
+- **Line 77**: `/* best effort cleanup */`
+
+### `Interop/RamDisk.cs`
+
+- **Line 55**: `/* best effort -- still report the exit code below either way */`
+- **Line 75**: `/* best effort cleanup */`
+- **Line 76**: `/* best effort cleanup */`
+- **Line 142**: `/* best effort */`
+
+### `Interop/ShellDragHelper.cs`
+
+- **Line 422**: `// Exact SVG: M10,4H4C2.89,4 2,4.89 2,6V18A2,2 0 0,0 4,20H20A2,2 0 0,0 22,18V8C22,6.89 21.1,6 20,6H12L10,4Z`
+
+### `StreamDeck/StreamDeckIpcServer.cs`
+
+- **Line 19**: `/// <summary>`
+- **Line 20**: `/// Dedicated, modular Localhost IPC & WebSocket Server for Elgato Stream Deck integration.`
+- **Line 21**: `/// Handles two-way WebSocket communication on 127.0.0.1:44558 with zero external dependencies.`
+- **Line 22**: `/// </summary>`
+
+### `StreamDeck/com.ilyambr.backtrack.sdPlugin/app.js`
+
+- **Line 1**: `// Backtrack Stream Deck Dynamic Canvas & Animation Engine (Massive 23px Header Typography)`
+- **Line 150**: `// Reusable static canvas to prevent DOM garbage collection overhead`
+- **Line 170**: `// 60 FPS real-time desktop UI rate`
+- **Line 230**: `// INACTIVE - unable to clip, do nothing`
+- **Line 238**: `// INACTIVE - unable to record, do nothing`
+- **Line 264**: `// If main or unset, return the main OBS replay buffer`
+- **Line 271**: `// Exact or partial match`
+- **Line 298**: `// 1. Exact or partial match for specific named source`
+- **Line 566**: `// State deduplication key (Include animation step index for smooth pulse/scale)`
+
+### `StreamDeck/com.ilyambr.backtrack.sdPlugin/js/backtrack-client.js`
+
+- **Line 1**: `// Backtrack Localhost WebSocket IPC Client & State Sync`
+
+### `StreamDeck/com.ilyambr.backtrack.sdPlugin/js/keycap-canvas.js`
+
+- **Line 1**: `// Backtrack HTML5 Keycap Canvas Rendering Engine`
+- **Line 25**: `// 1. Background`
+- **Line 29**: `// 2. Keycap Border`
+- **Line 34**: `// 3. Header Title`
+- **Line 56**: `// Inset Top Right Dot`
+- **Line 66**: `// 4. Dynamic Icon Size & Vertical Position (58px base)`
+- **Line 105**: `// 5. Inset Bottom Footer`
+
+### `Streaming/RemoteClipStreamServer.cs`
+
+- **Line 148**: `/* best effort -- may already be closed/broken */`
+- **Line 154**: `/* best effort */`
+
+### `UI/Gallery/MainWindow.Gallery.Metadata.cs`
+
+- **Line 57**: `// Resolve full file path and embed chapters into video container for DaVinci Resolve, Premiere Pro, VLC`
+- **Line 93**: `// Determine video duration in seconds`
+- **Line 106**: `// Build FFMETADATA`
+
+### `UI/ReplayRecord/MainWindow.SaveReplay.Rows.cs`
+
+- **Line 281**: `// Explicitly changed clip length: ignore previous back-to-back timestamp to save full updated duration!`
+
+### `Updates/UpdateService.cs`
+
+- **Line 186**: `/* best-effort cleanup */`
+- **Line 274**: `/* already gone */`
+- **Line 357**: `/* best effort */`
+- **Line 388**: `/* best effort -- don't leave a mismatched file lying around either way */`
+

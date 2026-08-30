@@ -68,6 +68,10 @@ public partial class MainWindow : Window
 
         StopPlayerPlayback();
 
+        PlayerFreezeFrame.Effect = null;
+        if (PlayerFreezeFrameDimmer != null)
+            PlayerFreezeFrameDimmer.Visibility = Visibility.Collapsed;
+
         if (thumbnailCachePath is not null && File.Exists(thumbnailCachePath))
         {
             try
@@ -98,6 +102,9 @@ public partial class MainWindow : Window
 
     private async void ShowPlayerFreezeFrame(FileInfo file)
     {
+        PlayerFreezeFrame.Effect = null;
+        if (PlayerFreezeFrameDimmer != null)
+            PlayerFreezeFrameDimmer.Visibility = Visibility.Collapsed;
         await LoadThumbnailAsync(file, PlayerFreezeFrame);
         PlayerFreezeFramePopup.IsOpen = false;
         _ = Dispatcher.BeginInvoke(new Action(() =>
@@ -112,7 +119,7 @@ public partial class MainWindow : Window
         }), DispatcherPriority.Loaded);
     }
 
-    private void OpenInPlayer(FileInfo file)
+    private void OpenInPlayer(FileInfo file, bool keepCurrentFreezeFrame = false)
     {
         if (_libVlc is null)
         {
@@ -143,7 +150,10 @@ public partial class MainWindow : Window
         RenderPlayerMarkers();
 
         ReopenPlayerOverlayPopup();
-        ShowPlayerFreezeFrame(file);
+        if (!keepCurrentFreezeFrame)
+        {
+            ShowPlayerFreezeFrame(file);
+        }
 
         StatSize.Text = $"{file.Length / 1024.0 / 1024.0:0.#} MB";
         StatDate.Text = $"{file.LastWriteTime:MMM d, yyyy h:mm tt}";
@@ -151,11 +161,11 @@ public partial class MainWindow : Window
         StatFps.Text = "";
         StatBitrate.Text = "";
 
-        StopPlayerPlayback();
+        StopPlayerPlayback(keepFreezeFrame: keepCurrentFreezeFrame);
 
         long myToken = _clipOpenToken;
         var mediaUri = new Uri(ResolveLocalClipPath(file));
-        Dispatcher.BeginInvoke(new Action(() => StartPlayerPlayback(mediaUri, myToken)), DispatcherPriority.Loaded);
+        Dispatcher.BeginInvoke(new Action(() => StartPlayerPlayback(mediaUri, myToken, hideFreezeFrameOnFirstPlay: keepCurrentFreezeFrame)), DispatcherPriority.Loaded);
     }
 
     private async void StartPlayerPlayback(Uri mediaUri, long myToken, bool hideFreezeFrameOnFirstPlay = false)

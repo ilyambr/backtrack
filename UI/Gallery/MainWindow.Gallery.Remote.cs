@@ -343,6 +343,8 @@ public partial class MainWindow : Window
         foreach (UIElement card in newCards)
             GalleryGrid.Children.Add(card);
 
+        AdjustGalleryGridItemWidth();
+
         long remoteTotalBytes = files.Sum(f => f.Size);
         UpdateGalleryFooterStats(files.Count, remoteTotalBytes, _currentRemoteGalleryFolder);
 

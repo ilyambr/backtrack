@@ -52,7 +52,7 @@ public static class RamDisk
                 if (File.Exists(logPath))
                     log = File.ReadAllText(logPath).Trim();
             }
-            catch { /* best effort -- still report the exit code below either way */ }
+            catch { }
 
             if (proc is null || proc.ExitCode != 0)
             {
@@ -72,8 +72,8 @@ public static class RamDisk
         }
         finally
         {
-            try { File.Delete(wrapperPath); } catch { /* best effort cleanup */ }
-            try { File.Delete(logPath); } catch { /* best effort cleanup */ }
+            try { File.Delete(wrapperPath); } catch { }
+            try { File.Delete(logPath); } catch { }
         }
 
         return IsDriverInstalled() ? (true, null) : (false, "Driver install finished but the service still isn't present.");
@@ -139,7 +139,7 @@ public static class RamDisk
 
         if (!proc.WaitForExit(timeoutMs))
         {
-            try { proc.Kill(entireProcessTree: true); } catch { /* best effort */ }
+            try { proc.Kill(entireProcessTree: true); } catch { }
             return (-1, $"imdisk.exe didn't finish within {timeoutMs / 1000}s and was killed. Try a smaller size.");
         }
 

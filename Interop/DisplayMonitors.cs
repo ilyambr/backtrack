@@ -140,12 +140,20 @@ public static class DisplayMonitors
     public static DisplayInfo Resolve(string? deviceName)
     {
         List<DisplayInfo> all = GetAll();
-        if (!string.IsNullOrEmpty(deviceName))
+        if (all.Count == 0)
+            return default;
+
+        if (!string.IsNullOrWhiteSpace(deviceName))
         {
-            DisplayInfo match = all.FirstOrDefault(d => d.DeviceName == deviceName);
+            string cleanTarget = deviceName.Trim().TrimEnd('\0', ' ');
+            DisplayInfo match = all.FirstOrDefault(d => 
+                string.Equals(d.DeviceName.Trim().TrimEnd('\0', ' '), cleanTarget, StringComparison.OrdinalIgnoreCase) ||
+                (!string.IsNullOrWhiteSpace(d.FriendlyName) && string.Equals(d.FriendlyName.Trim(), cleanTarget, StringComparison.OrdinalIgnoreCase)));
+
             if (!string.IsNullOrEmpty(match.DeviceName))
                 return match;
         }
+
         return all.FirstOrDefault(d => d.IsPrimary, all.FirstOrDefault());
     }
 

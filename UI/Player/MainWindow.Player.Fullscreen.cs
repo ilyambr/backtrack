@@ -20,6 +20,21 @@ namespace Backtrack;
 
 public partial class MainWindow : Window
 {
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern bool GetCursorPos(out Win32Point lpPoint);
+
+    [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+    private struct Win32Point
+    {
+        public int X;
+        public int Y;
+    }
+
+    private DispatcherTimer? _fullscreenControlsHideTimer;
+    private DispatcherTimer? _fullscreenCursorPollTimer;
+    private bool _fullscreenControlsHidden;
+    private Win32Point _lastGlobalCursorPos;
+
     private void EnterPlayerFullscreen()
     {
         _isPlayerFullscreen = true;
@@ -64,16 +79,47 @@ public partial class MainWindow : Window
 
         PlayerFullscreenIcon.Data = Geometry.Parse(FullscreenExitIcon);
         PlayerFullscreenButton.ToolTip = "Exit fullscreen";
+
+        _fullscreenControlsHidden = false;
+        PlayerTitleBarHost.BeginAnimation(UIElement.OpacityProperty, null);
+        PlayerTitleBarHost.Opacity = 1;
+        PlayerTitleBarHost.IsHitTestVisible = true;
+        PlayerFullscreenTransportBorder.BeginAnimation(UIElement.OpacityProperty, null);
+        PlayerFullscreenTransportBorder.Opacity = 1;
+        PlayerFullscreenTransportBorder.IsHitTestVisible = true;
+        Mouse.OverrideCursor = null;
+
         ReopenPlayerOverlayPopup();
         ReopenPlayerFullscreenTransportPopup();
         UpdateLayout();
+
+        _fullscreenControlsHideTimer ??= new DispatcherTimer { Interval = TimeSpan.FromSeconds(3) };
+        _fullscreenControlsHideTimer.Interval = TimeSpan.FromSeconds(3);
+        _fullscreenControlsHideTimer.Tick -= FullscreenControlsHideTimer_Tick;
+        _fullscreenControlsHideTimer.Tick += FullscreenControlsHideTimer_Tick;
+        _fullscreenControlsHideTimer.Stop();
+        _fullscreenControlsHideTimer.Start();
+
+        StartFullscreenCursorMonitor();
     }
 
     private void ExitPlayerFullscreen()
     {
         _isPlayerFullscreen = false;
 
+        _fullscreenControlsHideTimer?.Stop();
+        StopFullscreenCursorMonitor();
+        _fullscreenControlsHidden = false;
+        Mouse.OverrideCursor = null;
+
         RootBorder.BorderThickness = new Thickness(1);
+
+        PlayerTitleBarHost.BeginAnimation(UIElement.OpacityProperty, null);
+        PlayerTitleBarHost.Opacity = 1;
+        PlayerTitleBarHost.IsHitTestVisible = true;
+        PlayerFullscreenTransportBorder.BeginAnimation(UIElement.OpacityProperty, null);
+        PlayerFullscreenTransportBorder.Opacity = 1;
+        PlayerFullscreenTransportBorder.IsHitTestVisible = true;
 
         PlayerFullscreenTransportPopup.IsOpen = false;
         PlayerFullscreenTransportBorder.Child = null;
@@ -87,7 +133,9 @@ public partial class MainWindow : Window
         PlayerVideoHost.Height = contentHeight;
 
         Rect screenBounds = TargetScreenBounds;
-        SetWindowBoundsSafe(_preFullscreenLeft, screenBounds.Y + BigTop, _preFullscreenWidth);
+        double expectedHeight = contentHeight + 90;
+        double targetTop = screenBounds.Y + Math.Max((screenBounds.Height - expectedHeight) / 2, 60);
+        SetWindowBoundsSafe(_preFullscreenLeft, targetTop, _preFullscreenWidth);
 
         PlayerTitlePill.Margin = new Thickness(0);
         PlayerMenuPill.Margin = new Thickness(0, 0, 20, 0);
@@ -98,6 +146,121 @@ public partial class MainWindow : Window
         PlayerFullscreenButton.ToolTip = "Fullscreen";
         ReopenPlayerOverlayPopup();
         UpdateLayout();
+    }
+
+    private void StartFullscreenCursorMonitor()
+    {
+        GetCursorPos(out _lastGlobalCursorPos);
+        _fullscreenCursorPollTimer ??= new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(50) };
+        _fullscreenCursorPollTimer.Tick -= FullscreenCursorPollTimer_Tick;
+        _fullscreenCursorPollTimer.Tick += FullscreenCursorPollTimer_Tick;
+        _fullscreenCursorPollTimer.Start();
+    }
+
+    private void StopFullscreenCursorMonitor()
+    {
+        _fullscreenCursorPollTimer?.Stop();
+    }
+
+    private void FullscreenCursorPollTimer_Tick(object? sender, EventArgs e)
+    {
+        if (!_isPlayerFullscreen)
+        {
+            StopFullscreenCursorMonitor();
+            return;
+        }
+
+        if (GetCursorPos(out Win32Point currentPos))
+        {
+            if (Math.Abs(currentPos.X - _lastGlobalCursorPos.X) > 2 || Math.Abs(currentPos.Y - _lastGlobalCursorPos.Y) > 2)
+            {
+                _lastGlobalCursorPos = currentPos;
+                NotifyFullscreenActivity();
+            }
+        }
+    }
+
+    private void FullscreenControlsHideTimer_Tick(object? sender, EventArgs e)
+    {
+        if (!_isPlayerFullscreen)
+        {
+            _fullscreenControlsHideTimer?.Stop();
+            return;
+        }
+
+        if (PlayerMenuPopup.IsOpen || BookmarkPopup.IsOpen || CompressPopup.IsOpen ||
+            PlayerVolumePopup.IsOpen || PlayerFreezeFramePopup.IsOpen ||
+            TrimHandleTooltipPopup.IsOpen || _isScrubbing || _isPlayerRenaming || _isTrimming)
+        {
+            return;
+        }
+
+        HideFullscreenControls();
+    }
+
+    private void HideFullscreenControls()
+    {
+        if (!_isPlayerFullscreen || _fullscreenControlsHidden) return;
+        _fullscreenControlsHidden = true;
+
+        var fadeOut = new System.Windows.Media.Animation.DoubleAnimation(0.0, TimeSpan.FromMilliseconds(250))
+        {
+            EasingFunction = new System.Windows.Media.Animation.QuadraticEase { EasingMode = System.Windows.Media.Animation.EasingMode.EaseOut }
+        };
+
+        PlayerTitleBarHost.BeginAnimation(UIElement.OpacityProperty, fadeOut);
+        PlayerFullscreenTransportBorder.BeginAnimation(UIElement.OpacityProperty, fadeOut);
+        PlayerTitleBarHost.IsHitTestVisible = false;
+        PlayerFullscreenTransportBorder.IsHitTestVisible = false;
+
+        Mouse.OverrideCursor = Cursors.None;
+    }
+
+    private void ShowFullscreenControls()
+    {
+        if (!_isPlayerFullscreen) return;
+
+        Mouse.OverrideCursor = null;
+
+        if (_fullscreenControlsHidden)
+        {
+            _fullscreenControlsHidden = false;
+
+            var fadeIn = new System.Windows.Media.Animation.DoubleAnimation(1.0, TimeSpan.FromMilliseconds(180))
+            {
+                EasingFunction = new System.Windows.Media.Animation.QuadraticEase { EasingMode = System.Windows.Media.Animation.EasingMode.EaseOut }
+            };
+
+            PlayerTitleBarHost.BeginAnimation(UIElement.OpacityProperty, fadeIn);
+            PlayerFullscreenTransportBorder.BeginAnimation(UIElement.OpacityProperty, fadeIn);
+            PlayerTitleBarHost.IsHitTestVisible = true;
+            PlayerFullscreenTransportBorder.IsHitTestVisible = true;
+        }
+
+        _fullscreenControlsHideTimer?.Stop();
+        _fullscreenControlsHideTimer?.Start();
+    }
+
+    internal void NotifyFullscreenActivity()
+    {
+        if (!_isPlayerFullscreen) return;
+        ShowFullscreenControls();
+    }
+
+    private void MainWindow_PreviewMouseMove(object sender, MouseEventArgs e)
+    {
+        if (_isPlayerFullscreen)
+        {
+            NotifyFullscreenActivity();
+        }
+    }
+
+    private void MainWindow_PreviewMouseDown(object sender, MouseButtonEventArgs e)
+    {
+        if (_isPlayerFullscreen)
+        {
+            NotifyFullscreenActivity();
+        }
     }
 
     private void ReopenPlayerOverlayPopup()

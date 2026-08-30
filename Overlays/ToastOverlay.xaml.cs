@@ -261,7 +261,7 @@ public partial class ToastOverlay : Window
         entry.Scale.BeginAnimation(ScaleTransform.ScaleXProperty, finishAnim);
     }
 
-    private void RemoveProcessingToast(string key)
+    public void CancelProcessingClip(string key)
     {
         if (!_processingToasts.Remove(key, out var entry))
             return;

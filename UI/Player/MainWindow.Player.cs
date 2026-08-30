@@ -21,22 +21,6 @@ namespace Backtrack;
 
 public partial class MainWindow : Window
 {
-    private void ApplyBigScreenSize()
-    {
-        double videoColumnWidth = Width - 2;
-        double contentHeight = Math.Max(videoColumnWidth * 9.0 / 16.0, 320);
-
-        Rect screenBounds = TargetScreenBounds;
-        double screenH = screenBounds.Height;
-
-        PlayerVideoHost.Height = contentHeight;
-
-        double maxGalleryHeight = Math.Max(280, screenH - BigTop - 180);
-        GalleryScrollHost.MaxHeight = Math.Min(contentHeight * 0.93, maxGalleryHeight);
-
-        Top = screenBounds.Y + BigTop;
-    }
-
     internal void ToggleFullscreen_Click(object sender, RoutedEventArgs e)
     {
         if (_isPlayerFullscreen)
@@ -90,11 +74,13 @@ public partial class MainWindow : Window
         _seekTimer?.Start();
     }
 
-    private void DetachPlayerVideo()
+    private void DetachPlayerVideo(bool keepFreezeFrame = false)
     {
-
-        _freezeFrameTimer?.Stop();
-        PlayerFreezeFramePopup.IsOpen = false;
+        if (!keepFreezeFrame)
+        {
+            _freezeFrameTimer?.Stop();
+            PlayerFreezeFramePopup.IsOpen = false;
+        }
         PlayerMenuPopup.IsOpen = false;
         CompressPopup.IsOpen = false;
         BookmarkPopup.IsOpen = false;
@@ -122,9 +108,9 @@ public partial class MainWindow : Window
         PlayerVideoView.MediaPlayer = null;
     }
 
-    private void StopPlayerPlayback()
+    private void StopPlayerPlayback(bool keepFreezeFrame = false)
     {
-        DetachPlayerVideo();
+        DetachPlayerVideo(keepFreezeFrame);
         DisposeVlcPlayerSync();
     }
 

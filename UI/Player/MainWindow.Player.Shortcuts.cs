@@ -53,6 +53,9 @@ public partial class MainWindow : Window
         if (Keyboard.FocusedElement is TextBox)
             return;
 
+        if (_isPlayerFullscreen)
+            NotifyFullscreenActivity();
+
         long currentMs = _vlcPlayer.Time;
         long lengthMs = _vlcPlayer.Length;
         long shortSeekMs = Math.Clamp((long)(lengthMs * 0.05), 1000, 15000);

@@ -4,6 +4,18 @@ All notable changes to Backtrack are documented in this file.
 
 ---
 
+## [v0.3.14] - 2026-08-30
+
+### Features & Polish
+
+- **Vector Folder Drag Preview**: Enhanced shell drag image generation with pixel-perfect vector Bézier path rendering matching gallery folder cards on a high-contrast container thumbnail for smooth drag-and-drop into subfolders.
+- **Video Trim Freeze Frame Polish**: Preserves 480px snapshot scaled freeze frame of the trimmed frame upon trim completion without duplicate blinks or flashing.
+- **Corrupted & Empty Recording Stub Auto-Purge**: Added automatic detection and deletion of 0-frame / 0-second stub recordings (< 10 KB) created when recordings are cancelled or stopped immediately, keeping gallery views clean.
+- **Context Menu & Audio Cue UI Polish**: Added native checkmark indicator support in dark context menus (`IsChecked = true`) and dynamic red warning highlights for muted audio cues.
+- **Codebase Dead Code Cleanup & Optimization**: Full sweep removing obsolete stubs, refactoring toast cancellation helpers, and cleaning README punctuation.
+
+---
+
 ## [v0.3.13] - 2026-08-28
 
 ### Native Stream Deck Integration & Zero-Prerequisite Self-Contained Release

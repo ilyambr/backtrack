@@ -191,6 +191,8 @@ public partial class MainWindow : Window
             try
             {
                 int preferredSeconds = _settings.PreferredClipLengthSeconds > 0 ? _settings.PreferredClipLengthSeconds : 60;
+                bool isShortenedBackToBack = false;
+
                 if (_lastReplaySaveUtc.TryGetValue(row.Key, out DateTime lastSave))
                 {
                     double elapsed = (DateTime.UtcNow - lastSave).TotalSeconds;
@@ -198,16 +200,29 @@ public partial class MainWindow : Window
                     {
                         int effectiveSeconds = (int)Math.Ceiling(elapsed);
                         AppLog.Write($"[Replay] Smart deduplication for {row.Label}: clipping {effectiveSeconds}s since last save");
-                        try { await _obs.SetReplayRowLengthAsync(row.Key, effectiveSeconds); } catch { }
+                        try { await _obs.SetReplayRowLengthAsync(row.Key, effectiveSeconds); isShortenedBackToBack = true; } catch { }
                     }
                     else if (preferredSeconds > 0)
                     {
                         try { await _obs.SetReplayRowLengthAsync(row.Key, preferredSeconds); } catch { }
                     }
                 }
-                _lastReplaySaveUtc[row.Key] = DateTime.UtcNow;
+                else if (preferredSeconds > 0)
+                {
+                    try { await _obs.SetReplayRowLengthAsync(row.Key, preferredSeconds); } catch { }
+                }
 
+                _lastReplaySaveUtc[row.Key] = DateTime.UtcNow;
                 await _obs.SaveReplayRowAsync(row.Key);
+
+                if (isShortenedBackToBack && preferredSeconds > 0)
+                {
+                    _ = Task.Run(async () =>
+                    {
+                        await Task.Delay(1500);
+                        try { await _obs.SetReplayRowLengthAsync(row.Key, preferredSeconds); } catch { }
+                    });
+                }
             }
             catch (Exception ex)
             {
@@ -261,6 +276,12 @@ public partial class MainWindow : Window
             slider.ReleaseMouseCapture();
 
             int seconds = SliderPosToSeconds(slider.Value, maxSeconds);
+            if (_settings.PreferredClipLengthSeconds != seconds)
+            {
+                _lastReplaySaveUtc.Clear();
+                _streamDeckServer?.ClearLastSaveTimestamps();
+            }
+
             _settings.PreferredClipLengthSeconds = seconds;
             _settings.Save();
             _ = _streamDeckServer?.BroadcastStateSnapshotAsync();

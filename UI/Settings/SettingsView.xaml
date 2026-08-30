@@ -138,7 +138,8 @@
                                 <ToggleButton x:Name="ShowDisclaimerToggle" Grid.Column="1" Style="{StaticResource AppToggle}" VerticalAlignment="Center" Click="ShowDisclaimerToggle_Click"/>
                             </Grid>
                         </Border>
-                        <Border Style="{StaticResource SettingsRow}">
+                        <Border x:Name="DisableAudioCuesRow" Style="{StaticResource SettingsRow}" MouseRightButtonUp="DisableAudioCuesRow_MouseRightButtonUp"
+                                Cursor="Hand" ToolTip="Right-click for cue options &amp; sound file location">
                             <Grid>
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition/>
@@ -146,7 +147,7 @@
                                 </Grid.ColumnDefinitions>
                                 <StackPanel VerticalAlignment="Center">
                                     <TextBlock Text="Disable audio cues" FontSize="13" FontWeight="Bold" Foreground="{DynamicResource Text0}"/>
-                                    <TextBlock Text="Mutes chimes when recordings or clips are saved." FontSize="11" Foreground="{DynamicResource Text2}" Margin="0,3,0,0" TextWrapping="Wrap"/>
+                                    <TextBlock x:Name="DisableAudioCuesSubtext" Text="Mutes chimes when recordings or clips are saved. Right-click for options." FontSize="11" Foreground="{DynamicResource Text2}" Margin="0,3,0,0" TextWrapping="Wrap"/>
                                 </StackPanel>
                                 <ToggleButton x:Name="DisableAudioCuesToggle" Grid.Column="1" Style="{StaticResource AppToggle}" VerticalAlignment="Center" Click="DisableAudioCuesToggle_Click"/>
                             </Grid>

@@ -128,6 +128,38 @@
           "TitleColor": "#ffffff"
         }
       ]
+    },
+    {
+      "UUID": "com.ilyambr.backtrack.cliplengthdial",
+      "Name": "Clip Duration Dial",
+      "Icon": "images/action_clip",
+      "Tooltip": "Rotate dial to adjust clip buffer duration, push dial to save clip, tap screen to reset duration",
+      "PropertyInspectorPath": "pi/index.html",
+      "Controllers": [
+        "Encoder"
+      ],
+      "Encoder": {
+        "layout": "$X1",
+        "StackColor": "#4ade80",
+        "Icon": "images/action_clip",
+        "TriggerDescription": {
+          "Rotate": "Change Duration",
+          "Push": "Instant Clip",
+          "Touch": "Reset (60s)",
+          "LongTouch": "Reset (60s)"
+        }
+      },
+      "VisibleInActionsList": true,
+      "States": [
+        {
+          "Image": "images/action_clip",
+          "TitleAlignment": "middle",
+          "FontSize": 9,
+          "FontFamily": "Segoe UI",
+          "FontStyle": "Bold",
+          "TitleColor": "#ffffff"
+        }
+      ]
     }
   ]
 }

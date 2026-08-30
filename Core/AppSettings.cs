@@ -58,6 +58,8 @@ public sealed class AppSettings
     public bool DisablePluginAutoUpdate { get; set; }
 
     public bool DisableAudioCues { get; set; }
+    public bool DisableStartAudioCue { get; set; }
+    public bool DisableSaveAudioCue { get; set; }
 
     public int AudioCueVolume { get; set; } = 100;
 
@@ -128,6 +130,7 @@ public sealed class AppSettings
 
     public HashSet<string> StarredClips { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 
+    [JsonIgnore]
     public Dictionary<string, List<double>> ClipMarkers { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 
     public int BookmarkHotkeyModifiers { get; set; } = 0x2 | 0x4;
@@ -139,8 +142,43 @@ public sealed class AppSettings
     private static string FilePath => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Backtrack", "settings.json");
 
+    public static string BookmarksFilePath => Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Backtrack", "bookmarks.json");
+
     private static string LegacyFilePath => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "CaptureCenter", "settings.json");
+
+    public void LoadBookmarks()
+    {
+        try
+        {
+            if (File.Exists(BookmarksFilePath))
+            {
+                var dict = JsonSerializer.Deserialize<Dictionary<string, List<double>>>(File.ReadAllText(BookmarksFilePath));
+                if (dict is not null)
+                {
+                    ClipMarkers = new Dictionary<string, List<double>>(dict, StringComparer.OrdinalIgnoreCase);
+                }
+            }
+        }
+        catch
+        {
+        }
+    }
+
+    public void SaveBookmarks()
+    {
+        try
+        {
+            string dir = Path.GetDirectoryName(BookmarksFilePath)!;
+            Directory.CreateDirectory(dir);
+            var opt = new JsonSerializerOptions { WriteIndented = true };
+            File.WriteAllText(BookmarksFilePath, JsonSerializer.Serialize(ClipMarkers, opt));
+        }
+        catch
+        {
+        }
+    }
 
     public static AppSettings Load()
     {
@@ -152,20 +190,45 @@ public sealed class AppSettings
                 File.Copy(LegacyFilePath, FilePath);
             }
 
+            AppSettings? loaded = null;
             if (File.Exists(FilePath))
             {
-                var loaded = JsonSerializer.Deserialize<AppSettings>(File.ReadAllText(FilePath));
-                if (loaded is not null)
+                string jsonText = File.ReadAllText(FilePath);
+                loaded = JsonSerializer.Deserialize<AppSettings>(jsonText);
+
+                if (!File.Exists(BookmarksFilePath) && jsonText.Contains("ClipMarkers"))
                 {
-                    loaded.ClipsFolder = ResolveClipsFolderForThisMachine(loaded.ClipsFolder);
-                    return loaded;
+                    try
+                    {
+                        using var doc = JsonDocument.Parse(jsonText);
+                        if (doc.RootElement.TryGetProperty("ClipMarkers", out var markersElem))
+                        {
+                            var legacyMarkers = JsonSerializer.Deserialize<Dictionary<string, List<double>>>(markersElem.GetRawText());
+                            if (legacyMarkers is not null && legacyMarkers.Count > 0)
+                            {
+                                (loaded ??= new AppSettings()).ClipMarkers = new Dictionary<string, List<double>>(legacyMarkers, StringComparer.OrdinalIgnoreCase);
+                                loaded.SaveBookmarks();
+                            }
+                        }
+                    }
+                    catch { }
                 }
+            }
+
+            if (loaded is not null)
+            {
+                loaded.ClipsFolder = ResolveClipsFolderForThisMachine(loaded.ClipsFolder);
+                loaded.LoadBookmarks();
+                return loaded;
             }
         }
         catch
         {
         }
-        return new AppSettings();
+
+        var def = new AppSettings();
+        def.LoadBookmarks();
+        return def;
     }
 
     private static string ResolveClipsFolderForThisMachine(string loadedClipsFolder)
@@ -184,11 +247,14 @@ public sealed class AppSettings
         string dir = Path.GetDirectoryName(FilePath)!;
         Directory.CreateDirectory(dir);
         File.WriteAllText(FilePath, JsonSerializer.Serialize(this));
+        SaveBookmarks();
     }
 
     public static void ClearSavedFile()
     {
         try { if (File.Exists(FilePath)) File.Delete(FilePath); }
-        catch { /* best effort -- e.g. file briefly locked; caller still restarts either way */ }
+        catch { }
+        try { if (File.Exists(BookmarksFilePath)) File.Delete(BookmarksFilePath); }
+        catch { }
     }
 }

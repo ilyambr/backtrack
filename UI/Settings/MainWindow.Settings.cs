@@ -240,9 +240,13 @@ public partial class MainWindow : Window
         }
     }
 
+    private bool _isSettingsUiLoading = false;
+
     private void LoadSettingsUi()
     {
-
+        _isSettingsUiLoading = true;
+        try
+        {
         BuildThemeSwatches();
         RefreshThemeSwatchSelection();
         EnableAnimationsToggle.IsChecked = _settings.EnableAnimations;
@@ -280,13 +284,11 @@ public partial class MainWindow : Window
         ObsPasswordBox.Password = _settings.ObsRemotePassword;
 
         ShowDisclaimerToggle.IsChecked = _settings.ShowDisclaimer;
-        DisableAudioCuesToggle.IsChecked = _settings.DisableAudioCues;
-        if (AudioCueVolumeRow != null && AudioCueVolumeSlider != null && AudioCueVolumeText != null)
+        SyncAudioCuesUi();
+        if (AudioCueVolumeSlider != null && AudioCueVolumeText != null)
         {
-            AudioCueVolumeRow.Opacity = _settings.DisableAudioCues ? 0.5 : 1.0;
             AudioCueVolumeSlider.ValueChanged -= AudioCueVolumeSlider_ValueChanged;
             AudioCueVolumeSlider.Value = Math.Clamp(_settings.AudioCueVolume, 0, 100);
-            AudioCueVolumeSlider.IsEnabled = !_settings.DisableAudioCues;
             AudioCueVolumeSlider.ValueChanged += AudioCueVolumeSlider_ValueChanged;
             AudioCueVolumeText.Text = $"{Math.Clamp(_settings.AudioCueVolume, 0, 100)}%";
         }
@@ -355,6 +357,11 @@ public partial class MainWindow : Window
         OverlayLogModeSelector.SelectedIndex = _settings.OverlayLogMode == "Backtrack" ? 1 : 0;
         OverlayLogModeSelector.SelectionChanged += OverlayLogModeSelector_SelectionChanged;
 
+        }
+        finally
+        {
+            _isSettingsUiLoading = false;
+        }
     }
 
     private sealed record DisplayOption(string DeviceName, string Name);

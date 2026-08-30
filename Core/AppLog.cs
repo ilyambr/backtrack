@@ -52,7 +52,7 @@ public static class AppLog
             if (File.Exists(LogFilePath) && new FileInfo(LogFilePath).Length > MaxFileBytes)
             {
                 string rolledPath = LogFilePath + ".old";
-                try { File.Delete(rolledPath); } catch { /* best effort */ }
+                try { File.Delete(rolledPath); } catch { }
                 File.Move(LogFilePath, rolledPath);
             }
 

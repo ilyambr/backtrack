@@ -132,12 +132,37 @@ public partial class MainWindow : Window
         }
         else if (big)
         {
+            double topClearance = 85;
+            double bottomClearance = 100;
+            double maxAvailHeight = Math.Max(400, targetBounds.Height - topClearance - bottomClearance);
+            double maxAvailWidth = targetBounds.Width * 0.90;
+
+            double maxVidH = maxAvailHeight - 90;
+            double vidW = Math.Min(maxAvailWidth, maxVidH * 16.0 / 9.0);
+            targetWidth = Math.Max(1280, vidW + 2);
+            targetLeft = targetBounds.X + (targetBounds.Width - targetWidth) / 2;
+
             double videoColumnWidth = targetWidth - 2;
-            double contentHeight = Math.Max(videoColumnWidth * 9.0 / 16.0, 320);
-            PlayerVideoHost.Height = contentHeight;
-            double maxGalleryHeight = Math.Max(280, targetBounds.Height - BigTop - 180);
-            GalleryScrollHost.MaxHeight = Math.Min(contentHeight * 0.93, maxGalleryHeight);
-            targetTop = targetBounds.Y + BigTop;
+            double contentHeight = videoColumnWidth * 9.0 / 16.0;
+            double targetPanelHeight = contentHeight + 90;
+
+            targetTop = targetBounds.Y + Math.Max(topClearance, (targetBounds.Height - targetPanelHeight) / 2);
+
+            if (screen == Screen.Player)
+            {
+                PlayerVideoHost.Height = contentHeight;
+            }
+            else
+            {
+                double galleryHeaderAndFooterHeight = 150;
+                double maxGalleryHeight = Math.Max(250, targetPanelHeight - galleryHeaderAndFooterHeight);
+                GalleryScrollHost.MaxHeight = maxGalleryHeight;
+
+                double innerWidth = targetWidth - 50;
+                int cols = Math.Max(3, (int)Math.Round(innerWidth / 232.0));
+                double itemW = Math.Floor(innerWidth / cols);
+                GalleryGrid.ItemWidth = itemW;
+            }
         }
         else
         {
@@ -178,7 +203,10 @@ public partial class MainWindow : Window
         }
     }
 
-    private double BigWidth() => Math.Min(TargetScreenBounds.Width * 0.78, 2000);
+    private double BigWidth()
+    {
+        return Math.Clamp(TargetScreenBounds.Width * 0.90, 1280, Math.Max(1280, TargetScreenBounds.Width - 40));
+    }
 
     internal void BackToIdle_Click(object? sender = null, RoutedEventArgs? e = null) => ShowScreen(Screen.Idle);
 

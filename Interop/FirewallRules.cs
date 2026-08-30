@@ -51,7 +51,7 @@ public static class FirewallRules
                 if (File.Exists(logPath))
                     log = File.ReadAllText(logPath).Trim();
             }
-            catch { /* best effort -- still report the exit code below either way */ }
+            catch { }
 
             if (proc is null || proc.ExitCode != 0)
             {
@@ -73,8 +73,8 @@ public static class FirewallRules
         }
         finally
         {
-            try { File.Delete(wrapperPath); } catch { /* best effort cleanup */ }
-            try { File.Delete(logPath); } catch { /* best effort cleanup */ }
+            try { File.Delete(wrapperPath); } catch { }
+            try { File.Delete(logPath); } catch { }
         }
     }
 }

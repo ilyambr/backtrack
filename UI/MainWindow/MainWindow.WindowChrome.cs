@@ -124,6 +124,10 @@ public partial class MainWindow : Window
         StopSettingsAutoscroll();
         ShellDragHelper.ResetDropHelper();
 
+        _fullscreenControlsHideTimer?.Stop();
+        _fullscreenControlsHidden = false;
+        Mouse.OverrideCursor = null;
+
         PlayerOverlayPopup.IsOpen = false;
         PlayerMenuPopup.IsOpen = false;
         PlayerFreezeFramePopup.IsOpen = false;

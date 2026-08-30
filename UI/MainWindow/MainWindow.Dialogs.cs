@@ -39,31 +39,6 @@ public partial class MainWindow : Window
         });
     }
 
-    private static void FadeWindowIn(Window window, double durationMs = 180)
-    {
-        window.BeginAnimation(OpacityProperty, null);
-        window.Opacity = 0;
-        window.Show();
-
-        EventHandler? renderHandler = null;
-        renderHandler = (s, e) =>
-        {
-            CompositionTarget.Rendering -= renderHandler;
-            var fade = new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(durationMs))
-            {
-                EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut },
-                FillBehavior = FillBehavior.Stop
-            };
-            fade.Completed += (_, _) =>
-            {
-                window.BeginAnimation(OpacityProperty, null);
-                window.Opacity = 1;
-            };
-            window.BeginAnimation(OpacityProperty, fade);
-        };
-        CompositionTarget.Rendering += renderHandler;
-    }
-
     private static void FadeWindowOut(Window window, double durationMs = 150, Action? onCompleted = null, bool useCache = false)
     {
         var fade = new DoubleAnimation(window.Opacity, 0, TimeSpan.FromMilliseconds(durationMs))

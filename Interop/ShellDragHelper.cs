@@ -377,6 +377,8 @@ internal static class ShellDragHelper
             using var placeholderBrush = new SolidBrush(
                 System.Drawing.Color.FromArgb(0xFF, 0x1E, 0x20, 0x28));
             g.FillRectangle(placeholderBrush, 0, 0, GhostWidth, ThumbHeight);
+
+            DrawFolderGlyph(g, GhostWidth / 2.0f, ThumbHeight / 2.0f, 46.0f, 38.0f, System.Drawing.Color.FromArgb(0xFF, 0xAE, 0xB4, 0xBD));
         }
 
         using var labelBg = new SolidBrush(
@@ -403,6 +405,33 @@ internal static class ShellDragHelper
         g.DrawRectangle(borderPen, 0, 0, GhostWidth - 1, TotalHeight - 1);
 
         return bmp;
+    }
+
+    private static void DrawFolderGlyph(Graphics g, float cx, float cy, float width, float height, System.Drawing.Color color)
+    {
+        float sx = width / 20.0f;
+        float sy = height / 16.0f;
+        float ox = cx - width / 2.0f - 2.0f * sx;
+        float oy = cy - height / 2.0f - 4.0f * sy;
+
+        PointF Pt(float x, float y) => new(ox + x * sx, oy + y * sy);
+
+        using var brush = new SolidBrush(color);
+        using var path = new System.Drawing.Drawing2D.GraphicsPath();
+
+        path.AddLine(Pt(10, 4), Pt(4, 4));
+        path.AddBezier(Pt(4, 4), Pt(2.89f, 4), Pt(2, 4.89f), Pt(2, 6));
+        path.AddLine(Pt(2, 6), Pt(2, 18));
+        path.AddBezier(Pt(2, 18), Pt(2, 19.11f), Pt(2.89f, 20), Pt(4, 20));
+        path.AddLine(Pt(4, 20), Pt(20, 20));
+        path.AddBezier(Pt(20, 20), Pt(21.11f, 20), Pt(22, 19.11f), Pt(22, 18));
+        path.AddLine(Pt(22, 18), Pt(22, 8));
+        path.AddBezier(Pt(22, 8), Pt(22, 6.89f), Pt(21.1f, 6), Pt(20, 6));
+        path.AddLine(Pt(20, 6), Pt(12, 6));
+        path.AddLine(Pt(12, 6), Pt(10, 4));
+        path.CloseFigure();
+
+        g.FillPath(brush, path);
     }
 
     private static Bitmap? BitmapSourceToGdi(BitmapSource src)

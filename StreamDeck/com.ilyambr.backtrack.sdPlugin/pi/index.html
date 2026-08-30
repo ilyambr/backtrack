@@ -100,7 +100,7 @@
             select.innerHTML = '<option value="main">Main / Active Window</option>';
 
             const action = actionInfo.action;
-            const isClip = action === 'com.ilyambr.backtrack.clip';
+            const isClip = action === 'com.ilyambr.backtrack.clip' || action === 'com.ilyambr.backtrack.cliplengthdial';
 
             const list = isClip ? (data.snapshot.replay_buffers || []) : (data.snapshot.record_sources || []);
 

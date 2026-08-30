@@ -183,7 +183,7 @@ public sealed class UpdateService
             }
         }
 
-        try { File.Delete(tempPath); } catch { /* best-effort cleanup */ }
+        try { File.Delete(tempPath); } catch { }
 
         if (reopenAfterInstall && wasObsRunning)
             RelaunchObsIfInstalled();
@@ -271,7 +271,7 @@ public sealed class UpdateService
 
         foreach (Process proc in procs.Where(p => !p.HasExited))
         {
-            try { proc.Kill(); } catch { /* already gone */ }
+            try { proc.Kill(); } catch { }
         }
 
         return true;
@@ -354,7 +354,7 @@ public sealed class UpdateService
             }
             catch when (attempt < DownloadRetryAttempts)
             {
-                try { File.Delete(destPath); } catch { /* best effort */ }
+                try { File.Delete(destPath); } catch { }
                 await Task.Delay(TimeSpan.FromSeconds(2));
             }
         }
@@ -385,7 +385,7 @@ public sealed class UpdateService
 
         if (!string.Equals(actualHex, expectedHex, StringComparison.OrdinalIgnoreCase))
         {
-            try { File.Delete(destPath); } catch { /* best effort -- don't leave a mismatched file lying around either way */ }
+            try { File.Delete(destPath); } catch { }
             throw new InvalidOperationException(
                 "Downloaded file's checksum didn't match what GitHub reported for this release asset -- refusing to install it.");
         }

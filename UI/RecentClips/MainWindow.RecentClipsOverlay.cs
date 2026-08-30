@@ -86,7 +86,7 @@ public partial class MainWindow : Window
                 .Where(f => VideoExtensions.Contains(Path.GetExtension(f).ToLowerInvariant())
                             && !_pendingDeletePaths.Contains(Path.GetFullPath(f)))
                 .Select(f => new FileInfo(f))
-                .Where(f => f.Exists && f.Length > 0 && TryGetCachedDurationMs(f) is not < 2000)
+                .Where(f => f.Exists && f.Length >= 10240 && TryGetCachedDurationMs(f) is not < 2000)
                 .OrderByDescending(f => f.LastWriteTime)
                 .Take(4)
                 .ToList();
@@ -190,7 +190,7 @@ public partial class MainWindow : Window
         _scrim.Reposition();
         _disclaimer.Reposition();
         _logo.Reposition();
-        _toastOverlay.UpdatePosition(true);
+        _toastOverlay.UpdatePosition(IsVisible);
 
         if (_settings.ShowRecentClipsOverlay)
         {
@@ -240,7 +240,7 @@ public partial class MainWindow : Window
             _scrim.Reposition();
             _disclaimer.Reposition();
             _logo.Reposition();
-            _toastOverlay.UpdatePosition(true);
+            _toastOverlay.UpdatePosition(IsVisible);
             UpdateStreamingBoxVisibility();
             ClampRecentClipsOverlayOnScreen();
         }

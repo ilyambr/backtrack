@@ -353,7 +353,7 @@ public partial class MainWindow : Window
         content.Children.Add(titleRow);
         content.Children.Add(sub);
 
-        var card = new Border { Width = 210, Child = content };
+        var card = new Border { Width = GetGalleryCardWidth(), Child = content };
 
         _ = LoadRemoteThumbnailAsync(relativePath, file, thumbImage);
 
