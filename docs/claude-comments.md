@@ -1,8 +1,8 @@
 # Backtrack Codebase — Comments & Architectural Rationale Archive
 
-> **Total source files indexed**: 71  
-> **Total comment blocks archived**: 461  
-> **Last updated**: 2026-08-27
+> **Total source files indexed**: 74  
+> **Total comment blocks archived**: 478  
+> **Last updated**: 2026-08-30
 
 This document is the comprehensive archive of all original architectural comments, design decisions, Win32 interop notes, and XAML explanations extracted from the Backtrack codebase. Each section provides the exact file, line range, code context, and full explanatory notes.
 
@@ -5350,4 +5350,22 @@ This document is the comprehensive archive of all original architectural comment
 - **Line 274**: `/* already gone */`
 - **Line 357**: `/* best effort */`
 - **Line 388**: `/* best effort -- don't leave a mismatched file lying around either way */`
+
+
+
+---
+
+## Session Archive (2026-08-30 - Deduplication & Merge Engine)
+
+### `Core/DeduplicationService.cs`
+
+- **Line 15**: `// Standalone modular deduplication service with origin clip lineage tracking and independent JSON persistence`
+- **Line 58**: `// Prepare save: check if save is back-to-back without duration change and calculate elapsed seconds`
+- **Line 105**: `// Restore preferred duration after OBS writes clip`
+- **Line 130**: `// Register saved clip and record origin link`
+
+### `UI/Gallery/MainWindow.Merge.cs`
+
+- **Line 35**: `// Concatenate deduplicated slice onto origin clip via FFmpeg`
+- **Line 65**: `// Atomic file swap & marker offset calculation`
 

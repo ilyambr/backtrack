@@ -195,7 +195,6 @@ public partial class MainWindow : Window
         });
         _obs.ReplaySaved += (key, path) => Dispatcher.BeginInvoke(async () =>
         {
-            _lastReplaySaveUtc[key] = DateTime.UtcNow;
             string label = await ResolveRowLabelAsync(key);
 
             if (!string.IsNullOrEmpty(path))
@@ -237,7 +236,16 @@ public partial class MainWindow : Window
                 }
             }
 
-            _toastOverlay.CompleteProcessingClip(key, label, path);
+            string? customSub = null;
+            var dedupEntry = DeduplicationService.Instance.RegisterSavedClip(key, path);
+            if (dedupEntry != null)
+            {
+                string durStr = FormatDuration(dedupEntry.DurationSeconds * 1000L);
+                string folder = !string.IsNullOrEmpty(path) ? (Path.GetDirectoryName(path) ?? path) : _settings.ClipsFolder;
+                customSub = $"Saved {durStr} at '{folder}'";
+            }
+
+            _toastOverlay.CompleteProcessingClip(key, label, path, customSub);
             AppLog.Write($"{label} saved to '{path}'");
             _ = RefreshGalleryCountAsync();
             RefreshRecentClipsOverlay();

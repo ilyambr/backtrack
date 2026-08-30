@@ -115,10 +115,11 @@ public partial class ToastOverlay : Window
         Show(GlyphIcon("✕", Rec), Rec, "Recording Canceled", subMessage);
     }
 
-    public void ShowReplaySaved(string label, string resolvedPath)
+    public void ShowReplaySaved(string label, string resolvedPath, string? customSubMessage = null)
     {
         AudioCues.PlayClipSaved();
-        Show(GlyphIcon("\u21bb", Green), Green, $"{label} saved", $"Saved at '{resolvedPath}'", truncateSubMessage: true);
+        string sub = customSubMessage ?? (string.IsNullOrEmpty(resolvedPath) ? null : $"Saved at '{resolvedPath}'")!;
+        Show(GlyphIcon("\u21bb", Green), Green, $"{label} saved", sub, truncateSubMessage: true);
     }
 
     public void ShowTrimSaved(string? resolvedPath)
@@ -152,6 +153,25 @@ public partial class ToastOverlay : Window
         };
         Show(icon, Green, "Compression Saved", resolvedPath is null ? null : $"Saved at '{resolvedPath}'", truncateSubMessage: true);
     }
+
+    public void ShowMergeSaved(string? resolvedPath)
+    {
+        AudioCues.PlayClipSaved();
+        var icon = new Path
+        {
+            Data = Geometry.Parse("M17 20.41L18.41 19 15 15.59 13.59 17 17 20.41M8.5 5A3.5 3.5 0 1 0 12 8.5 3.5 3.5 0 0 0 8.5 5M8.5 10A1.5 1.5 0 1 1 10 8.5 1.5 1.5 0 0 1 8.5 10M19 8.5A3.5 3.5 0 1 0 15.5 12 3.5 3.5 0 0 0 19 8.5M17 8.5A1.5 1.5 0 1 1 15.5 7 1.5 1.5 0 0 1 17 8.5M4 6.5A2.5 2.5 0 1 0 6.5 9 2.5 2.5 0 0 0 4 6.5M10.88 13.12L7.38 9.62A4.47 4.47 0 0 1 4 11a4.5 4.5 0 1 1 4.5-4.5 4.47 4.47 0 0 1-1.38 3.38l3.5 3.5 1.41-1.41 3.5 3.5A4.47 4.47 0 0 1 19 14a4.5 4.5 0 1 1-4.5 4.5 4.47 4.47 0 0 1 1.38-3.38l-3.5-3.5z"),
+            Fill = Green,
+            Width = 14,
+            Height = 14,
+            Stretch = Stretch.Uniform,
+            Margin = new Thickness(0, 1, 10, 0),
+            VerticalAlignment = VerticalAlignment.Top,
+        };
+        Show(icon, Green, "Clips Merged", resolvedPath is null ? null : $"Saved at '{resolvedPath}'", truncateSubMessage: true);
+    }
+
+    public void ShowMergeFailed(string error) =>
+        Show(GlyphIcon("⚠", Warning), Warning, "Merge Failed", error);
 
     private readonly Dictionary<string, (Border Toast, ScaleTransform Scale)> _processingToasts = new();
     private readonly Dictionary<string, DateTime> _recentlyCompletedProcessing = new();
@@ -236,13 +256,13 @@ public partial class ToastOverlay : Window
         _processingToasts[key] = (toast, scale);
     }
 
-    public void CompleteProcessingClip(string key, string label, string resolvedPath)
+    public void CompleteProcessingClip(string key, string label, string resolvedPath, string? customSubMessage = null)
     {
         _recentlyCompletedProcessing[key] = DateTime.UtcNow;
 
         if (!_processingToasts.Remove(key, out var entry))
         {
-            ShowReplaySaved(label, resolvedPath);
+            ShowReplaySaved(label, resolvedPath, customSubMessage);
             return;
         }
 
@@ -256,7 +276,7 @@ public partial class ToastOverlay : Window
         finishAnim.Completed += (_, _) =>
         {
             ToastStack.Children.Remove(entry.Toast);
-            ShowReplaySaved(label, resolvedPath);
+            ShowReplaySaved(label, resolvedPath, customSubMessage);
         };
         entry.Scale.BeginAnimation(ScaleTransform.ScaleXProperty, finishAnim);
     }

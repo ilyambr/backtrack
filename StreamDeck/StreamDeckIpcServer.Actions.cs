@@ -80,6 +80,8 @@ public sealed partial class StreamDeckIpcServer
 
         _settings.PreferredClipLengthSeconds = duration;
         _settings.Save();
+        _lastReplaySaveUtc.Clear();
+        _lastObservedClipLength = duration;
         _onClipDurationChanged?.Invoke(duration);
 
         if (_obs.IsConnected)
@@ -117,46 +119,8 @@ public sealed partial class StreamDeckIpcServer
         if (targetRow != null)
         {
             int preferredSeconds = _settings.PreferredClipLengthSeconds > 0 ? _settings.PreferredClipLengthSeconds : 60;
-
-            if (_lastObservedClipLength > 0 && _lastObservedClipLength != preferredSeconds)
-            {
-                _lastReplaySaveUtc.Clear();
-            }
-            _lastObservedClipLength = preferredSeconds;
-
-            bool isShortenedBackToBack = false;
-
-            if (_lastReplaySaveUtc.TryGetValue(targetRow.Key, out DateTime lastSave))
-            {
-                double elapsed = (DateTime.UtcNow - lastSave).TotalSeconds;
-                if (elapsed > 1 && elapsed < preferredSeconds)
-                {
-                    int effectiveSeconds = (int)Math.Ceiling(elapsed);
-                    AppLog.Write($"[StreamDeck] Smart deduplication for {targetRow.Label}: clipping {effectiveSeconds}s since last save");
-                    try { await _obs.SetReplayRowLengthAsync(targetRow.Key, effectiveSeconds); isShortenedBackToBack = true; } catch { }
-                }
-                else if (preferredSeconds > 0)
-                {
-                    try { await _obs.SetReplayRowLengthAsync(targetRow.Key, preferredSeconds); } catch { }
-                }
-            }
-            else if (preferredSeconds > 0)
-            {
-                try { await _obs.SetReplayRowLengthAsync(targetRow.Key, preferredSeconds); } catch { }
-            }
-
-            _lastReplaySaveUtc[targetRow.Key] = DateTime.UtcNow;
+            await DeduplicationService.Instance.PrepareReplaySaveAsync(_obs, targetRow.Key, targetRow.Label, preferredSeconds);
             await _obs.SaveReplayRowAsync(targetRow.Key);
-
-            if (isShortenedBackToBack && preferredSeconds > 0)
-            {
-                _ = Task.Run(async () =>
-                {
-                    await Task.Delay(1500);
-                    try { await _obs.SetReplayRowLengthAsync(targetRow.Key, preferredSeconds); } catch { }
-                });
-            }
-
             return true;
         }
 

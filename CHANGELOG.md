@@ -4,6 +4,19 @@ All notable changes to Backtrack are documented in this file.
 
 ---
 
+## [v0.3.15] - 2026-08-30
+
+### Smart Clip Deduplication Engine, Sub-Millisecond Audio Cross-Correlation & Seamless Hardware Merge
+
+- **Modular Deduplication Engine (`DeduplicationService.cs`)**: Standalone deduplication service with `DeduplicationEntry` records tracking origin-child clip relationships, duration, and millisecond timestamps stored in `%AppData%\Backtrack\deduplicated.json`.
+- **Sub-Millisecond Acoustic Overlap Alignment**: Mathematical audio fingerprinting using 8kHz normalized cross-correlation (`DetectOverlapOffsetSeconds`) to detect the exact splice point down to 0.125ms across OBS keyframe boundaries, completely eliminating repeated frames and audio stutter.
+- **High-Precision Timestamp Fallback**: Automatic millisecond timestamp tracking (`ExactDurationSeconds`) for videos with no audio or silent tracks.
+- **Hardware-Accelerated Seamless Merge Engine (`MainWindow.Merge.cs`)**: Fast GPU hardware-accelerated filter concatenation with monotonic PTS presentation normalization (`setpts=PTS-STARTPTS`, `asetpts=PTS-STARTPTS,aresample=async=1000`) and 1-second GOP keyframes (`-g 60 -keyint_min 30`) for instant seeking in media players.
+- **Multi-Track Audio Concat & Preservation**: Stream-copy and multi-stream filter complex mapping preserving all discrete audio tracks (game audio, mic, discord, desktop audio).
+- **Gallery Drag-and-Drop Merge & Themed Overlays**: Drag deduplicated clip cards onto their origin to merge with live progress. Added floating themed pill cards (`BadgeBg`, `BadgeBorder`, `Text0`) for merge/compress progress and dynamic luminance calculations for compress preset buttons across all themes.
+
+---
+
 ## [v0.3.14] - 2026-08-30
 
 ### Features & Polish

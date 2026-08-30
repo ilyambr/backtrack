@@ -119,7 +119,20 @@ public partial class MainWindow : Window
         var accentBrush = (Brush)FindResource("Accent");
         var regularBrush = (Brush)FindResource("RowBg");
         var text0 = (Brush)FindResource("Text0");
-        var textBg = (Brush)FindResource("PanelBg");
+        var panelBg = (Brush)FindResource("PanelBg");
+
+        Brush selectedTextBrush;
+        if (accentBrush is SolidColorBrush scb)
+        {
+            double luminance = (0.299 * scb.Color.R + 0.587 * scb.Color.G + 0.114 * scb.Color.B) / 255.0;
+            selectedTextBrush = luminance > 0.5
+                ? new SolidColorBrush(Color.FromRgb(0x10, 0x11, 0x13))
+                : new SolidColorBrush(Color.FromRgb(0xFF, 0xFF, 0xFF));
+        }
+        else
+        {
+            selectedTextBrush = panelBg;
+        }
 
         Button[] buttons = new[] { CompressPreset10, CompressPreset25, CompressPreset50, CompressPreset100, CompressPreset250 };
         foreach (var btn in buttons)
@@ -127,13 +140,13 @@ public partial class MainWindow : Window
             if (btn is null) continue;
             bool isSel = !_isCustomCompressSelected && btn.Tag is string tag && double.TryParse(tag, out double mb) && Math.Abs(mb - _selectedCompressMb) < 0.1;
             btn.Background = isSel ? accentBrush : regularBrush;
-            btn.Foreground = isSel ? textBg : text0;
+            btn.Foreground = isSel ? selectedTextBrush : text0;
         }
 
         if (CompressCustomButton is not null)
         {
             CompressCustomButton.Background = _isCustomCompressSelected ? accentBrush : regularBrush;
-            CompressCustomButton.Foreground = _isCustomCompressSelected ? textBg : text0;
+            CompressCustomButton.Foreground = _isCustomCompressSelected ? selectedTextBrush : text0;
         }
     }
 

@@ -225,8 +225,54 @@ public partial class MainWindow : Window
             ToolTip = tooltip,
         };
 
-        var row = new StackPanel { Orientation = Orientation.Horizontal, Margin = titleMargin };
+        var row = new StackPanel { Orientation = Orientation.Horizontal, Margin = titleMargin, VerticalAlignment = VerticalAlignment.Center };
         row.Children.Add(dot);
+        row.Children.Add(title);
+        return row;
+    }
+
+    private UIElement MakeLinkIcon()
+    {
+        var geo1 = Geometry.Parse("M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71");
+        var geo2 = Geometry.Parse("M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71");
+        var combined = new GeometryGroup();
+        combined.Children.Add(geo1);
+        combined.Children.Add(geo2);
+
+        var path = new System.Windows.Shapes.Path
+        {
+            Data = combined,
+            Stroke = (Brush)FindResource("Text2"),
+            StrokeThickness = 2,
+            StrokeStartLineCap = PenLineCap.Round,
+            StrokeEndLineCap = PenLineCap.Round,
+            StrokeLineJoin = PenLineJoin.Round,
+            Width = 12,
+            Height = 12,
+            Stretch = Stretch.Uniform,
+            VerticalAlignment = VerticalAlignment.Center,
+            ToolTip = "Linked clip (deduplicated)",
+            Margin = new Thickness(0, 0, 4, 0),
+        };
+        return path;
+    }
+
+    private StackPanel WithDeduplicationDot(StackPanel? existingRow, TextBlock title)
+    {
+        UIElement linkIcon = MakeLinkIcon();
+
+        if (existingRow is not null)
+        {
+            linkIcon = MakeLinkIcon();
+            ((System.Windows.Shapes.Path)linkIcon).Margin = new Thickness(6, 0, 4, 0);
+            existingRow.Children.Insert(existingRow.Children.Count - 1, linkIcon);
+            return existingRow;
+        }
+
+        Thickness titleMargin = title.Margin;
+        title.Margin = new Thickness(0, 0, 0, 0);
+        var row = new StackPanel { Orientation = Orientation.Horizontal, Margin = titleMargin };
+        row.Children.Add(linkIcon);
         row.Children.Add(title);
         return row;
     }

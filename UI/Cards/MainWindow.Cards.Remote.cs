@@ -24,7 +24,7 @@ public partial class MainWindow : Window
 
         var compressOverlay = new Grid
         {
-            Background = new SolidColorBrush(Color.FromArgb(0xDD, 0x12, 0x14, 0x1A)),
+            Background = (Brush)FindResource("PanelBgOpaque"),
             Visibility = Visibility.Collapsed,
             IsHitTestVisible = false
         };
@@ -199,10 +199,12 @@ public partial class MainWindow : Window
         bool isStarred = _settings.StarredClips.Contains(file.Name) || _settings.StarredClips.Contains(relativePath);
         var starButton = new Border
         {
-            Width = 22,
-            Height = 22,
-            CornerRadius = new CornerRadius(11),
-            Background = new SolidColorBrush(Color.FromArgb(isStarred ? (byte)0x80 : (byte)0x40, 0x00, 0x00, 0x00)),
+            Width = 24,
+            Height = 24,
+            CornerRadius = new CornerRadius(12),
+            Background = (Brush)FindResource("BadgeBg"),
+            BorderBrush = (Brush)FindResource("BadgeBorder"),
+            BorderThickness = new Thickness(1),
             HorizontalAlignment = HorizontalAlignment.Right,
             VerticalAlignment = VerticalAlignment.Top,
             Margin = new Thickness(8),
@@ -225,7 +227,6 @@ public partial class MainWindow : Window
             bool nowStarred = _settings.StarredClips.Contains(file.Name);
             starGlyph.Text = nowStarred ? "★" : "☆";
             starGlyph.Foreground = nowStarred ? new SolidColorBrush(Color.FromRgb(0xFF, 0xD7, 0x00)) : (Brush)FindResource("Text1");
-            starButton.Background = new SolidColorBrush(Color.FromArgb(nowStarred ? (byte)0x80 : (byte)0x40, 0x00, 0x00, 0x00));
             if (_settings.GalleryStarredOnly)
                 _ = LoadRemoteGalleryAsync();
         };
@@ -237,7 +238,7 @@ public partial class MainWindow : Window
 
         var compressOverlay = new Grid
         {
-            Background = new SolidColorBrush(Color.FromArgb(0xDD, 0x12, 0x14, 0x1A)),
+            Background = (Brush)FindResource("PanelBgOpaque"),
             Visibility = Visibility.Collapsed,
             IsHitTestVisible = false
         };

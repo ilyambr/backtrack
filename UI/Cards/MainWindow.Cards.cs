@@ -33,7 +33,7 @@ public partial class MainWindow : Window
             Width = 20,
             Height = 20,
             CornerRadius = new CornerRadius(10),
-            Background = new SolidColorBrush(Color.FromArgb(0x40, 0xFF, 0xFF, 0xFF)),
+            Background = (Brush)FindResource("BadgeBg"),
             BorderBrush = (Brush)FindResource("Text0"),
             BorderThickness = new Thickness(1.5),
             HorizontalAlignment = HorizontalAlignment.Left,
@@ -46,10 +46,12 @@ public partial class MainWindow : Window
         bool isStarred = _settings.StarredClips.Contains(file.Name) || _settings.StarredClips.Contains(file.FullName);
         var starButton = new Border
         {
-            Width = 22,
-            Height = 22,
-            CornerRadius = new CornerRadius(11),
-            Background = new SolidColorBrush(Color.FromArgb(isStarred ? (byte)0x80 : (byte)0x40, 0x00, 0x00, 0x00)),
+            Width = 24,
+            Height = 24,
+            CornerRadius = new CornerRadius(12),
+            Background = (Brush)FindResource("BadgeBg"),
+            BorderBrush = (Brush)FindResource("BadgeBorder"),
+            BorderThickness = new Thickness(1),
             HorizontalAlignment = HorizontalAlignment.Right,
             VerticalAlignment = VerticalAlignment.Top,
             Margin = new Thickness(8),
@@ -72,7 +74,6 @@ public partial class MainWindow : Window
             bool nowStarred = _settings.StarredClips.Contains(file.Name);
             starGlyph.Text = nowStarred ? "★" : "☆";
             starGlyph.Foreground = nowStarred ? new SolidColorBrush(Color.FromRgb(0xFF, 0xD7, 0x00)) : (Brush)FindResource("Text1");
-            starButton.Background = new SolidColorBrush(Color.FromArgb(nowStarred ? (byte)0x80 : (byte)0x40, 0x00, 0x00, 0x00));
             if (_settings.GalleryStarredOnly)
                 LoadGallery();
         };
@@ -84,7 +85,7 @@ public partial class MainWindow : Window
 
         var compressOverlay = new Grid
         {
-            Background = new SolidColorBrush(Color.FromArgb(0xDD, 0x12, 0x14, 0x1A)),
+            Background = (Brush)FindResource("PanelBgOpaque"),
             Visibility = Visibility.Collapsed,
             IsHitTestVisible = false
         };
@@ -122,20 +123,40 @@ public partial class MainWindow : Window
         progressBarTrack.Child = progressBarFill;
         compressStack.Children.Add(compressText);
         compressStack.Children.Add(progressBarTrack);
-        compressOverlay.Children.Add(compressStack);
+
+        var compressPill = new Border
+        {
+            Background = (Brush)FindResource("BadgeBg"),
+            BorderBrush = (Brush)FindResource("BadgeBorder"),
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(6),
+            Padding = new Thickness(14, 10, 14, 10),
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center,
+            Child = compressStack
+        };
+
+        compressOverlay.Children.Add(compressPill);
         thumbHost.Children.Add(compressOverlay);
 
-        if (_activeCompressingClips.TryGetValue(file.FullName, out double initProg) ||
-            _activeCompressingClips.TryGetValue(file.Name, out initProg))
+        if (_activeCompressingClips.TryGetValue(file.FullName, out double initComp) ||
+            _activeCompressingClips.TryGetValue(file.Name, out initComp))
         {
             compressOverlay.Visibility = Visibility.Visible;
-            compressText.Text = $"Compressing {(int)Math.Round(initProg * 100)}%";
-            progressBarFill.Width = Math.Max(2, initProg * 140.0);
+            compressText.Text = $"Compressing {(int)Math.Round(initComp * 100)}%";
+            progressBarFill.Width = Math.Max(2, initComp * 140.0);
+        }
+        else if (_activeMergingClips.TryGetValue(file.FullName, out double initMerge) ||
+                 _activeMergingClips.TryGetValue(file.Name, out initMerge))
+        {
+            compressOverlay.Visibility = Visibility.Visible;
+            compressText.Text = $"Merging {(int)Math.Round(initMerge * 100)}%";
+            progressBarFill.Width = Math.Max(2, initMerge * 140.0);
         }
 
         thumb.Child = thumbHost;
 
-        Action<string, double> progressHandler = (targetPath, prog) =>
+        Action<string, double> compressProgressHandler = (targetPath, prog) =>
         {
             if (string.Equals(targetPath, file.FullName, StringComparison.OrdinalIgnoreCase) ||
                 string.Equals(targetPath, file.Name, StringComparison.OrdinalIgnoreCase) ||
@@ -149,7 +170,23 @@ public partial class MainWindow : Window
                 });
             }
         };
-        ClipCompressionProgressChanged += progressHandler;
+        ClipCompressionProgressChanged += compressProgressHandler;
+
+        Action<string, double> mergeProgressHandler = (targetPath, prog) =>
+        {
+            if (string.Equals(targetPath, file.FullName, StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(targetPath, file.Name, StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(Path.GetFileName(targetPath), file.Name, StringComparison.OrdinalIgnoreCase))
+            {
+                Dispatcher.BeginInvoke(() =>
+                {
+                    compressOverlay.Visibility = Visibility.Visible;
+                    compressText.Text = $"Merging {(int)Math.Round(prog * 100)}%";
+                    progressBarFill.Width = Math.Max(2, prog * 140.0);
+                });
+            }
+        };
+        ClipMergeProgressChanged += mergeProgressHandler;
 
         Action<string> completeHandler = (targetPath) =>
         {
@@ -166,11 +203,87 @@ public partial class MainWindow : Window
             }
         };
         ClipCompressionCompleted += completeHandler;
+        ClipMergeCompleted += completeHandler;
 
         thumb.Unloaded += (_, _) =>
         {
-            ClipCompressionProgressChanged -= progressHandler;
+            ClipCompressionProgressChanged -= compressProgressHandler;
+            ClipMergeProgressChanged -= mergeProgressHandler;
             ClipCompressionCompleted -= completeHandler;
+            ClipMergeCompleted -= completeHandler;
+        };
+
+        thumb.AllowDrop = true;
+        thumb.DragEnter += (_, e) =>
+        {
+            if (e.Data.GetDataPresent(DataFormats.FileDrop))
+            {
+                if (e.Data.GetData(DataFormats.FileDrop) is string[] files && files.Length == 1)
+                {
+                    string dragged = files[0];
+                    if (!string.Equals(dragged, file.FullName, StringComparison.OrdinalIgnoreCase) &&
+                        DeduplicationService.Instance.IsDeduplicated(dragged, out var dedupEntry) &&
+                        (string.Equals(dedupEntry?.OriginClipPath, file.FullName, StringComparison.OrdinalIgnoreCase) ||
+                         string.Equals(dedupEntry?.OriginClipFileName, file.Name, StringComparison.OrdinalIgnoreCase)))
+                    {
+                        e.Effects = DragDropEffects.Move | DragDropEffects.Copy;
+                        thumb.BorderBrush = (Brush)FindResource("Accent");
+                        thumb.BorderThickness = new Thickness(2);
+                        e.Handled = true;
+                        return;
+                    }
+                }
+            }
+            e.Effects = DragDropEffects.None;
+        };
+
+        thumb.DragOver += (_, e) =>
+        {
+            if (e.Data.GetDataPresent(DataFormats.FileDrop))
+            {
+                if (e.Data.GetData(DataFormats.FileDrop) is string[] files && files.Length == 1)
+                {
+                    string dragged = files[0];
+                    if (!string.Equals(dragged, file.FullName, StringComparison.OrdinalIgnoreCase) &&
+                        DeduplicationService.Instance.IsDeduplicated(dragged, out var dedupEntry) &&
+                        (string.Equals(dedupEntry?.OriginClipPath, file.FullName, StringComparison.OrdinalIgnoreCase) ||
+                         string.Equals(dedupEntry?.OriginClipFileName, file.Name, StringComparison.OrdinalIgnoreCase)))
+                    {
+                        e.Effects = DragDropEffects.Move | DragDropEffects.Copy;
+                        e.Handled = true;
+                        return;
+                    }
+                }
+            }
+            e.Effects = DragDropEffects.None;
+        };
+
+        thumb.DragLeave += (_, e) =>
+        {
+            thumb.BorderBrush = null;
+            thumb.BorderThickness = new Thickness(0);
+        };
+
+        thumb.Drop += (_, e) =>
+        {
+            thumb.BorderBrush = null;
+            thumb.BorderThickness = new Thickness(0);
+
+            if (e.Data.GetDataPresent(DataFormats.FileDrop))
+            {
+                if (e.Data.GetData(DataFormats.FileDrop) is string[] files && files.Length == 1)
+                {
+                    string dragged = files[0];
+                    if (!string.Equals(dragged, file.FullName, StringComparison.OrdinalIgnoreCase) &&
+                        DeduplicationService.Instance.IsDeduplicated(dragged, out var dedupEntry) &&
+                        (string.Equals(dedupEntry?.OriginClipPath, file.FullName, StringComparison.OrdinalIgnoreCase) ||
+                         string.Equals(dedupEntry?.OriginClipFileName, file.Name, StringComparison.OrdinalIgnoreCase)))
+                    {
+                        e.Handled = true;
+                        _ = MergeDeduplicatedClipsAsync(file, dragged);
+                    }
+                }
+            }
         };
 
         Point? dragStart = null;
@@ -281,7 +394,17 @@ public partial class MainWindow : Window
         subRow.Children.Add(sub);
         subRow.Children.Add(durationText);
 
-        UIElement titleRow = isNewest ? WithNewestDot(title, "Newest clip") : title;
+        bool isDeduplicatedClip = DeduplicationService.Instance.IsDeduplicated(file.FullName, out _);
+        bool hasDeduplicatedChildren = !isDeduplicatedClip && DeduplicationService.Instance.GetAllRecords().Values
+            .Any(r => string.Equals(r.OriginClipPath, file.FullName, StringComparison.OrdinalIgnoreCase) ||
+                      string.Equals(r.OriginClipFileName, file.Name, StringComparison.OrdinalIgnoreCase));
+        bool isLinked = isDeduplicatedClip || hasDeduplicatedChildren;
+
+        StackPanel? newestRow = isNewest ? WithNewestDot(title, "Newest clip") : null;
+        UIElement titleRow = isLinked
+            ? WithDeduplicationDot(newestRow, title)
+            : (UIElement?)newestRow ?? title;
+
         var content = new StackPanel();
         content.Children.Add(thumb);
         content.Children.Add(titleRow);

@@ -121,7 +121,7 @@ public partial class MainWindow : Window
                             _toastOverlay.ShowStorageLimitWarning(blockMessage);
                             return;
                         }
-                        await _obs.SaveReplayRowAsync(rowKey);
+                        await ExecuteSaveReplayRowCoreAsync(rowKey, match?.Label);
                     });
                 }
             }

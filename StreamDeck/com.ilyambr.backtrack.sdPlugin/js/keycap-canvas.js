@@ -128,7 +128,7 @@ function drawTouchStripCanvas(ctx, options) {
     accentColor
   } = options;
 
-  const greenAccent = '#22c55e';
+  const greenAccent = '#3ECF8E';
 
   ctx.fillStyle = '#000000';
   ctx.fillRect(0, 0, 200, 100);

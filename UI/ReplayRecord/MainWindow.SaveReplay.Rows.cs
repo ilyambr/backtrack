@@ -190,39 +190,7 @@ public partial class MainWindow : Window
             button.IsEnabled = false;
             try
             {
-                int preferredSeconds = _settings.PreferredClipLengthSeconds > 0 ? _settings.PreferredClipLengthSeconds : 60;
-                bool isShortenedBackToBack = false;
-
-                if (_lastReplaySaveUtc.TryGetValue(row.Key, out DateTime lastSave))
-                {
-                    double elapsed = (DateTime.UtcNow - lastSave).TotalSeconds;
-                    if (elapsed > 1 && elapsed < preferredSeconds)
-                    {
-                        int effectiveSeconds = (int)Math.Ceiling(elapsed);
-                        AppLog.Write($"[Replay] Smart deduplication for {row.Label}: clipping {effectiveSeconds}s since last save");
-                        try { await _obs.SetReplayRowLengthAsync(row.Key, effectiveSeconds); isShortenedBackToBack = true; } catch { }
-                    }
-                    else if (preferredSeconds > 0)
-                    {
-                        try { await _obs.SetReplayRowLengthAsync(row.Key, preferredSeconds); } catch { }
-                    }
-                }
-                else if (preferredSeconds > 0)
-                {
-                    try { await _obs.SetReplayRowLengthAsync(row.Key, preferredSeconds); } catch { }
-                }
-
-                _lastReplaySaveUtc[row.Key] = DateTime.UtcNow;
-                await _obs.SaveReplayRowAsync(row.Key);
-
-                if (isShortenedBackToBack && preferredSeconds > 0)
-                {
-                    _ = Task.Run(async () =>
-                    {
-                        await Task.Delay(1500);
-                        try { await _obs.SetReplayRowLengthAsync(row.Key, preferredSeconds); } catch { }
-                    });
-                }
+                await ExecuteSaveReplayRowCoreAsync(row.Key, row.Label);
             }
             catch (Exception ex)
             {
@@ -234,6 +202,13 @@ public partial class MainWindow : Window
             }
         };
         return button;
+    }
+
+    private async Task ExecuteSaveReplayRowCoreAsync(string rowKey, string? rowLabel = null)
+    {
+        int preferredSeconds = _settings.PreferredClipLengthSeconds > 0 ? _settings.PreferredClipLengthSeconds : 60;
+        await DeduplicationService.Instance.PrepareReplaySaveAsync(_obs, rowKey, rowLabel, preferredSeconds);
+        await _obs.SaveReplayRowAsync(rowKey);
     }
 
     private Border BuildSharedClipLengthControl(List<ReplayRow> rows)
@@ -278,7 +253,7 @@ public partial class MainWindow : Window
             int seconds = SliderPosToSeconds(slider.Value, maxSeconds);
             if (_settings.PreferredClipLengthSeconds != seconds)
             {
-                _lastReplaySaveUtc.Clear();
+                DeduplicationService.Instance.OnClipDurationChanged(seconds);
                 _streamDeckServer?.ClearLastSaveTimestamps();
             }
 

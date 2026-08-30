@@ -610,7 +610,7 @@ function renderKey(context, force = false) {
         isSaving,
         isSaved,
         pulsePhase,
-        accentColor: '#22c55e'
+        accentColor: '#3ECF8E'
       });
 
       setFeedback(context, {

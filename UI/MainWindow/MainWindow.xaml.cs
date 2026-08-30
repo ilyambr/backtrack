@@ -58,8 +58,6 @@ public partial class MainWindow : Window
 
     private readonly Dictionary<string, DateTime> _recordRowActiveSinceUtc = new();
 
-    private readonly Dictionary<string, DateTime> _lastReplaySaveUtc = new(StringComparer.OrdinalIgnoreCase);
-
     private readonly Dictionary<string, (string Label, string SourceName, string FilterName)> _recordRowInfoByKey = new();
 
     private bool _recordRowPollSeeded;
