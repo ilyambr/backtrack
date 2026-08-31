@@ -150,7 +150,12 @@ internal static class ShellDragHelper
         }
         else
         {
-            dataObjectToUse = new System.Windows.DataObject(DataFormats.FileDrop, filePaths);
+            var wpfData = new System.Windows.DataObject(DataFormats.FileDrop, filePaths);
+            if (wpfData is ComIDataObject comObj)
+            {
+                AttachDragImage(comObj, thumbnail, label);
+            }
+            dataObjectToUse = wpfData;
         }
 
         try

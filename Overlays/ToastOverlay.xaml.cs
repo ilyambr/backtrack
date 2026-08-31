@@ -157,10 +157,22 @@ public partial class ToastOverlay : Window
     public void ShowMergeSaved(string? resolvedPath)
     {
         AudioCues.PlayClipSaved();
+        var geo1 = new EllipseGeometry(new Point(18, 18), 3, 3);
+        var geo2 = new EllipseGeometry(new Point(6, 6), 3, 3);
+        var geo3 = Geometry.Parse("M6,21 V9 A9,9 0 0,0 15,18");
+        var group = new GeometryGroup();
+        group.Children.Add(geo1);
+        group.Children.Add(geo2);
+        group.Children.Add(geo3);
+
         var icon = new Path
         {
-            Data = Geometry.Parse("M17 20.41L18.41 19 15 15.59 13.59 17 17 20.41M8.5 5A3.5 3.5 0 1 0 12 8.5 3.5 3.5 0 0 0 8.5 5M8.5 10A1.5 1.5 0 1 1 10 8.5 1.5 1.5 0 0 1 8.5 10M19 8.5A3.5 3.5 0 1 0 15.5 12 3.5 3.5 0 0 0 19 8.5M17 8.5A1.5 1.5 0 1 1 15.5 7 1.5 1.5 0 0 1 17 8.5M4 6.5A2.5 2.5 0 1 0 6.5 9 2.5 2.5 0 0 0 4 6.5M10.88 13.12L7.38 9.62A4.47 4.47 0 0 1 4 11a4.5 4.5 0 1 1 4.5-4.5 4.47 4.47 0 0 1-1.38 3.38l3.5 3.5 1.41-1.41 3.5 3.5A4.47 4.47 0 0 1 19 14a4.5 4.5 0 1 1-4.5 4.5 4.47 4.47 0 0 1 1.38-3.38l-3.5-3.5z"),
-            Fill = Green,
+            Data = group,
+            Stroke = Green,
+            StrokeThickness = 2,
+            StrokeStartLineCap = PenLineCap.Round,
+            StrokeEndLineCap = PenLineCap.Round,
+            StrokeLineJoin = PenLineJoin.Round,
             Width = 14,
             Height = 14,
             Stretch = Stretch.Uniform,

@@ -229,4 +229,6 @@ public partial class MainWindow
     public Button UninstallReplaySliderButton => SettingsView.UninstallReplaySliderButton;
     public Button UninstallSourceRecordButton => SettingsView.UninstallSourceRecordButton;
     public Button UnpairButton => SettingsView.UnpairButton;
+    public Border RefreshRemoteThumbnailsRow => SettingsView.RefreshRemoteThumbnailsRow;
+    public Button RefreshRemoteThumbnailsButton => SettingsView.RefreshRemoteThumbnailsButton;
 }

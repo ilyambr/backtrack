@@ -96,6 +96,7 @@ public partial class MainWindow : Window
     private void QueueRemoteDeleteWithUndo(string relativePath, string displayName, RemoteGalleryFile? file)
     {
         _pendingRemoteDeletePaths.Add(relativePath);
+        _pendingRemoteDeletePaths.Add(displayName);
         if (GalleryPanel.Visibility == Visibility.Visible)
             LoadGallery();
 
@@ -104,12 +105,12 @@ public partial class MainWindow : Window
         _toastOverlay.ShowDeleteUndo(displayName,
             onExpire: () =>
             {
-                _pendingRemoteDeletePaths.Remove(relativePath);
                 _ = FinishRemoteDeleteAsync(relativePath, displayName, file);
             },
             onUndo: () =>
             {
                 _pendingRemoteDeletePaths.Remove(relativePath);
+                _pendingRemoteDeletePaths.Remove(displayName);
                 Dispatcher.BeginInvoke(() =>
                 {
                     LoadGallery();

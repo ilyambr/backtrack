@@ -163,21 +163,27 @@ public partial class MainWindow : Window
 
     private async Task FinishRemoteDeleteAsync(string relativePath, string displayName, RemoteGalleryFile? file)
     {
-        (bool success, string? error) = await _pairing.DeleteRemoteClipAsync(relativePath);
-        if (!success)
+        try
         {
-
-            _ = Dispatcher.BeginInvoke(() => MessageBox.Show(this, $"Couldn't delete \"{displayName}\": {error}", "Backtrack"));
-        }
-        else if (file is not null)
-        {
-
-            try { File.Delete(GetRemoteClipCachePath(relativePath, file.Name)); } catch { }
-            string? thumbCache = GetRemoteThumbnailCachePath(relativePath, file.Modified, file.Size);
-            if (thumbCache is not null)
+            (bool success, string? error) = await _pairing.DeleteRemoteClipAsync(relativePath);
+            if (!success)
             {
-                try { File.Delete(thumbCache); } catch { }
+                _ = Dispatcher.BeginInvoke(() => MessageBox.Show(this, $"Couldn't delete \"{displayName}\": {error}", "Backtrack"));
             }
+            else if (file is not null)
+            {
+                try { File.Delete(GetRemoteClipCachePath(relativePath, file.Name)); } catch { }
+                string? thumbCache = GetRemoteThumbnailCachePath(relativePath, file.Modified, file.Size);
+                if (thumbCache is not null)
+                {
+                    try { File.Delete(thumbCache); } catch { }
+                }
+            }
+        }
+        finally
+        {
+            _pendingRemoteDeletePaths.Remove(relativePath);
+            _pendingRemoteDeletePaths.Remove(displayName);
         }
 
         _ = Dispatcher.BeginInvoke(() =>
@@ -221,6 +227,13 @@ public partial class MainWindow : Window
         {
             try
             {
+                var fi = new FileInfo(cachePath);
+                if (fi.Length < 100)
+                {
+                    try { File.Delete(cachePath); } catch { }
+                    return;
+                }
+
                 bitmap = new BitmapImage();
                 bitmap.BeginInit();
                 bitmap.CacheOption = BitmapCacheOption.OnLoad;
@@ -231,6 +244,7 @@ public partial class MainWindow : Window
             catch
             {
                 bitmap = null;
+                try { File.Delete(cachePath); } catch { }
             }
         }
 
@@ -296,7 +310,10 @@ public partial class MainWindow : Window
         string filter = GalleryFilterBox.Text.Trim();
 
         List<RemoteGalleryFile> files = listing.Files
-            .Where(f => !_pendingRemoteDeletePaths.Contains(RemoteClipRelativePath(f.Name)))
+            .Where(f => !_pendingRemoteDeletePaths.Contains(f.Name)
+                     && !_pendingRemoteDeletePaths.Contains(RemoteClipRelativePath(f.Name))
+                     && !_pendingRemoteDeletePaths.Contains(RemoteClipRelativePath(f.Name).Replace('\\', '/'))
+                     && !_pendingRemoteDeletePaths.Contains(RemoteClipRelativePath(f.Name).Replace('/', '\\')))
             .Where(f => filter.Length == 0 || Path.GetFileNameWithoutExtension(f.Name).Contains(filter, StringComparison.OrdinalIgnoreCase))
             .ToList();
 
@@ -337,7 +354,8 @@ public partial class MainWindow : Window
 
         foreach (RemoteGalleryFile file in files)
             newCards.Add(BuildRemoteClipCard(file,
-                isNewest: newestRemotePath is not null && string.Equals(RemoteClipRelativePath(file.Name), newestRemotePath, StringComparison.OrdinalIgnoreCase)));
+                isNewest: newestRemotePath is not null && string.Equals(RemoteClipRelativePath(file.Name), newestRemotePath, StringComparison.OrdinalIgnoreCase),
+                allFiles: files));
 
         GalleryGrid.Children.Clear();
         foreach (UIElement card in newCards)

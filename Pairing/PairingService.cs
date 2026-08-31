@@ -17,7 +17,7 @@ public sealed record PairingResult(PairingOutcome Outcome, string? Secret = null
 public sealed record RamDiskSnapshot(bool Enabled, char DriveLetter, int SizeMb, bool Mounted);
 public sealed record PluginVersionInfo(string InstalledVersion, bool? Ok);
 public sealed record PluginVersionsSnapshot(PluginVersionInfo ReplaySlider, PluginVersionInfo SourceRecord);
-public sealed record RemoteGalleryFile(string Name, long Size, DateTime Modified);
+public sealed record RemoteGalleryFile(string Name, long Size, DateTime Modified, bool IsDeduplicated = false, bool HasDeduplicatedChildren = false, string? OriginFileName = null, string? OriginPath = null);
 public sealed record RemoteStorageInfo(bool StorageLimitEnabled, double StorageLimitGb, long ClipsFolderBytes, long DriveTotalBytes, long DriveFreeBytes);
 public sealed record RemoteGalleryListing(IReadOnlyList<string> Folders, IReadOnlyList<RemoteGalleryFile> Files, RemoteStorageInfo? Storage = null);
 
@@ -123,6 +123,12 @@ public sealed partial class PairingService : IDisposable
                 if (type == "put_clip")
                 {
                     await HandlePutClipAsync(doc.RootElement, client.GetStream());
+                    return;
+                }
+
+                if (type == "merge_clips")
+                {
+                    await HandleMergeClipsAsync(doc.RootElement, client.GetStream());
                     return;
                 }
 

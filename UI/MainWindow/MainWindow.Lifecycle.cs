@@ -280,6 +280,7 @@ public partial class MainWindow : Window
 
         _pairing.TrimClipForRemote = TrimClipForRemoteAsync;
         _pairing.CompressClipForRemote = CompressClipForRemoteHostAsync;
+        _pairing.MergeClipsForRemote = MergeClipsForRemoteHostAsync;
 
         AudioCues.IsRemoteModeActive = () => _settings.ObsIsRemote && !string.IsNullOrEmpty(_settings.PairedPeerSecret);
         AudioCues.RemoteCuePlayer = (cue, vol) => _pairing.SendPlayAudioCueAsync(cue, vol);

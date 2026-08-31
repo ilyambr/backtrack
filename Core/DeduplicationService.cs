@@ -220,6 +220,22 @@ public sealed class DeduplicationService
         }
     }
 
+    public void ImportRemoteRecords(IReadOnlyDictionary<string, DeduplicationEntry>? remoteRecords)
+    {
+        if (remoteRecords == null) return;
+        lock (_lock)
+        {
+            foreach (var kvp in remoteRecords)
+            {
+                _records[kvp.Key] = kvp.Value;
+                if (!string.IsNullOrEmpty(kvp.Value.ClipFileName))
+                    _records[kvp.Value.ClipFileName] = kvp.Value;
+                if (!string.IsNullOrEmpty(kvp.Value.ClipPath))
+                    _records[kvp.Value.ClipPath] = kvp.Value;
+            }
+        }
+    }
+
     public void Load()
     {
         try

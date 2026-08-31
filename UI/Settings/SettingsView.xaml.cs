@@ -51,6 +51,7 @@ public partial class SettingsView : UserControl
     private void DeauthorizeButton_Click(object sender, RoutedEventArgs e) => Main?.DeauthorizeButton_Click(sender, e);
     private void UnpairButton_Click(object sender, RoutedEventArgs e) => Main?.UnpairButton_Click(sender, e);
     private void ManualPairButton_Click(object sender, RoutedEventArgs e) => Main?.ManualPairButton_Click(sender, e);
+    private void RefreshRemoteThumbnailsButton_Click(object sender, RoutedEventArgs e) => Main?.RefreshRemoteThumbnailsButton_Click(sender, e);
     private void RamDiskToggle_Click(object sender, RoutedEventArgs e) => Main?.RamDiskToggle_Click(sender, e);
     private void SuggestRamDiskSize_Click(object sender, RoutedEventArgs e) => Main?.SuggestRamDiskSize_Click(sender, e);
     private void ApplyRamDiskSettings_Click(object sender, RoutedEventArgs e) => Main?.ApplyRamDiskSettings_Click(sender, e);

@@ -1,11 +1,11 @@
 {
   "$schema": "https://schemas.elgato.com/streamdeck/plugins/manifest.json",
   "UUID": "com.ilyambr.backtrack",
-  "SDKVersion": 3,
+  "SDKVersion": 2,
   "Name": "Backtrack",
   "Description": "Native two-way control for Backtrack Replay Buffer and Source Recording.",
   "Author": "ilyambr",
-  "Version": "1.0.0.0",
+  "Version": "1.0.0",
   "Icon": "images/pluginIcon",
   "Category": "Backtrack",
   "CategoryIcon": "images/categoryIcon",
@@ -21,7 +21,7 @@
     }
   ],
   "Software": {
-    "MinimumVersion": "6.9"
+    "MinimumVersion": "6.5"
   },
   "Actions": [
     {
@@ -139,7 +139,7 @@
         "Encoder"
       ],
       "Encoder": {
-        "layout": "$X1",
+        "layout": "layouts/touch_strip.json",
         "StackColor": "#4ade80",
         "Icon": "images/action_clip",
         "TriggerDescription": {

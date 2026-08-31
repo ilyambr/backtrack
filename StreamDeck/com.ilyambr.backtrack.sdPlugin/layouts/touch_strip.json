@@ -1,0 +1,10 @@
+{
+  "id": "com.ilyambr.backtrack.touchstrip",
+  "items": [
+    {
+      "key": "canvas",
+      "type": "pixmap",
+      "rect": [0, 0, 200, 100]
+    }
+  ]
+}

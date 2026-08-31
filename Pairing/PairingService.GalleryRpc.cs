@@ -84,7 +84,23 @@ public sealed partial class PairingService
                 .Select(f => new FileInfo(f))
                 .Where(f => GetCachedDurationMsForRemote?.Invoke(f.FullName) is not < 2000)
                 .OrderByDescending(f => f.LastWriteTimeUtc)
-                .Select(f => new { name = f.Name, size = f.Length, modified = f.LastWriteTimeUtc })
+                .Select(f =>
+                {
+                    bool isDedup = DeduplicationService.Instance.IsDeduplicated(f.FullName, out var dEntry);
+                    bool hasChildren = !isDedup && DeduplicationService.Instance.GetAllRecords().Values
+                        .Any(r => string.Equals(r.OriginClipPath, f.FullName, StringComparison.OrdinalIgnoreCase) ||
+                                  string.Equals(r.OriginClipFileName, f.Name, StringComparison.OrdinalIgnoreCase));
+                    return new
+                    {
+                        name = f.Name,
+                        size = f.Length,
+                        modified = f.LastWriteTimeUtc,
+                        isDeduplicated = isDedup,
+                        hasDeduplicatedChildren = hasChildren,
+                        originFileName = dEntry?.OriginClipFileName,
+                        originPath = dEntry?.OriginClipPath
+                    };
+                })
                 .ToArray();
 
             var markersMap = new Dictionary<string, List<double>>(StringComparer.OrdinalIgnoreCase);
@@ -134,6 +150,7 @@ public sealed partial class PairingService
                 files,
                 markers = markersMap,
                 starred = starredList,
+                dedupRecords = DeduplicationService.Instance.GetAllRecords(),
                 storage = storageInfo
             });
         }

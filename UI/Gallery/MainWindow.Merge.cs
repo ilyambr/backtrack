@@ -36,7 +36,7 @@ public partial class MainWindow : Window
         Dispatcher.BeginInvoke(() => ClipMergeCompleted?.Invoke(clipPath));
     }
 
-    public async Task MergeDeduplicatedClipsAsync(FileInfo targetFile, string draggedClipPath)
+    public async Task MergeDeduplicatedClipsAsync(FileInfo targetFile, string draggedClipPath, Action<double>? externalProgress = null)
     {
         if (!File.Exists(draggedClipPath) || !File.Exists(targetFile.FullName))
         {
@@ -48,6 +48,7 @@ public partial class MainWindow : Window
         string dedupPath = draggedClipPath;
 
         SetClipMerging(originPath, 0.0);
+        externalProgress?.Invoke(0.0);
 
         long originMs = TryGetCachedDurationMs(new FileInfo(originPath)) ?? 30000;
         long dedupMs = TryGetCachedDurationMs(new FileInfo(dedupPath)) ?? 10000;
@@ -60,6 +61,7 @@ public partial class MainWindow : Window
         bool success = await Task.Run(() => RunFfmpegConcatClips(originPath, dedupPath, tempMergedPath, totalDurationSec, prog =>
         {
             SetClipMerging(originPath, prog);
+            externalProgress?.Invoke(prog);
         }));
 
         if (success && File.Exists(tempMergedPath))
@@ -123,6 +125,54 @@ public partial class MainWindow : Window
                 LoadGallery();
             RefreshRecentClipsOverlay();
         });
+    }
+
+    private async Task<(bool Success, string? Error, string? NewFileName, long Size)> MergeClipsForRemoteHostAsync(string originPath, string dedupPath, Action<double>? onProgress)
+    {
+        if (!File.Exists(originPath) || !File.Exists(dedupPath))
+            return (false, "One of the clips no longer exists.", null, 0);
+
+        var targetFile = new FileInfo(originPath);
+        await MergeDeduplicatedClipsAsync(targetFile, dedupPath, onProgress);
+
+        if (File.Exists(originPath))
+        {
+            var fi = new FileInfo(originPath);
+            return (true, null, fi.Name, fi.Length);
+        }
+
+        return (false, "Merge failed.", null, 0);
+    }
+
+    public async Task MergeRemoteDeduplicatedClipsAsync(string originRelPath, string dedupRelPath)
+    {
+        SetClipMerging(originRelPath, 0.0);
+
+        var progress = new Progress<double>(prog =>
+        {
+            SetClipMerging(originRelPath, prog);
+        });
+
+        (bool success, string? error, string? newRelPath, long size) = await _pairing.MergeRemoteClipsAsync(originRelPath, dedupRelPath, progress);
+
+        ClearClipMerging(originRelPath);
+        ClearClipMerging(dedupRelPath);
+
+        if (success)
+        {
+            _toastOverlay.ShowMergeSaved(Path.GetFileName(originRelPath));
+            DeduplicationService.Instance.RemoveRecord(originRelPath);
+            DeduplicationService.Instance.RemoveRecord(dedupRelPath);
+            DeduplicationService.Instance.RemoveRecord(Path.GetFileName(originRelPath));
+            DeduplicationService.Instance.RemoveRecord(Path.GetFileName(dedupRelPath));
+            if (GalleryPanel.Visibility == Visibility.Visible)
+                _ = LoadRemoteGalleryAsync();
+            RefreshRecentClipsOverlay();
+        }
+        else
+        {
+            _toastOverlay.ShowMergeFailed(error ?? "Remote merge failed.");
+        }
     }
 
     private static int ProbeAudioTrackCount(string ffmpegPath, string videoPath)

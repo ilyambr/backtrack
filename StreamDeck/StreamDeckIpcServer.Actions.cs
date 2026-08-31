@@ -119,6 +119,7 @@ public sealed partial class StreamDeckIpcServer
         if (targetRow != null)
         {
             int preferredSeconds = _settings.PreferredClipLengthSeconds > 0 ? _settings.PreferredClipLengthSeconds : 60;
+            _ = BroadcastAsync("replay_saving", new { source = targetRow.Key });
             await DeduplicationService.Instance.PrepareReplaySaveAsync(_obs, targetRow.Key, targetRow.Label, preferredSeconds);
             await _obs.SaveReplayRowAsync(targetRow.Key);
             return true;

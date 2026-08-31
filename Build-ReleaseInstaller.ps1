@@ -12,11 +12,20 @@ if ([string]::IsNullOrWhiteSpace($Version)) {
 Write-Host "Releasing Backtrack v$Version (Local release, no CI)..." -ForegroundColor Cyan
 
 Write-Host "1. Packaging Stream Deck plugin..." -ForegroundColor Green
+Get-Process Backtrack -ErrorAction SilentlyContinue | Stop-Process -Force
 $sdDir = [System.IO.Path]::GetFullPath("StreamDeck/com.ilyambr.backtrack.sdPlugin")
 $sdPluginDest = [System.IO.Path]::GetFullPath("Backtrack.streamDeckPlugin")
-if (Test-Path $sdPluginDest) { [System.IO.File]::Delete($sdPluginDest) }
+Add-Type -AssemblyName System.IO.Compression
 Add-Type -AssemblyName System.IO.Compression.FileSystem
-[System.IO.Compression.ZipFile]::CreateFromDirectory($sdDir, $sdPluginDest)
+if (Test-Path $sdPluginDest) { Remove-Item $sdPluginDest -Force }
+$zip = [System.IO.Compression.ZipFile]::Open($sdPluginDest, [System.IO.Compression.ZipArchiveMode]::Create)
+$files = [System.IO.Directory]::GetFiles($sdDir, "*", [System.IO.SearchOption]::AllDirectories)
+foreach ($file in $files) {
+    $rel = $file.Substring($sdDir.Length).TrimStart('\', '/')
+    $entryName = "com.ilyambr.backtrack.sdPlugin/" + $rel.Replace('\', '/')
+    [System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile($zip, $file, $entryName) | Out-Null
+}
+$zip.Dispose()
 
 Write-Host "2. Publishing Backtrack binaries (Self-Contained win-x64)..." -ForegroundColor Green
 dotnet publish -c Release -r win-x64 --self-contained true -o "./publish"

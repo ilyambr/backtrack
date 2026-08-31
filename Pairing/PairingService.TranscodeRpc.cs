@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Net.Sockets;
 using System.Text.Json;
 using System.Threading.Tasks;
 using Backtrack.Core;
@@ -142,6 +143,77 @@ public sealed partial class PairingService
         string newRelativePath = WithNewFileName(relativePath, newFileName);
         AppLog.Write($"[compress_clip] success -- new relative path '{newRelativePath}', size {fileSize} bytes");
         return JsonSerializer.Serialize(new { success = true, path = newRelativePath, size = fileSize });
+    }
+
+    public Func<string, string, Action<double>?, Task<(bool Success, string? Error, string? NewFileName, long Size)>>? MergeClipsForRemote { get; set; }
+
+    private async Task HandleMergeClipsAsync(JsonElement request, NetworkStream stream)
+    {
+        if (!IsAuthorizedClient(request))
+        {
+            AppLog.Write("[merge_clips] rejected: client is not authorized");
+            await WriteLineAsync(stream, JsonSerializer.Serialize(new { success = false, error = "Not authorized -- pair with this PC first." }));
+            return;
+        }
+
+        string originRel = request.TryGetProperty("originPath", out JsonElement op) ? op.GetString() ?? "" : "";
+        string dedupRel = request.TryGetProperty("dedupPath", out JsonElement dp) ? dp.GetString() ?? "" : "";
+
+        AppLog.Write($"[merge_clips] incoming: origin='{originRel}' dedup='{dedupRel}'");
+
+        if (string.IsNullOrWhiteSpace(originRel) || string.IsNullOrWhiteSpace(dedupRel))
+        {
+            AppLog.Write("[merge_clips] rejected: missing clip paths");
+            await WriteLineAsync(stream, JsonSerializer.Serialize(new { success = false, error = "Missing clip paths." }));
+            return;
+        }
+
+        if (!TryResolveGalleryPath(originRel, out string originFull, out string? originErr))
+        {
+            await WriteLineAsync(stream, JsonSerializer.Serialize(new { success = false, error = originErr ?? "Origin clip not found." }));
+            return;
+        }
+
+        if (!TryResolveGalleryPath(dedupRel, out string dedupFull, out string? dedupErr))
+        {
+            await WriteLineAsync(stream, JsonSerializer.Serialize(new { success = false, error = dedupErr ?? "Deduplicated clip not found." }));
+            return;
+        }
+
+        if (!File.Exists(originFull) || !File.Exists(dedupFull))
+        {
+            await WriteLineAsync(stream, JsonSerializer.Serialize(new { success = false, error = "One of the clips no longer exists on this PC." }));
+            return;
+        }
+
+        if (MergeClipsForRemote is null)
+        {
+            AppLog.Write("[merge_clips] rejected: MergeClipsForRemote delegate is null");
+            await WriteLineAsync(stream, JsonSerializer.Serialize(new { success = false, error = "This PC's Backtrack can't merge clips right now." }));
+            return;
+        }
+
+        Action<double> onProgress = prog =>
+        {
+            try
+            {
+                _ = WriteLineAsync(stream, JsonSerializer.Serialize(new { progress = prog, target = originRel }));
+            }
+            catch { }
+        };
+
+        AppLog.Write($"[merge_clips] resolved origin='{originFull}' dedup='{dedupFull}' -- starting merge");
+        (bool success, string? error, string? newFileName, long fileSize) = await MergeClipsForRemote(originFull, dedupFull, onProgress);
+        if (!success || newFileName is null)
+        {
+            AppLog.Write($"[merge_clips] MergeClipsForRemote FAILED: {error ?? "(no error message)"}");
+            await WriteLineAsync(stream, JsonSerializer.Serialize(new { success = false, error = error ?? "Merge failed." }));
+            return;
+        }
+
+        string newRelativePath = WithNewFileName(originRel, newFileName);
+        AppLog.Write($"[merge_clips] success -- new relative path '{newRelativePath}', size {fileSize} bytes");
+        await WriteLineAsync(stream, JsonSerializer.Serialize(new { success = true, path = newRelativePath, size = fileSize }));
     }
 
     public Func<Task<PluginVersionsSnapshot>>? CheckAndApplyPluginUpdatesRemotely { get; set; }

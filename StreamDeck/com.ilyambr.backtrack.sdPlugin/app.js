@@ -46,12 +46,16 @@ function connectElgatoStreamDeckSocket(inPort, inPluginUUID, inRegisterEvent, in
     if (event === 'willAppear') {
       const settings = jsonObj.payload.settings || {};
       const controller = jsonObj.payload.controller || (action.includes('dial') ? 'Encoder' : 'Keypad');
-      actionContexts.set(context, { action, settings, controller, isEncoder: controller === 'Encoder' });
+      const isEncoder = controller === 'Encoder' || action.includes('dial');
+      actionContexts.set(context, { action, settings, controller, isEncoder });
       if (settings.source || settings.last_known_source) {
         lastKnownSourceMap.set(context, settings.source || settings.last_known_source);
       }
+      if (isEncoder) {
+        setFeedbackLayout(context, 'layouts/touch_strip.json');
+      }
       setTitle(context, '');
-      renderKey(context);
+      renderKey(context, true);
     } else if (event === 'willDisappear') {
       actionContexts.delete(context);
       animationStates.delete(context);
@@ -159,11 +163,6 @@ function matchesClipSource(context, entry, targetIdentifier) {
 
 const activeBurstIntervals = new Map();
 
-const globalCanvas = document.createElement('canvas');
-globalCanvas.width = 144;
-globalCanvas.height = 144;
-const globalCtx = globalCanvas.getContext('2d', { alpha: false });
-
 function runBurstAnimation(context, durationMs) {
   if (activeBurstIntervals.has(context)) {
     clearInterval(activeBurstIntervals.get(context));
@@ -188,10 +187,10 @@ function triggerSavingAnimation(source, triggerContext = null) {
     if (entry.action === 'com.ilyambr.backtrack.clip' || entry.action === 'com.ilyambr.backtrack.cliplengthdial') {
       if (context === triggerContext || matchesClipSource(context, entry, source)) {
         let anim = animationStates.get(context) || {};
-        anim.savingUntil = now + 3500;
+        anim.savingUntil = now + 45000;
         anim.savedUntil = 0;
         animationStates.set(context, anim);
-        runBurstAnimation(context, 3500);
+        runBurstAnimation(context, 45000);
       }
     }
   }
@@ -208,9 +207,9 @@ function triggerSavedAnimation(key) {
         }
         let anim = animationStates.get(context) || {};
         anim.savingUntil = 0;
-        anim.savedUntil = now + 1500;
+        anim.savedUntil = now + 1800;
         animationStates.set(context, anim);
-        renderKey(context, true);
+        runBurstAnimation(context, 1800);
       }
     }
   }
@@ -367,6 +366,7 @@ function renderKey(context, force = false) {
   let isSaved = anim.savedUntil > now;
   let isBookmarking = anim.bookmarkUntil > now;
   let rotationAngle = 0;
+  const pulsePhase = Math.sin(((now % 1300) / 1300) * Math.PI * 2);
 
   if (action === 'com.ilyambr.backtrack.hud') {
     header = 'Backtrack';
@@ -636,8 +636,6 @@ function renderKey(context, force = false) {
   anim.lastRenderKey = stateKey;
   animationStates.set(context, anim);
 
-  const pulsePhase = Math.sin(((now % 1300) / 1300) * Math.PI * 2);
-
   const dataUrl = drawKeycapCanvas(globalCtx, {
     header,
     dotColor,
@@ -738,6 +736,17 @@ function handleTouchTap(context, payload) {
       duration: 60
     }));
   }
+}
+
+function setFeedbackLayout(context, layout) {
+  if (!websocket || websocket.readyState !== WebSocket.OPEN) return;
+  websocket.send(JSON.stringify({
+    event: 'setFeedbackLayout',
+    context: context,
+    payload: {
+      layout: layout
+    }
+  }));
 }
 
 function setFeedback(context, payload) {

@@ -16,6 +16,53 @@ namespace Backtrack;
 
 public partial class MainWindow : Window
 {
+    private static bool IsDeduplicatedFileNamePair(string childName, string parentName)
+    {
+        if (string.IsNullOrWhiteSpace(childName) || string.IsNullOrWhiteSpace(parentName))
+            return false;
+
+        string childBase = Path.GetFileNameWithoutExtension(childName);
+        string parentBase = Path.GetFileNameWithoutExtension(parentName);
+        if (childBase.EndsWith(" (1)", StringComparison.OrdinalIgnoreCase) ||
+            childBase.EndsWith(" (2)", StringComparison.OrdinalIgnoreCase) ||
+            childBase.EndsWith(" (3)", StringComparison.OrdinalIgnoreCase) ||
+            childBase.EndsWith(" (4)", StringComparison.OrdinalIgnoreCase))
+        {
+            int idx = childBase.LastIndexOf(" (", StringComparison.OrdinalIgnoreCase);
+            if (idx > 0)
+            {
+                string trimmed = childBase[..idx].Trim();
+                if (string.Equals(trimmed, parentBase, StringComparison.OrdinalIgnoreCase))
+                    return true;
+            }
+        }
+        return false;
+    }
+
+    private static bool IsCandidateDeduplicationPair(RemoteGalleryFile newer, RemoteGalleryFile older)
+    {
+        if (string.Equals(newer.Name, older.Name, StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        // 1. Host RPC says newer is deduplicated AND its origin is older
+        if (newer.IsDeduplicated && !string.IsNullOrEmpty(newer.OriginFileName) &&
+            string.Equals(newer.OriginFileName, older.Name, StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        // 2. Host RPC says older has deduplicated children AND newer's origin points to older
+        if (older.HasDeduplicatedChildren && !string.IsNullOrEmpty(newer.OriginFileName) &&
+            string.Equals(newer.OriginFileName, older.Name, StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        // 3. Synchronized DeduplicationService (imported from host at gallery fetch time)
+        if (DeduplicationService.Instance.IsDeduplicated(newer.Name, out var dEntry) &&
+            (string.Equals(dEntry?.OriginClipFileName, older.Name, StringComparison.OrdinalIgnoreCase) ||
+             string.Equals(Path.GetFileName(dEntry?.OriginClipPath ?? ""), older.Name, StringComparison.OrdinalIgnoreCase)))
+            return true;
+
+        return false;
+    }
+
     private Border BuildRecentRemoteClipTile(string relativePath, RemoteGalleryFile file)
     {
         var thumbImage = new Image { Stretch = Stretch.UniformToFill };
@@ -73,6 +120,13 @@ public partial class MainWindow : Window
             compressText.Text = $"Compressing {(int)Math.Round(initProg * 100)}%";
             progressBarFill.Width = Math.Max(2, initProg * 72.0);
         }
+        else if (_activeMergingClips.TryGetValue(relativePath, out double initMergeProg) ||
+                 _activeMergingClips.TryGetValue(file.Name, out initMergeProg))
+        {
+            compressOverlay.Visibility = Visibility.Visible;
+            compressText.Text = $"Merging {(int)Math.Round(initMergeProg * 100)}%";
+            progressBarFill.Width = Math.Max(2, initMergeProg * 72.0);
+        }
 
         var thumb = new Border { Background = (Brush)FindResource("ThumbnailBg"), Width = 96, Height = 64, Cursor = Cursors.Hand, ClipToBounds = true, Child = thumbGrid };
         thumb.MouseLeftButtonUp += (_, e) =>
@@ -97,6 +151,22 @@ public partial class MainWindow : Window
         };
         ClipCompressionProgressChanged += progressHandler;
 
+        Action<string, double> mergeProgressHandler = (targetPath, prog) =>
+        {
+            if (string.Equals(targetPath, relativePath, StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(targetPath, file.Name, StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(Path.GetFileName(targetPath), file.Name, StringComparison.OrdinalIgnoreCase))
+            {
+                Dispatcher.BeginInvoke(() =>
+                {
+                    compressOverlay.Visibility = Visibility.Visible;
+                    compressText.Text = $"Merging {(int)Math.Round(prog * 100)}%";
+                    progressBarFill.Width = Math.Max(2, prog * 72.0);
+                });
+            }
+        };
+        ClipMergeProgressChanged += mergeProgressHandler;
+
         Action<string> completeHandler = (targetPath) =>
         {
             if (string.Equals(targetPath, relativePath, StringComparison.OrdinalIgnoreCase) ||
@@ -111,11 +181,14 @@ public partial class MainWindow : Window
             }
         };
         ClipCompressionCompleted += completeHandler;
+        ClipMergeCompleted += completeHandler;
 
         thumb.Unloaded += (_, _) =>
         {
             ClipCompressionProgressChanged -= progressHandler;
+            ClipMergeProgressChanged -= mergeProgressHandler;
             ClipCompressionCompleted -= completeHandler;
+            ClipMergeCompleted -= completeHandler;
         };
 
         var title = new TextBlock
@@ -173,7 +246,7 @@ public partial class MainWindow : Window
         return tile;
     }
 
-    private Border BuildRemoteClipCard(RemoteGalleryFile file, bool isNewest = false)
+    private Border BuildRemoteClipCard(RemoteGalleryFile file, bool isNewest = false, IReadOnlyList<RemoteGalleryFile>? allFiles = null)
     {
         var iconHost = new Border
         {
@@ -286,6 +359,13 @@ public partial class MainWindow : Window
             compressText.Text = $"Compressing {(int)Math.Round(initProg * 100)}%";
             progressBarFill.Width = Math.Max(2, initProg * 140.0);
         }
+        else if (_activeMergingClips.TryGetValue(relativePath, out double initMergeProg) ||
+                 _activeMergingClips.TryGetValue(file.Name, out initMergeProg))
+        {
+            compressOverlay.Visibility = Visibility.Visible;
+            compressText.Text = $"Merging {(int)Math.Round(initMergeProg * 100)}%";
+            progressBarFill.Width = Math.Max(2, initMergeProg * 140.0);
+        }
 
         iconHost.Child = iconGrid;
 
@@ -305,6 +385,22 @@ public partial class MainWindow : Window
         };
         ClipCompressionProgressChanged += progressHandler;
 
+        Action<string, double> mergeProgressHandler = (targetPath, prog) =>
+        {
+            if (string.Equals(targetPath, relativePath, StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(targetPath, file.Name, StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(Path.GetFileName(targetPath), file.Name, StringComparison.OrdinalIgnoreCase))
+            {
+                Dispatcher.BeginInvoke(() =>
+                {
+                    compressOverlay.Visibility = Visibility.Visible;
+                    compressText.Text = $"Merging {(int)Math.Round(prog * 100)}%";
+                    progressBarFill.Width = Math.Max(2, prog * 140.0);
+                });
+            }
+        };
+        ClipMergeProgressChanged += mergeProgressHandler;
+
         Action<string> completeHandler = (targetPath) =>
         {
             if (string.Equals(targetPath, relativePath, StringComparison.OrdinalIgnoreCase) ||
@@ -320,11 +416,14 @@ public partial class MainWindow : Window
             }
         };
         ClipCompressionCompleted += completeHandler;
+        ClipMergeCompleted += completeHandler;
 
         iconHost.Unloaded += (_, _) =>
         {
             ClipCompressionProgressChanged -= progressHandler;
+            ClipMergeProgressChanged -= mergeProgressHandler;
             ClipCompressionCompleted -= completeHandler;
+            ClipMergeCompleted -= completeHandler;
         };
 
         var title = new TextBlock
@@ -348,7 +447,19 @@ public partial class MainWindow : Window
             Foreground = (Brush)FindResource("Text2"),
         };
 
-        UIElement titleRow = isNewest ? WithNewestDot(title, "Newest clip") : title;
+        bool isDeduplicatedClip = file.IsDeduplicated ||
+            (allFiles is not null && allFiles.Any(older => IsCandidateDeduplicationPair(file, older)));
+
+        bool hasDeduplicatedChildren = file.HasDeduplicatedChildren ||
+            (allFiles is not null && allFiles.Any(newer => IsCandidateDeduplicationPair(newer, file)));
+
+        bool isLinked = isDeduplicatedClip || hasDeduplicatedChildren;
+
+        StackPanel? newestRow = isNewest ? WithNewestDot(title, "Newest clip") : null;
+        UIElement titleRow = isLinked
+            ? WithDeduplicationDot(newestRow, title)
+            : (UIElement?)newestRow ?? title;
+
         var content = new StackPanel();
         content.Children.Add(iconHost);
         content.Children.Add(titleRow);
@@ -358,13 +469,131 @@ public partial class MainWindow : Window
 
         _ = LoadRemoteThumbnailAsync(relativePath, file, thumbImage);
 
+        bool TryGetDraggedClip(DragEventArgs e, out string draggedPath)
+        {
+            draggedPath = "";
+            if (e.Data.GetDataPresent("BacktrackRemoteClipInfo") &&
+                e.Data.GetData("BacktrackRemoteClipInfo") is RemoteGalleryFile rgf)
+            {
+                draggedPath = RemoteClipRelativePath(rgf.Name);
+                return true;
+            }
+            if (e.Data.GetDataPresent("BacktrackRemoteClip") &&
+                e.Data.GetData("BacktrackRemoteClip") is string brc && !string.IsNullOrWhiteSpace(brc))
+            {
+                draggedPath = brc;
+                return true;
+            }
+            if (e.Data.GetDataPresent(DataFormats.FileDrop) &&
+                e.Data.GetData(DataFormats.FileDrop) is string[] files && files.Length > 0 && !string.IsNullOrWhiteSpace(files[0]))
+            {
+                draggedPath = files[0];
+                return true;
+            }
+            if (e.Data.GetDataPresent(DataFormats.Text) &&
+                e.Data.GetData(DataFormats.Text) is string txt && !string.IsNullOrWhiteSpace(txt))
+            {
+                draggedPath = txt;
+                return true;
+            }
+            return false;
+        }
+
+        (bool isEligible, string originRel, string dedupRel) ResolveMergePair(string dragged)
+        {
+            if (string.IsNullOrWhiteSpace(dragged))
+                return (false, "", "");
+
+            string draggedName = Path.GetFileName(dragged);
+            string thisName = Path.GetFileName(relativePath);
+
+            if (string.Equals(draggedName, thisName, StringComparison.OrdinalIgnoreCase))
+                return (false, "", "");
+
+            string draggedRel = RemoteClipRelativePath(draggedName);
+
+            RemoteGalleryFile? draggedFile = allFiles?.FirstOrDefault(f =>
+                string.Equals(f.Name, draggedName, StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(RemoteClipRelativePath(f.Name), draggedRel, StringComparison.OrdinalIgnoreCase));
+
+            if (draggedFile is null)
+                return (false, "", "");
+
+            // Dragged file is deduplicated child (newer), this file is origin parent (older)
+            if (IsCandidateDeduplicationPair(draggedFile, file))
+            {
+                return (true, relativePath, draggedRel);
+            }
+
+            // This file is deduplicated child (newer), dragged file is origin parent (older)
+            if (IsCandidateDeduplicationPair(file, draggedFile))
+            {
+                return (true, draggedRel, relativePath);
+            }
+
+            return (false, "", "");
+        }
+
+        void HighlightDropTarget(bool highlight)
+        {
+            if (highlight)
+            {
+                iconHost.BorderBrush = (Brush)FindResource("Accent");
+                iconHost.BorderThickness = new Thickness(2);
+            }
+            else
+            {
+                iconHost.BorderBrush = null;
+                iconHost.BorderThickness = new Thickness(0);
+            }
+        }
+
+        void HandleDragOver(DragEventArgs e)
+        {
+            if (TryGetDraggedClip(e, out string dragged))
+            {
+                var (isEligible, _, _) = ResolveMergePair(dragged);
+                if (isEligible)
+                {
+                    e.Effects = DragDropEffects.Move | DragDropEffects.Copy;
+                    e.Handled = true;
+                    HighlightDropTarget(true);
+                    return;
+                }
+            }
+            e.Effects = DragDropEffects.None;
+            HighlightDropTarget(false);
+        }
+
+        void HandleDrop(DragEventArgs e)
+        {
+            HighlightDropTarget(false);
+            if (TryGetDraggedClip(e, out string dragged))
+            {
+                var (isEligible, originRel, dedupRel) = ResolveMergePair(dragged);
+                if (isEligible && !string.IsNullOrEmpty(originRel) && !string.IsNullOrEmpty(dedupRel))
+                {
+                    e.Handled = true;
+                    _ = MergeRemoteDeduplicatedClipsAsync(originRel, dedupRel);
+                }
+            }
+        }
+
+        iconHost.AllowDrop = true;
+        iconHost.DragEnter += (_, e) => HandleDragOver(e);
+        iconHost.DragOver += (_, e) => HandleDragOver(e);
+        iconHost.DragLeave += (_, _) => HighlightDropTarget(false);
+        iconHost.Drop += (_, e) => HandleDrop(e);
+
         Point? dragStart = null;
         bool isDragging = false;
+        ImageSource? dragThumbSource = null;
 
         iconHost.PreviewMouseLeftButtonDown += (_, e) =>
         {
             dragStart = e.GetPosition(null);
             isDragging = false;
+            dragThumbSource = thumbImage.Source;
         };
 
         iconHost.PreviewMouseMove += (_, e) =>
@@ -379,17 +608,14 @@ public partial class MainWindow : Window
                     isDragging = true;
                     try
                     {
-                        var data = new DataObject();
-                        string[] remotePaths = _selectedClipPaths.Count > 0 && _selectedClipPaths.Contains(file.Name)
-                            ? _selectedClipPaths.Select(RemoteClipRelativePath).ToArray()
-                            : new[] { relativePath };
-                        data.SetData("BacktrackRemoteClips", remotePaths);
-                        DragDrop.DoDragDrop(iconHost, data, DragDropEffects.Move | DragDropEffects.Copy);
+                        string dragLabel = Path.GetFileNameWithoutExtension(file.Name);
+                        ShellDragHelper.DoFileDragDrop(iconHost, new[] { relativePath }, dragThumbSource, dragLabel);
                     }
                     finally
                     {
                         isDragging = false;
                         dragStart = null;
+                        HighlightDropTarget(false);
                     }
                 }
             }

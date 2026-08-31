@@ -556,6 +556,19 @@
                                         <TextBlock x:Name="ManualPairStatusText" Text="" FontSize="11" Foreground="{DynamicResource Text2}" Margin="0,8,0,0" TextWrapping="Wrap"/>
                                     </StackPanel>
                                 </Border>
+                                <Border x:Name="RefreshRemoteThumbnailsRow" BorderBrush="{DynamicResource Hairline}" BorderThickness="0,1,0,0" Margin="0,14,0,0" Padding="0,14,0,0" Visibility="Collapsed">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel VerticalAlignment="Center">
+                                            <TextBlock Text="Refresh remote thumbnails" FontSize="13" FontWeight="Bold" Foreground="{DynamicResource Text0}"/>
+                                            <TextBlock Text="Clears cached remote thumbnails and re-downloads fresh frames from the host PC." FontSize="11" Foreground="{DynamicResource Text2}" Margin="0,3,0,0" TextWrapping="Wrap"/>
+                                        </StackPanel>
+                                        <Button x:Name="RefreshRemoteThumbnailsButton" Grid.Column="1" Content="Refresh" Style="{StaticResource FlatButton}" VerticalAlignment="Center" Click="RefreshRemoteThumbnailsButton_Click"/>
+                                    </Grid>
+                                </Border>
                             </StackPanel>
                         </Border>
 

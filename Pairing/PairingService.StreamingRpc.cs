@@ -133,13 +133,27 @@ public sealed partial class PairingService
         }
 
         string thumbPath = Path.Combine(Path.GetDirectoryName(fullPath)!, ".thumbnails", Path.GetFileNameWithoutExtension(fullPath) + ".jpg");
+        if (!File.Exists(thumbPath) && EnsureThumbnailCachedForRemote is not null)
+        {
+            try
+            {
+                string? generated = await EnsureThumbnailCachedForRemote(fullPath);
+                if (!string.IsNullOrEmpty(generated) && File.Exists(generated))
+                    thumbPath = generated;
+            }
+            catch (Exception ex)
+            {
+                AppLog.Write($"[Pairing] Error generating remote thumbnail for '{fullPath}': {ex.Message}");
+            }
+        }
+
         if (File.Exists(thumbPath))
         {
             await StreamFileResponseAsync(stream, thumbPath);
             return;
         }
 
-        await StreamFileResponseAsync(stream, fullPath);
+        await WriteLineAsync(stream, JsonSerializer.Serialize(new { error = "Thumbnail could not be generated." }));
     }
 
     private static async Task StreamFileResponseAsync(NetworkStream stream, string localPath, long offset = 0)

@@ -121,7 +121,11 @@ public sealed partial class PairingService
                 .Select(e => new RemoteGalleryFile(
                     e.GetProperty("name").GetString() ?? "",
                     e.GetProperty("size").GetInt64(),
-                    e.GetProperty("modified").GetDateTime()))
+                    e.GetProperty("modified").GetDateTime(),
+                    e.TryGetProperty("isDeduplicated", out JsonElement dedupEl) && dedupEl.GetBoolean(),
+                    e.TryGetProperty("hasDeduplicatedChildren", out JsonElement hasChEl) && hasChEl.GetBoolean(),
+                    e.TryGetProperty("originFileName", out JsonElement ofEl) ? ofEl.GetString() : null,
+                    e.TryGetProperty("originPath", out JsonElement opEl) ? opEl.GetString() : null))
                 .ToList();
 
             bool settingsChanged = false;
@@ -156,6 +160,19 @@ public sealed partial class PairingService
                     if (!string.IsNullOrEmpty(sName) && _settings.StarredClips.Add(sName))
                         settingsChanged = true;
                 }
+            }
+
+            if (doc.RootElement.TryGetProperty("dedupRecords", out JsonElement dedupRecordsEl) && dedupRecordsEl.ValueKind == JsonValueKind.Object)
+            {
+                try
+                {
+                    var recs = JsonSerializer.Deserialize<Dictionary<string, DeduplicationEntry>>(dedupRecordsEl.GetRawText());
+                    if (recs != null)
+                    {
+                        DeduplicationService.Instance.ImportRemoteRecords(recs);
+                    }
+                }
+                catch { }
             }
 
             if (settingsChanged)
@@ -321,6 +338,56 @@ public sealed partial class PairingService
         }
         catch (Exception ex)
         {
+            return (false, ex.Message, null, 0);
+        }
+    }
+
+    public async Task<(bool Success, string? Error, string? NewPath, long Size)> MergeRemoteClipsAsync(string originRelativePath, string dedupRelativePath, IProgress<double>? progress = null)
+    {
+        if (string.IsNullOrEmpty(_settings.PairedPeerHost) || string.IsNullOrEmpty(_settings.PairedPeerSecret))
+            return (false, "Not paired with a transmitter PC.", null, 0);
+
+        try
+        {
+            using var client = new TcpClient();
+            await client.ConnectAsync(_settings.PairedPeerHost, _settings.PairedPeerPort).WaitAsync(MutationRequestTimeout);
+            var fields = new Dictionary<string, object?>
+            {
+                ["type"] = "merge_clips",
+                ["secret"] = _settings.PairedPeerSecret,
+                ["originPath"] = originRelativePath,
+                ["dedupPath"] = dedupRelativePath,
+            };
+            await WriteLineAsync(client.GetStream(), JsonSerializer.Serialize(fields)).WaitAsync(MutationRequestTimeout);
+
+            while (true)
+            {
+                string? responseLine = await ReadLineAsync(client.GetStream()).WaitAsync(TrimRequestTimeout);
+                if (responseLine is null)
+                    return (false, "No response from the transmitter PC.", null, 0);
+
+                using JsonDocument doc = JsonDocument.Parse(responseLine);
+                if (doc.RootElement.TryGetProperty("progress", out JsonElement progEl))
+                {
+                    double progVal = progEl.GetDouble();
+                    progress?.Report(progVal);
+                    continue;
+                }
+
+                bool success = doc.RootElement.TryGetProperty("success", out JsonElement s) && s.GetBoolean();
+                string? error = doc.RootElement.TryGetProperty("error", out JsonElement er) ? er.GetString() : null;
+                string? path = doc.RootElement.TryGetProperty("path", out JsonElement pt) ? pt.GetString() : null;
+                long size = doc.RootElement.TryGetProperty("size", out JsonElement sz) ? sz.GetInt64() : 0;
+                return (success, success ? null : (error ?? "Merge failed."), path, size);
+            }
+        }
+        catch (TimeoutException)
+        {
+            return (false, $"{_settings.PairedPeerName ?? "The paired PC"} didn't respond in time.", null, 0);
+        }
+        catch (Exception ex)
+        {
+            AppLog.WriteError("[merge_clips] request threw", ex);
             return (false, ex.Message, null, 0);
         }
     }

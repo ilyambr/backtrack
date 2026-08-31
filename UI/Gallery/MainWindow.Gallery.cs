@@ -76,7 +76,7 @@ public partial class MainWindow : Window
     private static void RevealInExplorer(string filePath) =>
         Process.Start(new ProcessStartInfo("explorer.exe", $"/select,\"{filePath}\"") { UseShellExecute = true });
 
-    private async void GalleryTile_Click(object sender, RoutedEventArgs e)
+    private void GalleryTile_Click(object sender, RoutedEventArgs e)
     {
         _currentGalleryFolder = null;
         _currentRemoteGalleryFolder = null;
@@ -85,16 +85,8 @@ public partial class MainWindow : Window
         RefreshGallerySourceTabsVisibility();
         SyncGalleryToolbarUi();
 
-        if (_galleryIsRemote)
-        {
-            await LoadRemoteGalleryAsync();
-            ShowScreen(Screen.Gallery);
-        }
-        else
-        {
-            ShowScreen(Screen.Gallery);
-            LoadGallery();
-        }
+        ShowScreen(Screen.Gallery);
+        LoadGallery();
     }
 
     private void RefreshGallerySourceTabsVisibility()
@@ -240,13 +232,38 @@ public partial class MainWindow : Window
         {
             PairingStatusText.Text = $"Paired with \"{_settings.PairedPeerName}\"";
             UnpairButton.Visibility = Visibility.Visible;
+            RefreshRemoteThumbnailsRow.Visibility = Visibility.Visible;
         }
         else
         {
             PairingStatusText.Text = "Not paired";
             UnpairButton.Visibility = Visibility.Collapsed;
+            RefreshRemoteThumbnailsRow.Visibility = Visibility.Collapsed;
         }
         RefreshGallerySourceTabsVisibility();
+    }
+
+    internal void RefreshRemoteThumbnailsButton_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            string cacheDir = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "Backtrack", "RemoteThumbnails");
+            if (Directory.Exists(cacheDir))
+            {
+                Directory.Delete(cacheDir, true);
+            }
+            _toastOverlay.ShowMergeSaved("Remote thumbnails refreshed");
+            if (GalleryPanel.Visibility == Visibility.Visible)
+            {
+                _ = LoadRemoteGalleryAsync();
+            }
+        }
+        catch (Exception ex)
+        {
+            AppLog.Write($"Failed to refresh remote thumbnails: {ex.Message}");
+        }
     }
 
     internal void ChangeClipsFolder_Click(object sender, RoutedEventArgs e)
