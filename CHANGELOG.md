@@ -4,6 +4,14 @@ All notable changes to Backtrack are documented in this file.
 
 ---
 
+## [v0.4.0] - In Progress / Scheduled
+
+### Architecture & UI Modularization
+- **Oversized Architecture Modularization**: Decoupled monolithic components into dedicated domain partials (`MainWindow.Trim.Execute.cs`, `PairingService.Client.Transcode.cs`, `ToastOverlay.Clip.cs`, `MainWindow.Obs.AudioCues.cs`, `MainWindow.Cards.Remote.Dedup.cs`, `MainWindow.RecentClipsOverlay.RemoteTiles.cs`).
+- **Remote Gallery Deduplication Synchronization**: Exact-match origin-child deduplication lookup matching local behavior.
+
+---
+
 ## [v0.3.15] - 2026-08-30
 
 ### Smart Clip Deduplication Engine, Sub-Millisecond Audio Cross-Correlation & Seamless Hardware Merge

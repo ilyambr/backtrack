@@ -1,0 +1,166 @@
+<UserControl x:Class="Backtrack.UI.Settings.Sections.SettingsGeneralSection"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <StackPanel Margin="0,0,0,0">
+        <TextBlock Text="GENERAL" Style="{StaticResource SettingsSectionHeader}" Margin="0,4,0,10"/>
+        <Border Style="{StaticResource SettingsRow}" BorderThickness="0">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <StackPanel VerticalAlignment="Center">
+                    <TextBlock Text="Display" FontSize="13" FontWeight="Bold" Foreground="{DynamicResource Text0}"/>
+                    <TextBlock Text="Which monitor the overlay (and its toasts/status HUD) shows up on." FontSize="11" Foreground="{DynamicResource Text2}" Margin="0,3,0,0" TextWrapping="Wrap"/>
+                </StackPanel>
+                <ComboBox x:Name="DisplaySelector" Grid.Column="1" Width="200" Style="{StaticResource ModernComboBox}"
+                          DisplayMemberPath="Name" SelectedValuePath="DeviceName" SelectionChanged="DisplaySelector_SelectionChanged"/>
+            </Grid>
+        </Border>
+        <Border Style="{StaticResource SettingsRow}" BorderThickness="0">
+            <StackPanel>
+                <TextBlock Text="Theme" FontSize="13" FontWeight="Bold" Foreground="{DynamicResource Text0}"/>
+                <TextBlock Text="Applies to the HUD and every small overlay window." FontSize="11" Foreground="{DynamicResource Text2}" Margin="0,3,0,14" TextWrapping="Wrap"/>
+                <ScrollViewer x:Name="ThemeSwatchesScroll" HorizontalScrollBarVisibility="Hidden" VerticalScrollBarVisibility="Disabled"
+                              PreviewMouseLeftButtonDown="ThemeSwatchesScroll_PreviewMouseLeftButtonDown"
+                              PreviewMouseMove="ThemeSwatchesScroll_PreviewMouseMove"
+                              PreviewMouseLeftButtonUp="ThemeSwatchesScroll_PreviewMouseLeftButtonUp"
+                              MouseLeave="ThemeSwatchesScroll_PreviewMouseLeave">
+                    <StackPanel>
+                        <StackPanel x:Name="ThemeSwatchesPanel" Orientation="Horizontal"/>
+                        <StackPanel x:Name="ThemeSwatchLabelsPanel" Orientation="Horizontal" Margin="0,8,0,0"/>
+                    </StackPanel>
+                </ScrollViewer>
+                <Button Content="Open themes folder" Style="{StaticResource FlatButton}" HorizontalAlignment="Left" Margin="0,10,0,0" Click="OpenThemesFolderButton_Click"/>
+            </StackPanel>
+        </Border>
+        <Border Style="{StaticResource SettingsRow}" BorderThickness="0">
+            <StackPanel>
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <StackPanel VerticalAlignment="Center">
+                        <TextBlock Text="Check for updates" FontSize="13" FontWeight="Bold" Foreground="{DynamicResource Text0}"/>
+                        <TextBlock Text="Checks automatically once, at startup" FontSize="11" Foreground="{DynamicResource Text2}" Margin="0,3,0,0"/>
+                    </StackPanel>
+                    <Button x:Name="CheckUpdatesButton" Grid.Column="1" Content="Check now" Style="{StaticResource FlatButton}" VerticalAlignment="Center" Click="CheckUpdatesButton_Click"/>
+                </Grid>
+                <StackPanel Margin="0,14,0,4">
+                    <Grid Margin="0,0,0,10">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <Ellipse x:Name="BacktrackStatusDot" Grid.Column="0" Width="8" Height="8" Fill="{DynamicResource Text2}" VerticalAlignment="Center" Margin="0,0,10,0"/>
+                        <TextBlock Grid.Column="1" Text="Backtrack" FontSize="12" FontWeight="Bold" Foreground="{DynamicResource Text0}" VerticalAlignment="Center"/>
+                        <TextBlock x:Name="BacktrackVersionText" Grid.Column="2" Text="—" FontSize="11.5" Foreground="{DynamicResource Text2}" VerticalAlignment="Center"/>
+                    </Grid>
+                    <StackPanel x:Name="LocalPluginStatusRows">
+                        <Grid Margin="0,0,0,10">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <Ellipse x:Name="ReplaySliderStatusDot" Grid.Column="0" Width="8" Height="8" Fill="{DynamicResource Text2}" VerticalAlignment="Center" Margin="0,0,10,0"/>
+                            <TextBlock Grid.Column="1" Text="Replay Slider" FontSize="12" FontWeight="Bold" Foreground="{DynamicResource Text0}" VerticalAlignment="Center"/>
+                            <TextBlock x:Name="ReplaySliderVersionText" Grid.Column="2" Text="—" FontSize="11.5" Foreground="{DynamicResource Text2}" VerticalAlignment="Center"/>
+                        </Grid>
+                        <Grid Margin="0,0,0,4">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <Ellipse x:Name="SourceRecordStatusDot" Grid.Column="0" Width="8" Height="8" Fill="{DynamicResource Text2}" VerticalAlignment="Center" Margin="0,0,10,0"/>
+                            <TextBlock Grid.Column="1" Text="Source Record" FontSize="12" FontWeight="Bold" Foreground="{DynamicResource Text0}" VerticalAlignment="Center"/>
+                            <TextBlock x:Name="SourceRecordVersionText" Grid.Column="2" Text="—" FontSize="11.5" Foreground="{DynamicResource Text2}" VerticalAlignment="Center"/>
+                        </Grid>
+                    </StackPanel>
+                    <TextBlock x:Name="PluginStatusRemoteNotice" Visibility="Collapsed"
+                               Text="OBS is on a different PC, so these two check/update the PC this Backtrack is running on, not the transmitter. See &quot;Transmitter's plugins&quot; in OBS settings instead."
+                               FontSize="10.5" Foreground="{DynamicResource Rec}" TextWrapping="Wrap" Margin="0,0,0,4"/>
+                </StackPanel>
+                <Grid Margin="0,10,0,0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Text="Disable Backtrack auto-updates" FontSize="13" FontWeight="Bold" Foreground="{DynamicResource Text0}" VerticalAlignment="Center"/>
+                    <ToggleButton x:Name="DisableBacktrackAutoUpdateToggle" Grid.Column="1" Style="{StaticResource AppToggle}" VerticalAlignment="Center" Click="DisableBacktrackAutoUpdateToggle_Click"/>
+                </Grid>
+                <Grid Margin="0,10,0,0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Text="Disable OBS plugin auto-updates" FontSize="13" FontWeight="Bold" Foreground="{DynamicResource Text0}" VerticalAlignment="Center"/>
+                    <ToggleButton x:Name="DisablePluginAutoUpdateToggle" Grid.Column="1" Style="{StaticResource AppToggle}" VerticalAlignment="Center" Click="DisablePluginAutoUpdateToggle_Click"/>
+                </Grid>
+            </StackPanel>
+        </Border>
+        <Border Style="{StaticResource SettingsRow}" BorderThickness="0">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <TextBlock Text="Launch with Windows" FontSize="13" FontWeight="Bold" Foreground="{DynamicResource Text0}" VerticalAlignment="Center"/>
+                <ToggleButton x:Name="LaunchWithWindowsToggle" Grid.Column="1" Style="{StaticResource AppToggle}" VerticalAlignment="Center" Click="LaunchWithWindowsToggle_Click"/>
+            </Grid>
+        </Border>
+        <Border Style="{StaticResource SettingsRow}">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <TextBlock Text="Show alpha disclaimer" FontSize="13" FontWeight="Bold" Foreground="{DynamicResource Text0}" VerticalAlignment="Center"/>
+                <ToggleButton x:Name="ShowDisclaimerToggle" Grid.Column="1" Style="{StaticResource AppToggle}" VerticalAlignment="Center" Click="ShowDisclaimerToggle_Click"/>
+            </Grid>
+        </Border>
+        <Border x:Name="DisableAudioCuesRow" Style="{StaticResource SettingsRow}" MouseRightButtonUp="DisableAudioCuesRow_MouseRightButtonUp"
+                Cursor="Hand" ToolTip="Right-click for cue options &amp; sound file location">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <StackPanel VerticalAlignment="Center">
+                    <TextBlock Text="Disable audio cues" FontSize="13" FontWeight="Bold" Foreground="{DynamicResource Text0}"/>
+                    <TextBlock x:Name="DisableAudioCuesSubtext" Text="Mutes chimes when recordings or clips are saved. Right-click for options." FontSize="11" Foreground="{DynamicResource Text2}" Margin="0,3,0,0" TextWrapping="Wrap"/>
+                </StackPanel>
+                <ToggleButton x:Name="DisableAudioCuesToggle" Grid.Column="1" Style="{StaticResource AppToggle}" VerticalAlignment="Center" Click="DisableAudioCuesToggle_Click"/>
+            </Grid>
+        </Border>
+        <Border x:Name="AudioCueVolumeRow" Style="{StaticResource SettingsRow}">
+            <StackPanel>
+                <Grid Margin="0,0,0,8">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <StackPanel VerticalAlignment="Center">
+                        <TextBlock Text="Audio cue volume" FontSize="13" FontWeight="Bold" Foreground="{DynamicResource Text0}"/>
+                        <TextBlock Text="Adjusts the volume of recording and clip save chimes." FontSize="11" Foreground="{DynamicResource Text2}" Margin="0,3,0,0" TextWrapping="Wrap"/>
+                    </StackPanel>
+                    <TextBlock x:Name="AudioCueVolumeText" Grid.Column="1" Text="100%" FontSize="12" FontWeight="Bold" Foreground="{DynamicResource Text1}" VerticalAlignment="Center"/>
+                </Grid>
+                <Slider x:Name="AudioCueVolumeSlider" Minimum="0" Maximum="100" TickFrequency="1" IsSnapToTickEnabled="True" Value="100" ValueChanged="AudioCueVolumeSlider_ValueChanged"/>
+            </StackPanel>
+        </Border>
+        <Border Style="{StaticResource SettingsRow}">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <TextBlock Text="Quit Backtrack" FontSize="13" FontWeight="Bold" Foreground="{DynamicResource Text0}" VerticalAlignment="Center"/>
+                <Button Grid.Column="1" Content="Quit" Style="{StaticResource FlatButton}" VerticalAlignment="Center" Click="QuitApp_Click"/>
+            </Grid>
+        </Border>
+    </StackPanel>
+</UserControl>

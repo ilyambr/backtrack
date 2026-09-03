@@ -1,0 +1,136 @@
+<UserControl x:Class="Backtrack.UI.Settings.Sections.SettingsOverlaySection"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <StackPanel Margin="0,0,0,0">
+        <TextBlock Text="OVERLAY &amp; HOTKEYS" Style="{StaticResource SettingsSectionHeader}" Margin="0,20,0,10"/>
+        <Border Style="{StaticResource SettingsRow}" BorderThickness="0">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <StackPanel VerticalAlignment="Center">
+                    <TextBlock Text="Toggle hotkey" FontSize="13" FontWeight="Bold" Foreground="{DynamicResource Text0}"/>
+                    <TextBlock Text="Click, then press the new key combo" FontSize="11" Foreground="{DynamicResource Text2}" Margin="0,3,0,0"/>
+                </StackPanel>
+                <Button x:Name="HotkeyCaptureButton" Grid.Column="1" Content="Ctrl+Alt+G" Style="{StaticResource FlatButton}" VerticalAlignment="Center" Click="HotkeyCaptureButton_Click"/>
+            </Grid>
+        </Border>
+        <Border Style="{StaticResource SettingsRow}" BorderThickness="0">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <StackPanel VerticalAlignment="Center">
+                    <TextBlock Text="Cancel recording hotkey" FontSize="13" FontWeight="Bold" Foreground="{DynamicResource Text0}"/>
+                    <TextBlock Text="Stops and discards the active recording file" FontSize="11" Foreground="{DynamicResource Text2}" Margin="0,3,0,0"/>
+                </StackPanel>
+                <Button x:Name="CancelRecordHotkeyCaptureButton" Grid.Column="1" Content="(unbound)" Style="{StaticResource FlatButton}" VerticalAlignment="Center" Click="CancelRecordHotkeyCaptureButton_Click"/>
+            </Grid>
+        </Border>
+        <Border Style="{StaticResource SettingsRow}" BorderThickness="0">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <StackPanel VerticalAlignment="Center">
+                    <TextBlock Text="Bookmark / marker hotkey" FontSize="13" FontWeight="Bold" Foreground="{DynamicResource Text0}"/>
+                    <TextBlock Text="Drops a bookmark pin into the active recording or playing clip" FontSize="11" Foreground="{DynamicResource Text2}" Margin="0,3,0,0"/>
+                </StackPanel>
+                <Button x:Name="BookmarkHotkeyCaptureButton" Grid.Column="1" Content="Ctrl+Shift+B" Style="{StaticResource FlatButton}" VerticalAlignment="Center" Click="BookmarkHotkeyCaptureButton_Click"/>
+            </Grid>
+        </Border>
+        <Border Style="{StaticResource SettingsRow}" BorderThickness="0">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <StackPanel VerticalAlignment="Center">
+                    <TextBlock Text="Show recent clips" FontSize="13" FontWeight="Bold" Foreground="{DynamicResource Text0}"/>
+                    <TextBlock Text="A small floating, draggable strip showing your last few clips. Click one to open it, right-click for the same options as Gallery."
+                               FontSize="11" Foreground="{DynamicResource Text2}" Margin="0,3,0,0" TextWrapping="Wrap"/>
+                </StackPanel>
+                <ToggleButton x:Name="ShowRecentClipsToggle" Grid.Column="1" Style="{StaticResource AppToggle}" VerticalAlignment="Center" Click="ShowRecentClipsToggle_Click"/>
+            </Grid>
+        </Border>
+        <Border Style="{StaticResource SettingsRow}" BorderThickness="0" Padding="0,7">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <TextBlock Text="Show status indicator" FontSize="13" FontWeight="Bold" Foreground="{DynamicResource Text0}" VerticalAlignment="Center"/>
+                <ToggleButton x:Name="ShowStatusIndicatorToggle" Grid.Column="1" Style="{StaticResource AppToggle}" VerticalAlignment="Center" Click="ShowStatusIndicatorToggle_Click"/>
+            </Grid>
+        </Border>
+        <Border Style="{StaticResource SettingsRow}" BorderThickness="0" Padding="0,7">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <TextBlock Text="Orientation" FontSize="13" FontWeight="Bold" Foreground="{DynamicResource Text0}" VerticalAlignment="Center"/>
+                <ComboBox x:Name="StatusIndicatorOrientationSelector" Grid.Column="1" Width="140" Style="{StaticResource ModernComboBox}"
+                          SelectionChanged="StatusIndicatorOrientationSelector_SelectionChanged">
+                    <ComboBoxItem Content="Horizontal" Tag="Horizontal"/>
+                    <ComboBoxItem Content="Vertical" Tag="Vertical"/>
+                </ComboBox>
+            </Grid>
+        </Border>
+        <Border Style="{StaticResource SettingsRow}" BorderThickness="0" Padding="0,7">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <TextBlock Text="Location" FontSize="13" FontWeight="Bold" Foreground="{DynamicResource Text0}" VerticalAlignment="Center"/>
+                <ComboBox x:Name="StatusIndicatorLocationSelector" Grid.Column="1" Width="140" Style="{StaticResource ModernComboBox}"
+                          SelectionChanged="StatusIndicatorLocationSelector_SelectionChanged">
+                    <ComboBoxItem Content="Top left" Tag="TopLeft"/>
+                    <ComboBoxItem Content="Top right" Tag="TopRight"/>
+                    <ComboBoxItem Content="Bottom left" Tag="BottomLeft"/>
+                    <ComboBoxItem Content="Bottom right" Tag="BottomRight"/>
+                </ComboBox>
+            </Grid>
+        </Border>
+        <Border Style="{StaticResource SettingsRow}" BorderThickness="0">
+            <StackPanel>
+                <TextBlock Text="Preview" FontSize="13" FontWeight="Bold" Foreground="{DynamicResource Text0}" Margin="0,0,0,10"/>
+                <Border x:Name="StatusIndicatorPreviewBorder" Background="{DynamicResource ThumbnailBg}" BorderBrush="{DynamicResource Hairline}" BorderThickness="1"
+                        SizeChanged="StatusIndicatorPreviewBorder_SizeChanged">
+                    <Viewbox Stretch="Uniform">
+                        <Grid Width="800" Height="450" ClipToBounds="True">
+                            <StackPanel x:Name="StatusIndicatorPreviewPanel" Orientation="Horizontal" Margin="6">
+                                <Border Width="27" Height="27" Background="{DynamicResource BadgeBg}" BorderBrush="{DynamicResource BadgeBorder}" BorderThickness="1">
+                                    <Path Fill="{DynamicResource Rec}" Stretch="Uniform" Width="15" Height="15"
+                                          Data="F1 M256 32c14.2 0 27.3 7.5 34.5 19.8l216 368c7.3 12.4 7.3 27.7 .2 40.1S486.3 480 472 480L40 480c-14.3 0-27.6-7.7-34.7-20.1s-7-27.8 .2-40.1l216-368C228.7 39.5 241.8 32 256 32zm0 128c-13.3 0-24 10.7-24 24l0 112c0 13.3 10.7 24 24 24s24-10.7 24-24l0-112c0-13.3-10.7-24-24-24zm32 224a32 32 0 1 0 -64 0 32 32 0 1 0 64 0z"/>
+                                </Border>
+                                <Border Width="27" Height="27" Background="{DynamicResource BadgeBg}" BorderBrush="{DynamicResource BadgeBorder}" BorderThickness="1" Margin="5,0,0,0">
+                                    <Ellipse Width="10" Height="10" Fill="{DynamicResource Rec}" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                </Border>
+                                <Border Width="27" Height="27" Background="{DynamicResource BadgeBg}" BorderBrush="{DynamicResource BadgeBorder}" BorderThickness="1" Margin="5,0,0,0">
+                                    <Ellipse Width="10" Height="10" Fill="{DynamicResource Stream}" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                </Border>
+                                <Border Width="27" Height="27" Background="{DynamicResource BadgeBg}" BorderBrush="{DynamicResource BadgeBorder}" BorderThickness="1" Margin="5,0,0,0">
+                                    <Path Fill="{DynamicResource Green}" Stretch="Uniform" Width="13" Height="13"
+                                          Data="M0 128C0 92.7 28.7 64 64 64l256 0c35.3 0 64 28.7 64 64l0 256c0 35.3-28.7 64-64 64L64 448c-35.3 0-64-28.7-64-64L0 128zM559.1 99.8c10.4 5.6 16.9 16.4 16.9 28.2l0 256c0 11.8-6.5 22.6-16.9 28.2s-23 5-32.9-1.6l-96-64L416 337.1l0-17.1 0-128 0-17.1 14.2-9.5 96-64c9.8-6.5 22.4-7.2 32.9-1.6z"/>
+                                </Border>
+                                <Border Width="27" Height="27" Background="{DynamicResource BadgeBg}" BorderBrush="{DynamicResource BadgeBorder}" BorderThickness="1" Margin="5,0,0,0">
+                                    <TextBlock Text="&#8635;" FontSize="16" FontWeight="Bold" Foreground="{DynamicResource Green}" HorizontalAlignment="Center" VerticalAlignment="Center" Margin="0,-2,0,0"/>
+                                </Border>
+                                <Border Width="27" Height="27" Background="{DynamicResource BadgeBg}" BorderBrush="{DynamicResource BadgeBorder}" BorderThickness="1" Margin="5,0,0,0">
+                                    <Path Fill="{DynamicResource Rec}" Stretch="Uniform" Width="12" Height="12"
+                                          Data="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z
+                                                M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"/>
+                                </Border>
+                            </StackPanel>
+                        </Grid>
+                    </Viewbox>
+                </Border>
+            </StackPanel>
+        </Border>
+    </StackPanel>
+</UserControl>

@@ -1,0 +1,107 @@
+<UserControl x:Class="Backtrack.UI.Settings.Sections.SettingsClipsSection"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <StackPanel Margin="0,0,0,0">
+        <TextBlock Text="CLIPS" Style="{StaticResource SettingsSectionHeader}" Margin="0,20,0,10"/>
+        <Border Style="{StaticResource SettingsRow}" BorderThickness="0">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <StackPanel VerticalAlignment="Center">
+                    <TextBlock Text="Save location" FontSize="13" FontWeight="Bold" Foreground="{DynamicResource Text0}"/>
+                    <TextBlock x:Name="ClipsFolderText" FontSize="11" Foreground="{DynamicResource Text2}" Margin="0,3,0,0"/>
+                </StackPanel>
+                <Button Grid.Column="1" Content="Change" Style="{StaticResource FlatButton}" VerticalAlignment="Center" Click="ChangeClipsFolder_Click"/>
+            </Grid>
+        </Border>
+        <Border Style="{StaticResource SettingsRow}" BorderThickness="0">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <StackPanel VerticalAlignment="Center">
+                    <TextBlock Text="Storage limit" FontSize="13" FontWeight="Bold" Foreground="{DynamicResource Text0}"/>
+                    <TextBlock x:Name="StorageLimitStatusText" Text="Off - no limit" FontSize="11" Foreground="{DynamicResource Text2}" Margin="0,3,0,0" TextWrapping="Wrap"/>
+                </StackPanel>
+                <ToggleButton x:Name="StorageLimitToggle" Grid.Column="1" Style="{StaticResource AppToggle}" VerticalAlignment="Center" Click="StorageLimitToggle_Click"/>
+            </Grid>
+        </Border>
+        <StackPanel x:Name="StorageLimitFields" Visibility="Collapsed" Margin="0,10,0,10">
+            <TextBlock Text="Stops you from starting a new recording or saving a replay once your clips folder reaches this size. Nothing gets deleted automatically - free up space, delete clips yourself, or raise this to keep going."
+                       FontSize="11" Foreground="{DynamicResource Text2}" TextWrapping="Wrap" Margin="0,0,0,8"/>
+            <Grid Margin="0,0,0,10">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="80"/>
+                    <ColumnDefinition Width="8"/>
+                    <ColumnDefinition/>
+                </Grid.ColumnDefinitions>
+                <TextBox x:Name="StorageLimitGbBox" Background="{DynamicResource RowBg}" Foreground="{DynamicResource Text0}" CaretBrush="{DynamicResource Text0}" BorderThickness="0" Padding="10,8" TextAlignment="Center"/>
+                <TextBlock Grid.Column="2" Text="GB" FontSize="12" Foreground="{DynamicResource Text2}" VerticalAlignment="Center"/>
+            </Grid>
+            <Button Content="Save &amp; apply" Style="{StaticResource FlatButton}" HorizontalAlignment="Left" Click="ApplyStorageLimit_Click"/>
+        </StackPanel>
+        <Border Style="{StaticResource SettingsRow}" BorderThickness="0" Margin="0,10,0,0">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <StackPanel VerticalAlignment="Center">
+                    <TextBlock Text="Auto-delete old clips" FontSize="13" FontWeight="Bold" Foreground="{DynamicResource Text0}"/>
+                    <TextBlock Text="Sends clips older than the age below to the Recycle Bin automatically, checked every few hours."
+                               FontSize="11" Foreground="{DynamicResource Text2}" Margin="0,3,0,0" TextWrapping="Wrap"/>
+                </StackPanel>
+                <ToggleButton x:Name="AutoDeleteOldClipsToggle" Grid.Column="1" Style="{StaticResource AppToggle}" VerticalAlignment="Center" Click="AutoDeleteOldClipsToggle_Click"/>
+            </Grid>
+        </Border>
+        <StackPanel x:Name="AutoDeleteOldClipsFields" Visibility="Collapsed" Margin="0,10,0,10">
+            <Grid Margin="0,0,0,10">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="80"/>
+                    <ColumnDefinition Width="8"/>
+                    <ColumnDefinition/>
+                </Grid.ColumnDefinitions>
+                <TextBox x:Name="AutoDeleteOldClipsDaysBox" Background="{DynamicResource RowBg}" Foreground="{DynamicResource Text0}" CaretBrush="{DynamicResource Text0}" BorderThickness="0" Padding="10,8" TextAlignment="Center"/>
+                <TextBlock Grid.Column="2" Text="days" FontSize="12" Foreground="{DynamicResource Text2}" VerticalAlignment="Center"/>
+            </Grid>
+            <Button Content="Save &amp; apply" Style="{StaticResource FlatButton}" HorizontalAlignment="Left" Click="ApplyAutoDeleteOldClips_Click"/>
+        </StackPanel>
+        <Border Style="{StaticResource SettingsRow}" BorderThickness="0">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <TextBlock Text="Replay buffer length" FontSize="13" FontWeight="Bold" Foreground="{DynamicResource Text0}" VerticalAlignment="Center"/>
+                <TextBlock x:Name="BufferDurationValueText" Grid.Column="1" Text="30:00" FontSize="11" Foreground="{DynamicResource Text2}" VerticalAlignment="Center"/>
+            </Grid>
+        </Border>
+        <StackPanel Margin="0,0,0,10">
+            <TextBlock Text="How much footage each Source Record filter keeps armed and writes to disk on every save (not the trimmed clip length below). 30 min is a safe default; raise it if your storage and encoder bitrate can keep up."
+                       FontSize="11" Foreground="{DynamicResource Text2}" TextWrapping="Wrap" Margin="0,0,0,8"/>
+            <Slider x:Name="BufferDurationSlider" Minimum="1" Maximum="60" TickFrequency="1" IsSnapToTickEnabled="True" ValueChanged="BufferDurationSlider_ValueChanged"/>
+            <TextBlock x:Name="BufferDurationWarningText" FontSize="10.5" Foreground="{DynamicResource Rec}" TextWrapping="Wrap" Visibility="Collapsed" Margin="0,6,0,0"/>
+            <Button Content="Save &amp; apply" Style="{StaticResource FlatButton}" HorizontalAlignment="Left" Margin="0,10,0,0" Click="ApplyBufferDuration_Click"/>
+        </StackPanel>
+        <Border Style="{StaticResource SettingsRow}" BorderThickness="0">
+            <StackPanel>
+                <TextBlock Text="Default audio track" FontSize="13" FontWeight="Bold" Foreground="{DynamicResource Text0}"/>
+                <TextBlock Text="Which track the Player opens a clip on by default. Only matters if your real audio (mic, desktop, etc.) doesn't land on Track 1 in your own OBS audio routing."
+                           FontSize="11" Foreground="{DynamicResource Text2}" Margin="0,3,0,10" TextWrapping="Wrap"/>
+                <ComboBox x:Name="DefaultAudioTrackSelector" Width="140" HorizontalAlignment="Left" Style="{StaticResource ModernComboBox}"
+                          SelectionChanged="DefaultAudioTrackSelector_SelectionChanged">
+                    <ComboBoxItem Content="Automatic" Tag="0"/>
+                    <ComboBoxItem Content="Track 1" Tag="1"/>
+                    <ComboBoxItem Content="Track 2" Tag="2"/>
+                    <ComboBoxItem Content="Track 3" Tag="3"/>
+                    <ComboBoxItem Content="Track 4" Tag="4"/>
+                    <ComboBoxItem Content="Track 5" Tag="5"/>
+                    <ComboBoxItem Content="Track 6" Tag="6"/>
+                </ComboBox>
+            </StackPanel>
+        </Border>
+    </StackPanel>
+</UserControl>

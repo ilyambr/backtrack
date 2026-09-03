@@ -1,0 +1,165 @@
+<UserControl x:Class="Backtrack.UI.Settings.Sections.SettingsObsSection"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <StackPanel Margin="0,0,0,0">
+        <TextBlock Text="OBS" Style="{StaticResource SettingsSectionHeader}" Margin="0,20,0,10"/>
+        <Border Style="{StaticResource SettingsRow}" BorderThickness="0">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <StackPanel VerticalAlignment="Center" Margin="0,0,16,0">
+                    <TextBlock Text="OBS is on a different PC" FontSize="13" FontWeight="Bold" Foreground="{DynamicResource Text0}"/>
+                    <TextBlock Text="e.g. a separate stream/broadcast PC. Off means OBS runs on this PC." FontSize="11" Foreground="{DynamicResource Text2}" TextWrapping="Wrap" Margin="0,3,0,0"/>
+                </StackPanel>
+                <ToggleButton x:Name="ObsRemoteToggle" Grid.Column="1" Style="{StaticResource AppToggle}" VerticalAlignment="Center" Click="ObsRemoteToggle_Click"/>
+            </Grid>
+        </Border>
+        <StackPanel x:Name="ObsRemoteFields" Visibility="Collapsed" Margin="0,14,0,6">
+            <TextBlock Text="Stream PC address" FontSize="11" FontWeight="Bold" Foreground="{DynamicResource Text1}" Margin="0,0,0,6"/>
+            <Grid Margin="0,0,0,10">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition/>
+                    <ColumnDefinition Width="75"/>
+                </Grid.ColumnDefinitions>
+                <TextBox x:Name="ObsHostBox" Background="{DynamicResource RowBg}" Foreground="{DynamicResource Text0}" CaretBrush="{DynamicResource Text0}" BorderThickness="0" Padding="10,8"/>
+                <TextBox x:Name="ObsPortBox" Grid.Column="1" Background="{DynamicResource RowBg}" Foreground="{DynamicResource Text0}" CaretBrush="{DynamicResource Text0}" BorderThickness="0" Padding="10,8" Margin="8,0,0,0"/>
+            </Grid>
+            <TextBlock Text="Password (from that PC's OBS: Tools > WebSocket Server Settings > Show Connect Info)" FontSize="11" FontWeight="Bold" Foreground="{DynamicResource Text1}" Margin="0,0,0,6" TextWrapping="Wrap"/>
+            <PasswordBox x:Name="ObsPasswordBox" Background="{DynamicResource RowBg}" Foreground="{DynamicResource Text0}" CaretBrush="{DynamicResource Text0}" BorderThickness="0" Padding="10,8" Margin="0,0,0,10"/>
+            <Button Content="Save &amp; reconnect" Style="{StaticResource FlatButton}" HorizontalAlignment="Left" Click="ApplyObsConnection_Click"/>
+        </StackPanel>
+        <StackPanel x:Name="RemotePluginSection" Visibility="Collapsed" Margin="0,6,0,4">
+            <Border Style="{StaticResource SettingsRow}">
+                <StackPanel>
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <StackPanel VerticalAlignment="Center">
+                            <TextBlock Text="Transmitter's plugins" FontSize="13" FontWeight="Bold" Foreground="{DynamicResource Text0}"/>
+                            <TextBlock x:Name="RemotePluginStatusText" Text="Not paired with a transmitter PC yet." FontSize="11" Foreground="{DynamicResource Text2}" Margin="0,3,0,0" TextWrapping="Wrap"/>
+                        </StackPanel>
+                        <Button x:Name="CheckRemotePluginsButton" Grid.Column="1" Content="Check &amp; update" Style="{StaticResource FlatButton}" VerticalAlignment="Center" Click="CheckRemotePluginsButton_Click"/>
+                    </Grid>
+                    <StackPanel x:Name="RemotePluginRows" Visibility="Collapsed" Margin="0,14,0,4">
+                        <Grid Margin="0,0,0,10">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <Ellipse x:Name="RemoteReplaySliderStatusDot" Grid.Column="0" Width="8" Height="8" Fill="{DynamicResource Text2}" VerticalAlignment="Center" Margin="0,0,10,0"/>
+                            <TextBlock Grid.Column="1" Text="Replay Slider" FontSize="12" FontWeight="Bold" Foreground="{DynamicResource Text0}" VerticalAlignment="Center"/>
+                            <TextBlock x:Name="RemoteReplaySliderVersionText" Grid.Column="2" Text="—" FontSize="11.5" Foreground="{DynamicResource Text2}" VerticalAlignment="Center"/>
+                        </Grid>
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <Ellipse x:Name="RemoteSourceRecordStatusDot" Grid.Column="0" Width="8" Height="8" Fill="{DynamicResource Text2}" VerticalAlignment="Center" Margin="0,0,10,0"/>
+                            <TextBlock Grid.Column="1" Text="Source Record" FontSize="12" FontWeight="Bold" Foreground="{DynamicResource Text0}" VerticalAlignment="Center"/>
+                            <TextBlock x:Name="RemoteSourceRecordVersionText" Grid.Column="2" Text="—" FontSize="11.5" Foreground="{DynamicResource Text2}" VerticalAlignment="Center"/>
+                        </Grid>
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+        </StackPanel>
+        <StackPanel x:Name="BuffersSection">
+            <Border Style="{StaticResource SettingsRow}" BorderThickness="0">
+                <StackPanel>
+                    <TextBlock Text="Replay Buffers" FontSize="13" FontWeight="Bold" Foreground="{DynamicResource Text0}"/>
+                    <TextBlock Text="Enable or disable a buffer, and set its destination folder."
+                               FontSize="11" Foreground="{DynamicResource Text2}" TextWrapping="Wrap" Margin="0,3,0,10"/>
+                    <StackPanel x:Name="BufferVisibilityPanel"/>
+                </StackPanel>
+            </Border>
+        </StackPanel>
+        <StackPanel x:Name="RecordingsSection">
+            <Border Style="{StaticResource SettingsRow}" BorderThickness="0">
+                <StackPanel>
+                    <TextBlock Text="Recordings" FontSize="13" FontWeight="Bold" Foreground="{DynamicResource Text0}"/>
+                    <TextBlock Text="Enable or disable a recording source, and set its destination folder."
+                               FontSize="11" Foreground="{DynamicResource Text2}" TextWrapping="Wrap" Margin="0,3,0,10"/>
+                    <StackPanel x:Name="RecordFolderPanel"/>
+                </StackPanel>
+            </Border>
+        </StackPanel>
+
+        <TextBlock Text="SHARING" Style="{StaticResource SettingsSectionHeader}" Margin="0,20,0,10"/>
+        <Border Style="{StaticResource SettingsRow}" BorderThickness="0">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <StackPanel VerticalAlignment="Center">
+                    <TextBlock Text="Share my clips with another PC" FontSize="13" FontWeight="Bold" Foreground="{DynamicResource Text0}"/>
+                    <TextBlock x:Name="ShareClipsStatusText" Text="Off" FontSize="11" Foreground="{DynamicResource Text2}" Margin="0,3,0,0" TextWrapping="Wrap"/>
+                </StackPanel>
+                <ToggleButton x:Name="ShareClipsToggle" Grid.Column="1" Style="{StaticResource AppToggle}" VerticalAlignment="Center" Click="ShareClipsToggle_Click"/>
+            </Grid>
+        </Border>
+        <Border x:Name="AuthorizedDeviceRow" Style="{StaticResource SettingsRow}" BorderThickness="0" Visibility="Collapsed">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <StackPanel VerticalAlignment="Center">
+                    <TextBlock Text="Connected device" FontSize="11" FontWeight="Bold" Foreground="{DynamicResource Text1}"/>
+                    <TextBlock x:Name="AuthorizedDeviceNameText" Text="" FontSize="13" FontWeight="Bold" Foreground="{DynamicResource Text0}" Margin="0,3,0,0" TextWrapping="Wrap"/>
+                </StackPanel>
+                <Button x:Name="DeauthorizeButton" Grid.Column="1" Content="Deauthorize" Style="{StaticResource FlatButton}" VerticalAlignment="Center" Click="DeauthorizeButton_Click"/>
+            </Grid>
+        </Border>
+        <Border Style="{StaticResource SettingsRow}">
+            <StackPanel>
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <StackPanel VerticalAlignment="Center">
+                        <TextBlock Text="Connect to another PC's clips" FontSize="13" FontWeight="Bold" Foreground="{DynamicResource Text0}"/>
+                        <TextBlock x:Name="PairingStatusText" Text="Not paired" FontSize="11" Foreground="{DynamicResource Text2}" Margin="0,3,0,0" TextWrapping="Wrap"/>
+                    </StackPanel>
+                    <Button x:Name="UnpairButton" Grid.Column="1" Content="Unpair" Style="{StaticResource FlatButton}" VerticalAlignment="Center" Click="UnpairButton_Click" Visibility="Collapsed"/>
+                </Grid>
+                <StackPanel x:Name="DiscoveredDevicesPanel" Margin="0,12,0,0"/>
+
+                <Border BorderBrush="{DynamicResource Hairline}" BorderThickness="0,1,0,0" Margin="0,14,0,0" Padding="0,14,0,0">
+                    <StackPanel>
+                        <TextBlock Text="Or connect by address (e.g. a Tailscale IP, for PCs not on the same network)" FontSize="11" FontWeight="Bold" Foreground="{DynamicResource Text1}" TextWrapping="Wrap" Margin="0,0,0,8"/>
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBox x:Name="ManualPairAddressBox" Background="{DynamicResource RowBg}" Foreground="{DynamicResource Text0}" CaretBrush="{DynamicResource Text0}" BorderThickness="0" Padding="10,8" Margin="0,0,10,0"/>
+                            <Button x:Name="ManualPairButton" Grid.Column="1" Content="Connect" Style="{StaticResource FlatButton}" VerticalAlignment="Center" Click="ManualPairButton_Click"/>
+                        </Grid>
+                        <TextBlock x:Name="ManualPairStatusText" Text="" FontSize="11" Foreground="{DynamicResource Text2}" Margin="0,8,0,0" TextWrapping="Wrap"/>
+                    </StackPanel>
+                </Border>
+                <Border x:Name="RefreshRemoteThumbnailsRow" BorderBrush="{DynamicResource Hairline}" BorderThickness="0,1,0,0" Margin="0,14,0,0" Padding="0,14,0,0" Visibility="Collapsed">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <StackPanel VerticalAlignment="Center">
+                            <TextBlock Text="Refresh remote thumbnails" FontSize="13" FontWeight="Bold" Foreground="{DynamicResource Text0}"/>
+                            <TextBlock Text="Clears cached remote thumbnails and re-downloads fresh frames from the host PC." FontSize="11" Foreground="{DynamicResource Text2}" Margin="0,3,0,0" TextWrapping="Wrap"/>
+                        </StackPanel>
+                        <Button x:Name="RefreshRemoteThumbnailsButton" Grid.Column="1" Content="Refresh" Style="{StaticResource FlatButton}" VerticalAlignment="Center" Click="RefreshRemoteThumbnailsButton_Click"/>
+                    </Grid>
+                </Border>
+            </StackPanel>
+        </Border>
+    </StackPanel>
+</UserControl>
