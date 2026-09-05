@@ -220,6 +220,34 @@ public sealed class DeduplicationService
         }
     }
 
+    public void PruneOrphanedRecords(Func<string, bool> fileExistsFunc)
+    {
+        lock (_lock)
+        {
+            var keysToRemove = new List<string>();
+            foreach (var kvp in _records)
+            {
+                var entry = kvp.Value;
+                bool clipExists = fileExistsFunc(entry.ClipPath) || fileExistsFunc(entry.ClipFileName);
+                bool originExists = fileExistsFunc(entry.OriginClipPath) || fileExistsFunc(entry.OriginClipFileName);
+
+                if (!clipExists || !originExists)
+                {
+                    keysToRemove.Add(kvp.Key);
+                }
+            }
+
+            if (keysToRemove.Count > 0)
+            {
+                foreach (var k in keysToRemove)
+                {
+                    _records.Remove(k);
+                }
+                Save();
+            }
+        }
+    }
+
     public void ImportRemoteRecords(IReadOnlyDictionary<string, DeduplicationEntry>? remoteRecords)
     {
         if (remoteRecords == null) return;

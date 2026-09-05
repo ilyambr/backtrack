@@ -74,34 +74,44 @@ public sealed partial class PairingService
             if (!Directory.Exists(fullPath))
                 return JsonSerializer.Serialize(new { error = "That folder doesn't exist on this PC." });
 
+            DeduplicationService.Instance.PruneOrphanedRecords(File.Exists);
+
             string[] folders = Directory.GetDirectories(fullPath)
                 .Select(d => Path.GetFileName(d) ?? "")
                 .OrderBy(n => n, StringComparer.OrdinalIgnoreCase)
                 .ToArray();
 
-            var files = Directory.EnumerateFiles(fullPath)
+            var fileInfos = Directory.EnumerateFiles(fullPath)
                 .Where(f => GalleryFormats.VideoExtensions.Contains(Path.GetExtension(f).ToLowerInvariant()))
                 .Select(f => new FileInfo(f))
                 .Where(f => GetCachedDurationMsForRemote?.Invoke(f.FullName) is not < 2000)
                 .OrderByDescending(f => f.LastWriteTimeUtc)
-                .Select(f =>
+                .ToList();
+
+            var fileNamesSet = new HashSet<string>(fileInfos.Select(fi => fi.Name), StringComparer.OrdinalIgnoreCase);
+
+            var files = fileInfos.Select(f =>
+            {
+                bool isDedup = DeduplicationService.Instance.IsDeduplicated(f.FullName, out var dEntry) &&
+                    !string.IsNullOrEmpty(dEntry?.OriginClipFileName) &&
+                    (fileNamesSet.Contains(dEntry.OriginClipFileName) || File.Exists(dEntry.OriginClipPath));
+
+                bool hasChildren = !isDedup && DeduplicationService.Instance.GetAllRecords().Values
+                    .Any(r => (string.Equals(r.OriginClipPath, f.FullName, StringComparison.OrdinalIgnoreCase) ||
+                               string.Equals(r.OriginClipFileName, f.Name, StringComparison.OrdinalIgnoreCase)) &&
+                              (fileNamesSet.Contains(r.ClipFileName) || File.Exists(r.ClipPath)));
+
+                return new
                 {
-                    bool isDedup = DeduplicationService.Instance.IsDeduplicated(f.FullName, out var dEntry);
-                    bool hasChildren = !isDedup && DeduplicationService.Instance.GetAllRecords().Values
-                        .Any(r => string.Equals(r.OriginClipPath, f.FullName, StringComparison.OrdinalIgnoreCase) ||
-                                  string.Equals(r.OriginClipFileName, f.Name, StringComparison.OrdinalIgnoreCase));
-                    return new
-                    {
-                        name = f.Name,
-                        size = f.Length,
-                        modified = f.LastWriteTimeUtc,
-                        isDeduplicated = isDedup,
-                        hasDeduplicatedChildren = hasChildren,
-                        originFileName = dEntry?.OriginClipFileName,
-                        originPath = dEntry?.OriginClipPath
-                    };
-                })
-                .ToArray();
+                    name = f.Name,
+                    size = f.Length,
+                    modified = f.LastWriteTimeUtc,
+                    isDeduplicated = isDedup,
+                    hasDeduplicatedChildren = hasChildren,
+                    originFileName = isDedup ? dEntry?.OriginClipFileName : null,
+                    originPath = isDedup ? dEntry?.OriginClipPath : null
+                };
+            }).ToArray();
 
             var markersMap = new Dictionary<string, List<double>>(StringComparer.OrdinalIgnoreCase);
             var starredList = new List<string>();

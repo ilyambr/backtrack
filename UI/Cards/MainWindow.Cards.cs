@@ -394,10 +394,17 @@ public partial class MainWindow : Window
         subRow.Children.Add(sub);
         subRow.Children.Add(durationText);
 
-        bool isDeduplicatedClip = DeduplicationService.Instance.IsDeduplicated(file.FullName, out _);
+        bool isDeduplicatedClip = DeduplicationService.Instance.IsDeduplicated(file.FullName, out var dEntry) &&
+            !string.IsNullOrEmpty(dEntry?.OriginClipFileName) &&
+            (File.Exists(dEntry.OriginClipPath) ||
+             File.Exists(Path.Combine(file.DirectoryName ?? "", dEntry.OriginClipFileName)));
+
         bool hasDeduplicatedChildren = !isDeduplicatedClip && DeduplicationService.Instance.GetAllRecords().Values
-            .Any(r => string.Equals(r.OriginClipPath, file.FullName, StringComparison.OrdinalIgnoreCase) ||
-                      string.Equals(r.OriginClipFileName, file.Name, StringComparison.OrdinalIgnoreCase));
+            .Any(r => (string.Equals(r.OriginClipPath, file.FullName, StringComparison.OrdinalIgnoreCase) ||
+                       string.Equals(r.OriginClipFileName, file.Name, StringComparison.OrdinalIgnoreCase)) &&
+                      (File.Exists(r.ClipPath) ||
+                       File.Exists(Path.Combine(file.DirectoryName ?? "", r.ClipFileName))));
+
         bool isLinked = isDeduplicatedClip || hasDeduplicatedChildren;
 
         StackPanel? newestRow = isNewest ? WithNewestDot(title, "Newest clip") : null;

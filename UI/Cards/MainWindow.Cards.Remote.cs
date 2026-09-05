@@ -217,12 +217,8 @@ public partial class MainWindow : Window
             Foreground = (Brush)FindResource("Text2"),
         };
 
-        bool isDeduplicatedClip = file.IsDeduplicated ||
-            (allFiles is not null && allFiles.Any(older => IsCandidateDeduplicationPair(file, older)));
-
-        bool hasDeduplicatedChildren = file.HasDeduplicatedChildren ||
-            (allFiles is not null && allFiles.Any(newer => IsCandidateDeduplicationPair(newer, file)));
-
+        bool isDeduplicatedClip = allFiles is not null && allFiles.Any(older => IsCandidateDeduplicationPair(file, older));
+        bool hasDeduplicatedChildren = allFiles is not null && allFiles.Any(newer => IsCandidateDeduplicationPair(newer, file));
         bool isLinked = isDeduplicatedClip || hasDeduplicatedChildren;
 
         StackPanel? newestRow = isNewest ? WithNewestDot(title, "Newest clip") : null;

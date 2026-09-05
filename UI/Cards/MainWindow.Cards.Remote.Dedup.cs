@@ -37,7 +37,7 @@ public partial class MainWindow : Window
         if (string.Equals(newer.Name, older.Name, StringComparison.OrdinalIgnoreCase))
             return false;
 
-        // 1. Host RPC says newer is deduplicated AND its origin is older
+        // 1. Host RPC says newer is deduplicated AND its origin matches older
         if (newer.IsDeduplicated && !string.IsNullOrEmpty(newer.OriginFileName) &&
             string.Equals(newer.OriginFileName, older.Name, StringComparison.OrdinalIgnoreCase))
             return true;
@@ -47,10 +47,15 @@ public partial class MainWindow : Window
             string.Equals(newer.OriginFileName, older.Name, StringComparison.OrdinalIgnoreCase))
             return true;
 
-        // 3. Synchronized DeduplicationService (imported from host at gallery fetch time)
+        // 3. Synchronized DeduplicationService: newer is a registered child whose origin is older
         if (DeduplicationService.Instance.IsDeduplicated(newer.Name, out var dEntry) &&
-            (string.Equals(dEntry?.OriginClipFileName, older.Name, StringComparison.OrdinalIgnoreCase) ||
-             string.Equals(Path.GetFileName(dEntry?.OriginClipPath ?? ""), older.Name, StringComparison.OrdinalIgnoreCase)))
+            !string.IsNullOrEmpty(dEntry?.OriginClipFileName) &&
+            (string.Equals(dEntry.OriginClipFileName, older.Name, StringComparison.OrdinalIgnoreCase) ||
+             string.Equals(Path.GetFileName(dEntry.OriginClipPath ?? ""), older.Name, StringComparison.OrdinalIgnoreCase)))
+            return true;
+
+        // 4. Filename pattern fallback (e.g. clip (1).mp4 with clip.mp4)
+        if (IsDeduplicatedFileNamePair(newer.Name, older.Name))
             return true;
 
         return false;

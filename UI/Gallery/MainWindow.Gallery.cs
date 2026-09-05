@@ -317,6 +317,7 @@ public partial class MainWindow : Window
         string filter = GalleryFilterBox.Text.Trim();
 
         PurgeCorruptedStubs(folder);
+        DeduplicationService.Instance.PruneOrphanedRecords(File.Exists);
 
         List<DirectoryInfo> subfolders;
         List<FileInfo> files;
