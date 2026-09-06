@@ -122,6 +122,48 @@ public partial class MainWindow : Window
         }
         else
         {
+            if (_activeDrivePicker != null && _currentPlayerFile != null)
+            {
+                var fileToRestore = _currentPlayerFile;
+
+                BeginAnimation(OpacityProperty, null);
+                _scrim.BeginAnimation(OpacityProperty, null);
+
+                ShowScreen(Screen.Player, skipEntranceAnimation: true);
+                UpdateLayout();
+
+                _scrim.ArmDismissCooldown(400);
+                _scrim.Show();
+                _logo.ShowWithIntro();
+
+                Opacity = 1;
+                Show();
+                Activate();
+
+                OpenInPlayer(fileToRestore, suppressFreezeFrame: false, startPaused: true);
+                _activeDrivePicker.Show();
+                _activeDrivePicker.Activate();
+                IntPtr pickerHwnd = new WindowInteropHelper(_activeDrivePicker).Handle;
+                if (pickerHwnd != IntPtr.Zero)
+                    WindowZOrder.BringToFrontWithoutActivating(pickerHwnd);
+
+                _statusOverlay.IsHudOpen = true;
+                _statusOverlay.Reposition();
+                if (_settings.ShowStatusIndicator)
+                {
+                    _statusOverlay.Show();
+                    WindowZOrder.BringToFrontWithoutActivating(new WindowInteropHelper(_statusOverlay).Handle);
+                }
+                _toastOverlay.Show();
+                _toastOverlay.UpdatePosition(true);
+                WindowZOrder.BringToFrontWithoutActivating(new WindowInteropHelper(_toastOverlay).Handle);
+                RefreshUpdatePromptVisibility();
+                RefreshOverlayLogVisibilityAndMode();
+                if (_settings.ShowDisclaimer)
+                    _disclaimer.Show();
+                return;
+            }
+
             _lastScreen = Screen.Idle;
             ShowScreen(Screen.Idle, skipEntranceAnimation: true);
             UpdateLayout();

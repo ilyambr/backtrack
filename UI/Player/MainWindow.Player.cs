@@ -57,6 +57,11 @@ public partial class MainWindow : Window
         }
         else
         {
+            if (PlayerFreezeFramePopup.IsOpen)
+            {
+                _freezeFrameTimer?.Stop();
+                _freezeFrameTimer?.Start();
+            }
             _vlcPlayer.Play();
         }
     }

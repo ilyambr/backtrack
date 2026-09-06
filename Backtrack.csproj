@@ -15,6 +15,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="Google.Apis.Drive.v3" Version="1.76.0.4252" />
     <PackageReference Include="LibVLCSharp" Version="3.10.0" />
     <PackageReference Include="LibVLCSharp.WPF" Version="3.10.0" />
     <PackageReference Include="VideoLAN.LibVLC.Windows" Version="3.0.23.1" />
@@ -31,6 +32,9 @@
     <Resource Include="Assets\logo.png" />
     <Resource Include="Assets\ilyambr.png" />
     <None Update="Assets\backtrack_tray.png">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Update="Assets\backtrack_tray_white.png">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
     <None Update="Assets\app.ico">

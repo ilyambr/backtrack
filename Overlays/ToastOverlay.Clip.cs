@@ -199,6 +199,127 @@ public partial class ToastOverlay : Window
         ToastStack.Children.Remove(entry.Toast);
     }
 
+    public void ShowDriveUploadStarted(string key, string clipName)
+    {
+        if (_processingToasts.ContainsKey(key))
+            return;
+
+        if (!IsVisible)
+            Show();
+
+        IntPtr hwnd = new WindowInteropHelper(this).Handle;
+        if (hwnd != IntPtr.Zero)
+            WindowZOrder.BringToFrontWithoutActivating(hwnd);
+
+        var msg = new TextBlock { Text = "Uploading to Google Drive...", FontWeight = FontWeights.Bold, FontSize = 12.5, Foreground = Text0, TextWrapping = TextWrapping.Wrap, MaxWidth = 210 };
+        var sub = new TextBlock
+        {
+            Text = clipName,
+            FontSize = 10.5,
+            Foreground = Text2,
+            Margin = new Thickness(0, 2, 0, 0),
+            TextWrapping = TextWrapping.Wrap,
+            MaxWidth = 210,
+        };
+        var body = new StackPanel();
+        body.Children.Add(msg);
+        body.Children.Add(sub);
+
+        var driveIcon = new Path
+        {
+            Data = Geometry.Parse("M403 378.9L239.4 96h161.2l163.6 282.9zm-137.5 23.6L184.9 544h310.5L576 402.5zm-47.4-271.1L64 402.5L144.6 544L301 272.8z"),
+            Fill = Accent,
+            Width = 14,
+            Height = 14,
+            Stretch = Stretch.Uniform,
+            Margin = new Thickness(0, 1, 10, 0),
+            VerticalAlignment = VerticalAlignment.Top,
+        };
+
+        var row = new StackPanel { Orientation = Orientation.Horizontal };
+        row.Children.Add(driveIcon);
+        row.Children.Add(body);
+
+        var scale = new ScaleTransform(0.0, 1.0);
+        var progressTrack = new Grid { Height = 3, Background = ThemeBrush("BorderMedium"), VerticalAlignment = VerticalAlignment.Bottom };
+        var progressFill = new Border
+        {
+            Background = Accent,
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            RenderTransformOrigin = new Point(0, 0.5),
+            RenderTransform = scale
+        };
+        progressTrack.Children.Add(progressFill);
+
+        var cardContent = new StackPanel();
+        cardContent.Children.Add(new Border { Padding = new Thickness(12, 10, 14, 10), Child = row });
+        cardContent.Children.Add(progressTrack);
+
+        var toast = new Border
+        {
+            Background = PanelBg,
+            BorderBrush = Hairline,
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(0),
+            Margin = new Thickness(0, 0, 0, 8),
+            ClipToBounds = true,
+            Child = cardContent,
+        };
+
+        ToastStack.Children.Insert(0, toast);
+        _processingToasts[key] = (toast, scale);
+    }
+
+    public void UpdateDriveUploadProgress(string key, double percent)
+    {
+        if (_processingToasts.TryGetValue(key, out var entry))
+        {
+            entry.Scale.ScaleX = Math.Min(1.0, Math.Max(0.0, percent / 100.0));
+        }
+    }
+
+    public void ShowDriveUploadCompleted(string? key, string clipName, bool linkCopied)
+    {
+        if (key != null && _processingToasts.Remove(key, out var entry))
+        {
+            ToastStack.Children.Remove(entry.Toast);
+        }
+
+        AudioCues.PlayClipSaved();
+        var driveIcon = new Path
+        {
+            Data = Geometry.Parse("M403 378.9L239.4 96h161.2l163.6 282.9zm-137.5 23.6L184.9 544h310.5L576 402.5zm-47.4-271.1L64 402.5L144.6 544L301 272.8z"),
+            Fill = Green,
+            Width = 14,
+            Height = 14,
+            Stretch = Stretch.Uniform,
+            Margin = new Thickness(0, 1, 10, 0),
+            VerticalAlignment = VerticalAlignment.Top,
+        };
+        string sub = linkCopied ? $"{clipName} · Link copied to clipboard" : clipName;
+        Show(driveIcon, Green, "Uploaded to Google Drive", sub, truncateSubMessage: true);
+    }
+
+    public void ShowDriveUploadFailed(string? key, string error)
+    {
+        if (key != null && _processingToasts.Remove(key, out var entry))
+        {
+            ToastStack.Children.Remove(entry.Toast);
+        }
+
+        var driveIcon = new Path
+        {
+            Data = Geometry.Parse("M403 378.9L239.4 96h161.2l163.6 282.9zm-137.5 23.6L184.9 544h310.5L576 402.5zm-47.4-271.1L64 402.5L144.6 544L301 272.8z"),
+            Fill = Warning,
+            Width = 14,
+            Height = 14,
+            Stretch = Stretch.Uniform,
+            Margin = new Thickness(0, 1, 10, 0),
+            VerticalAlignment = VerticalAlignment.Top,
+        };
+        Show(driveIcon, Warning, "Drive Upload Failed", error);
+    }
+
     public void ClearAllProcessingToasts()
     {
         foreach (var entry in _processingToasts.Values)
@@ -209,3 +330,5 @@ public partial class ToastOverlay : Window
         _processingToasts.Clear();
     }
 }
+
+

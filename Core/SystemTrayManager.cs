@@ -6,6 +6,7 @@ using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Interop;
+using Microsoft.Win32;
 
 namespace Backtrack;
 
@@ -16,6 +17,7 @@ public class SystemTrayManager : IDisposable
     private const int WM_RBUTTONUP = 0x0205;
     private const int WM_LBUTTONUP = 0x0202;
     private const int WM_LBUTTONDBLCLK = 0x0203;
+    private const int WM_SETTINGCHANGE = 0x001A;
 
     private const int NIF_MESSAGE = 0x00000001;
     private const int NIF_ICON = 0x00000002;
@@ -51,6 +53,7 @@ public class SystemTrayManager : IDisposable
     private readonly IntPtr _hwnd;
     private NOTIFYICONDATA _nid;
     private System.Drawing.Bitmap? _baseBitmap;
+    private bool _isSystemLightTheme;
     private IntPtr _currentHIcon = IntPtr.Zero;
     private bool _obsConnected;
     private bool _statusOverlayVisible = true;
@@ -69,24 +72,7 @@ public class SystemTrayManager : IDisposable
         HwndSource source = HwndSource.FromHwnd(_hwnd);
         source?.AddHook(WndProc);
 
-        try
-        {
-            string baseDir = AppDomain.CurrentDomain.BaseDirectory;
-            string assetPath = Path.Combine(baseDir, "Assets", "backtrack_tray.png");
-            if (!File.Exists(assetPath))
-            {
-                assetPath = Path.Combine(AppContext.BaseDirectory, "Assets", "backtrack_tray.png");
-            }
-
-            if (File.Exists(assetPath))
-            {
-                _baseBitmap = new System.Drawing.Bitmap(assetPath);
-            }
-        }
-        catch (Exception ex)
-        {
-            Debug.WriteLine($"Failed to load tray image: {ex.Message}");
-        }
+        ReloadBaseBitmap();
 
         _nid = new NOTIFYICONDATA
         {
@@ -99,6 +85,65 @@ public class SystemTrayManager : IDisposable
         };
 
         UpdateTrayIcon(obsConnected: false);
+    }
+
+    private static bool DetectSystemLightTheme()
+    {
+        try
+        {
+            using var key = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize");
+            if (key != null)
+            {
+                object? sysVal = key.GetValue("SystemUsesLightTheme");
+                if (sysVal is int sysInt)
+                    return sysInt == 1;
+
+                object? appVal = key.GetValue("AppsUseLightTheme");
+                if (appVal is int appInt)
+                    return appInt == 1;
+            }
+        }
+        catch
+        {
+        }
+        return false;
+    }
+
+    private void ReloadBaseBitmap()
+    {
+        _isSystemLightTheme = DetectSystemLightTheme();
+
+        try
+        {
+            _baseBitmap?.Dispose();
+            _baseBitmap = null;
+
+            string baseDir = AppDomain.CurrentDomain.BaseDirectory;
+            string targetFilename = _isSystemLightTheme ? "backtrack_tray.png" : "backtrack_tray_white.png";
+
+            string assetPath = Path.Combine(baseDir, "Assets", targetFilename);
+            if (!File.Exists(assetPath))
+            {
+                assetPath = Path.Combine(AppContext.BaseDirectory, "Assets", targetFilename);
+            }
+
+            if (!File.Exists(assetPath))
+            {
+                // Fallback to default tray asset if white not found
+                assetPath = Path.Combine(baseDir, "Assets", "backtrack_tray.png");
+                if (!File.Exists(assetPath))
+                    assetPath = Path.Combine(AppContext.BaseDirectory, "Assets", "backtrack_tray.png");
+            }
+
+            if (File.Exists(assetPath))
+            {
+                _baseBitmap = new System.Drawing.Bitmap(assetPath);
+            }
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"Failed to load tray image: {ex.Message}");
+        }
     }
 
     public void UpdateStatus(bool obsConnected, bool statusOverlayVisible)
@@ -132,7 +177,8 @@ public class SystemTrayManager : IDisposable
             int dotX = size - dotSize - 1;
             int dotY = size - dotSize - 1;
 
-            using var ringBrush = new System.Drawing.SolidBrush(System.Drawing.Color.FromArgb(220, 20, 21, 24));
+            System.Drawing.Color ringColor = _isSystemLightTheme ? System.Drawing.Color.FromArgb(220, 240, 240, 245) : System.Drawing.Color.FromArgb(220, 20, 21, 24);
+            using var ringBrush = new System.Drawing.SolidBrush(ringColor);
             g.FillEllipse(ringBrush, dotX - 1, dotY - 1, dotSize + 2, dotSize + 2);
 
             System.Drawing.Color dotColor = obsConnected ? System.Drawing.Color.FromArgb(62, 207, 142) : System.Drawing.Color.FromArgb(255, 91, 82);
@@ -166,7 +212,16 @@ public class SystemTrayManager : IDisposable
 
     private IntPtr WndProc(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
     {
-        if (msg == WM_TRAYICON)
+        if (msg == WM_SETTINGCHANGE)
+        {
+            bool currentLight = DetectSystemLightTheme();
+            if (currentLight != _isSystemLightTheme)
+            {
+                ReloadBaseBitmap();
+                UpdateTrayIcon(_obsConnected);
+            }
+        }
+        else if (msg == WM_TRAYICON)
         {
             int lp = lParam.ToInt32();
             if (lp == WM_LBUTTONUP || lp == WM_LBUTTONDBLCLK)

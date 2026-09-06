@@ -103,5 +103,36 @@
                 </ComboBox>
             </StackPanel>
         </Border>
+        <Border Style="{StaticResource SettingsRow}" BorderThickness="0">
+            <StackPanel>
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <StackPanel VerticalAlignment="Center">
+                        <StackPanel Orientation="Horizontal">
+                            <Path Data="M403 378.9L239.4 96h161.2l163.6 282.9zm-137.5 23.6L184.9 544h310.5L576 402.5zm-47.4-271.1L64 402.5L144.6 544L301 272.8z"
+                                  Fill="{DynamicResource Text1}" Width="13" Height="13" Stretch="Uniform" Margin="0,0,8,0" VerticalAlignment="Center"/>
+                            <TextBlock Text="Google Drive" FontSize="13" FontWeight="Bold" Foreground="{DynamicResource Text0}" VerticalAlignment="Center"/>
+                        </StackPanel>
+                        <TextBlock x:Name="DriveAccountText" Text="Not connected" FontSize="11" Foreground="{DynamicResource Text2}" Margin="0,3,0,0"/>
+                    </StackPanel>
+                    <Button x:Name="DriveAccountActionButton" Grid.Column="1" Content="Connect" Style="{StaticResource FlatButton}" VerticalAlignment="Center" Click="DriveAccountActionButton_Click"/>
+                </Grid>
+                <Grid Margin="0,12,0,0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <StackPanel VerticalAlignment="Center" Margin="0,0,12,0">
+                        <TextBlock Text="Always redact email" FontSize="12" FontWeight="SemiBold" Foreground="{DynamicResource Text0}"/>
+                        <TextBlock Text="Hides your full email address in the Google Drive menu and settings even when not streaming or recording."
+                                   FontSize="11" Foreground="{DynamicResource Text2}" Margin="0,2,0,0" TextWrapping="Wrap"/>
+                    </StackPanel>
+                    <ToggleButton x:Name="AlwaysRedactDriveEmailToggle" Grid.Column="1" Style="{StaticResource AppToggle}" VerticalAlignment="Center" Click="AlwaysRedactDriveEmailToggle_Click"/>
+                </Grid>
+            </StackPanel>
+        </Border>
     </StackPanel>
 </UserControl>

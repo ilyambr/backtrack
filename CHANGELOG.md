@@ -4,11 +4,31 @@ All notable changes to Backtrack are documented in this file.
 
 ---
 
-## [v0.4.0] - In Progress / Scheduled
+## [v0.4.0] - 2026-09-06
 
-### Architecture & UI Modularization
-- **Oversized Architecture Modularization**: Decoupled monolithic components into dedicated domain partials (`MainWindow.Trim.Execute.cs`, `PairingService.Client.Transcode.cs`, `ToastOverlay.Clip.cs`, `MainWindow.Obs.AudioCues.cs`, `MainWindow.Cards.Remote.Dedup.cs`, `MainWindow.RecentClipsOverlay.RemoteTiles.cs`).
-- **Remote Gallery Deduplication Synchronization**: Exact-match origin-child deduplication lookup matching local behavior.
+### Direct Google Drive Cloud Integration, Adaptive Tray Theming & Full Architecture Modularization
+
+- **Direct Google Drive Cloud Uploads (`GoogleDriveService.cs`)**:
+  - Native OAuth 2.0 PKCE authentication flow with local loopback listener.
+  - Windows DPAPI-encrypted credential token storage (`%AppData%\Backtrack\GoogleDrive\Tokens\`).
+  - Interactive Google Drive folder browser dialog (`GoogleDrivePickerWindow.xaml`) with live folder creation and navigation.
+  - High-performance chunked resumable media upload engine with live progress bar and direct shareable view links.
+- **Remote Drive Relay RPC (`PairingService.DriveRpc.cs`)**:
+  - Paired secondary machines (e.g. streaming PC, laptop) can browse folders and upload clips directly to the primary machine's authenticated Google Drive account over the local network without re-authenticating.
+- **Streamer Privacy & Email Redaction**:
+  - Added Streamer Mode setting to mask user Google account email (`***@domain.com`) across all UI dialogs.
+- **Adaptive System Tray Theming (`SystemTrayManager.cs`)**:
+  - Live detection of Windows system theme changes (`WM_SETTINGCHANGE` / Registry `AppsUseLightTheme` & `SystemUsesLightTheme`).
+  - Automatically switches between high-contrast white and dark tray icons (`backtrack_tray_white.png`) so the icon is never lost against light taskbars.
+  - Added instant HUD status overlay toggle directly from the right-click tray context menu.
+- **Settings View Section Modularization**:
+  - Decoupled monolithic settings window into dedicated domain UserControls (`SettingsGeneralSection`, `SettingsObsSection`, `SettingsOverlaySection`, `SettingsClipsSection`, `SettingsAdvancedSection`).
+- **Core Partials & RPC Decoupling**:
+  - Split `PairingService` into discrete RPC modules: `PairingService.Client.Gallery.cs`, `PairingService.DriveRpc.cs`, `PairingService.TranscodeRpc.cs`.
+  - Split `MainWindow.Compress.cs` into `MainWindow.Compress.Transcode.cs`.
+  - Split player context menus into `MainWindow.PlayerMenu.cs` and card action handlers into `MainWindow.Cards.Menu.cs`.
+- **Legal & Compliance Documentation**:
+  - Added comprehensive `PRIVACY.md` and `TERMS.md` compliant with Google API Services Limited Use requirements.
 
 ---
 

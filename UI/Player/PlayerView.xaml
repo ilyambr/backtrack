@@ -199,15 +199,15 @@
                 </Popup>
 
                 <Popup x:Name="PlayerMenuPopup" PlacementTarget="{Binding ElementName=PlayerMenuPill}" Placement="Bottom"
-                       HorizontalOffset="-190" VerticalOffset="8" AllowsTransparency="True" StaysOpen="False" Focusable="False" IsOpen="False">
+                       HorizontalOffset="-210" VerticalOffset="8" AllowsTransparency="True" StaysOpen="False" Focusable="False" IsOpen="False">
                     <Border Background="{DynamicResource PanelBgOpaque}" BorderBrush="{DynamicResource Hairline}" BorderThickness="1"
-                            Padding="8" Width="224">
+                            Padding="8" Width="248">
                         <Border.Effect>
                             <DropShadowEffect BlurRadius="16" ShadowDepth="3" Color="Black" Opacity="0.6"/>
                         </Border.Effect>
                         <StackPanel>
                             
-                            <UniformGrid Columns="2" Rows="3">
+                            <UniformGrid Columns="2" Rows="4">
                                 <Button Style="{StaticResource PlayerActionTileButton}" Margin="2" Click="PlayerRename_Click">
                                     <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
                                         <Path Data="M3,17.25V21h3.75L17.81,9.94l-3.75,-3.75L3,17.25zM20.71,7.04c0.39,-0.39,0.39,-1.02,0,-1.41l-2.34,-2.34c-0.39,-0.39,-1.02,-0.39,-1.41,0l-1.83,1.83l3.75,3.75L20.71,7.04z"
@@ -224,7 +224,6 @@
                                 </Button>
                                 <Button Style="{StaticResource PlayerActionTileButton}" Margin="2" Click="PlayerCompress_Click">
                                     <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
-                                        
                                         <Path Data="M19,9h-4V3H9v6H5l7,7 7,-7zM5,18v2h14v-2H5z"
                                               Fill="{DynamicResource Text1}" Width="15" Height="15" Stretch="Uniform" HorizontalAlignment="Center" Margin="0,0,0,4"/>
                                         <TextBlock Text="Compress" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource Text1}" HorizontalAlignment="Center"/>
@@ -232,10 +231,16 @@
                                 </Button>
                                 <Button Style="{StaticResource PlayerActionTileButton}" Margin="2" Click="PlayerBookmarks_Click">
                                     <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
-                                        
                                         <Path Data="M17,3H7c-1.1,0 -1.99,0.9 -1.99,2L5,21l7,-3 7,3V5c0,-1.1 -0.9,-2 -2,-2z"
                                               Fill="{DynamicResource Text1}" Width="15" Height="15" Stretch="Uniform" HorizontalAlignment="Center" Margin="0,0,0,4"/>
                                         <TextBlock Text="Bookmarks" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource Text1}" HorizontalAlignment="Center"/>
+                                    </StackPanel>
+                                </Button>
+                                <Button Style="{StaticResource PlayerActionTileButton}" Margin="2" Click="PlayerDriveUpload_Click">
+                                    <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
+                                        <Path Data="M403 378.9L239.4 96h161.2l163.6 282.9zm-137.5 23.6L184.9 544h310.5L576 402.5zm-47.4-271.1L64 402.5L144.6 544L301 272.8z"
+                                              Fill="{DynamicResource Text1}" Width="15" Height="15" Stretch="Uniform" HorizontalAlignment="Center" Margin="0,0,0,4"/>
+                                        <TextBlock Text="Google Drive" FontSize="10.5" FontWeight="SemiBold" Foreground="{DynamicResource Text1}" HorizontalAlignment="Center"/>
                                     </StackPanel>
                                 </Button>
                                 <Button Style="{StaticResource PlayerActionTileButton}" Margin="2" Click="PlayerFolder_Click">

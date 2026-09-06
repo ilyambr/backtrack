@@ -136,6 +136,13 @@ public partial class MainWindow : Window
             compressText.Text = $"Merging {(int)Math.Round(initMergeProg * 100)}%";
             progressBarFill.Width = Math.Max(2, initMergeProg * 140.0);
         }
+        else if (_activeUploadingClips.TryGetValue(relativePath, out double initUpload) ||
+                 _activeUploadingClips.TryGetValue(file.Name, out initUpload))
+        {
+            compressOverlay.Visibility = Visibility.Visible;
+            compressText.Text = $"Uploading {(int)Math.Round(initUpload * 100)}%";
+            progressBarFill.Width = Math.Max(2, initUpload * 140.0);
+        }
 
         iconHost.Child = iconGrid;
 
@@ -171,6 +178,22 @@ public partial class MainWindow : Window
         };
         ClipMergeProgressChanged += mergeProgressHandler;
 
+        Action<string, double> uploadProgressHandler = (targetPath, prog) =>
+        {
+            if (string.Equals(targetPath, relativePath, StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(targetPath, file.Name, StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(Path.GetFileName(targetPath), file.Name, StringComparison.OrdinalIgnoreCase))
+            {
+                Dispatcher.BeginInvoke(() =>
+                {
+                    compressOverlay.Visibility = Visibility.Visible;
+                    compressText.Text = $"Uploading {(int)Math.Round(prog * 100)}%";
+                    progressBarFill.Width = Math.Max(2, prog * 140.0);
+                });
+            }
+        };
+        DriveUploadProgressChanged += uploadProgressHandler;
+
         Action<string> completeHandler = (targetPath) =>
         {
             if (string.Equals(targetPath, relativePath, StringComparison.OrdinalIgnoreCase) ||
@@ -187,13 +210,16 @@ public partial class MainWindow : Window
         };
         ClipCompressionCompleted += completeHandler;
         ClipMergeCompleted += completeHandler;
+        DriveUploadCompleted += completeHandler;
 
         iconHost.Unloaded += (_, _) =>
         {
             ClipCompressionProgressChanged -= progressHandler;
             ClipMergeProgressChanged -= mergeProgressHandler;
+            DriveUploadProgressChanged -= uploadProgressHandler;
             ClipCompressionCompleted -= completeHandler;
             ClipMergeCompleted -= completeHandler;
+            DriveUploadCompleted -= completeHandler;
         };
 
         var title = new TextBlock

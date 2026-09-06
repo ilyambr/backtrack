@@ -113,16 +113,33 @@ public sealed partial class PairingService
                 };
             }).ToArray();
 
+            string root = Path.GetFullPath(_settings.ClipsFolder).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
             var markersMap = new Dictionary<string, List<double>>(StringComparer.OrdinalIgnoreCase);
             var starredList = new List<string>();
 
-            foreach (var f in files)
+            for (int i = 0; i < fileInfos.Count; i++)
             {
-                if (_settings.ClipMarkers.TryGetValue(f.name, out var m) && m.Count > 0)
+                var fi = fileInfos[i];
+                var f = files[i];
+
+                List<double>? m = null;
+                if (!_settings.ClipMarkers.TryGetValue(f.name, out m) || m.Count == 0)
+                {
+                    if (!_settings.ClipMarkers.TryGetValue(fi.FullName, out m) || m.Count == 0)
+                    {
+                        string rel = Path.GetRelativePath(root, fi.FullName).Replace('\\', '/');
+                        _settings.ClipMarkers.TryGetValue(rel, out m);
+                    }
+                }
+                if (m != null && m.Count > 0)
                 {
                     markersMap[f.name] = m;
                 }
-                if (_settings.StarredClips.Contains(f.name))
+
+                string relPath = Path.GetRelativePath(root, fi.FullName).Replace('\\', '/');
+                if (_settings.StarredClips.Contains(f.name) ||
+                    _settings.StarredClips.Contains(fi.FullName) ||
+                    _settings.StarredClips.Contains(relPath))
                 {
                     starredList.Add(f.name);
                 }
@@ -182,6 +199,9 @@ public sealed partial class PairingService
         return JsonSerializer.Serialize(new { success = true });
     }
 
+    public Action<string, string, List<double>>? OnClipMarkersSyncedFromRemote { get; set; }
+    public Action<string, string, bool>? OnStarredSyncedFromRemote { get; set; }
+
     private string HandleSyncClipMarkers(JsonElement request)
     {
         if (!IsAuthorizedClient(request))
@@ -201,6 +221,12 @@ public sealed partial class PairingService
             }
         }
 
+        string? resolvedFullPath = null;
+        if (TryResolveGalleryPath(clipKey, out string fullPath, out _) && File.Exists(fullPath))
+        {
+            resolvedFullPath = fullPath;
+        }
+
         if (markers.Count > 0)
         {
             markers.Sort();
@@ -210,15 +236,33 @@ public sealed partial class PairingService
             {
                 _settings.ClipMarkers[fileName] = markers;
             }
+            if (resolvedFullPath != null)
+            {
+                _settings.ClipMarkers[resolvedFullPath] = markers;
+            }
         }
         else
         {
             _settings.ClipMarkers.Remove(clipKey);
             _settings.ClipMarkers.Remove(Path.GetFileName(clipKey));
+            if (resolvedFullPath != null)
+            {
+                _settings.ClipMarkers.Remove(resolvedFullPath);
+            }
         }
 
         _settings.Save();
         AppLog.Write($"[Pairing] Synced {markers.Count} markers for clip '{clipKey}' from paired peer");
+
+        try
+        {
+            OnClipMarkersSyncedFromRemote?.Invoke(resolvedFullPath ?? clipKey, clipKey, markers);
+        }
+        catch (Exception ex)
+        {
+            AppLog.Write($"[Pairing] OnClipMarkersSyncedFromRemote callback error: {ex.Message}");
+        }
+
         return JsonSerializer.Serialize(new { success = true });
     }
 
@@ -232,21 +276,82 @@ public sealed partial class PairingService
         if (string.IsNullOrWhiteSpace(clipKey))
             return JsonSerializer.Serialize(new { success = false, error = "clipKey is required." });
 
+        string? resolvedFullPath = null;
+        if (TryResolveGalleryPath(clipKey, out string fullPath, out _) && File.Exists(fullPath))
+        {
+            resolvedFullPath = fullPath;
+        }
+
         string fileName = Path.GetFileName(clipKey);
         if (isStarred)
         {
             _settings.StarredClips.Add(clipKey);
             _settings.StarredClips.Add(fileName);
+            if (resolvedFullPath != null)
+                _settings.StarredClips.Add(resolvedFullPath);
         }
         else
         {
             _settings.StarredClips.Remove(clipKey);
             _settings.StarredClips.Remove(fileName);
+            if (resolvedFullPath != null)
+                _settings.StarredClips.Remove(resolvedFullPath);
         }
 
         _settings.Save();
         AppLog.Write($"[Pairing] Synced starred ({isStarred}) for clip '{clipKey}' from paired peer");
+
+        try
+        {
+            OnStarredSyncedFromRemote?.Invoke(resolvedFullPath ?? clipKey, clipKey, isStarred);
+        }
+        catch (Exception ex)
+        {
+            AppLog.Write($"[Pairing] OnStarredSyncedFromRemote callback error: {ex.Message}");
+        }
+
         return JsonSerializer.Serialize(new { success = true });
+    }
+
+    private string HandleGetClipMetadata(JsonElement request)
+    {
+        if (!IsAuthorizedClient(request))
+            return JsonSerializer.Serialize(new { success = false, error = "Not authorized -- pair with this PC first." });
+
+        string relativePath = request.TryGetProperty("path", out JsonElement p) ? p.GetString() ?? "" : "";
+        if (string.IsNullOrWhiteSpace(relativePath))
+            return JsonSerializer.Serialize(new { success = false, error = "Missing clip path." });
+
+        if (!TryResolveGalleryPath(relativePath, out string fullPath, out string? pathError))
+            return JsonSerializer.Serialize(new { success = false, error = pathError ?? "Invalid path." });
+
+        string fileName = Path.GetFileName(fullPath);
+        string root = Path.GetFullPath(_settings.ClipsFolder).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        string normalizedRel = Path.GetRelativePath(root, fullPath).Replace('\\', '/');
+
+        List<double>? markers = null;
+        if (!_settings.ClipMarkers.TryGetValue(relativePath, out markers) || markers.Count == 0)
+        {
+            if (!_settings.ClipMarkers.TryGetValue(normalizedRel, out markers) || markers.Count == 0)
+            {
+                if (!_settings.ClipMarkers.TryGetValue(fileName, out markers) || markers.Count == 0)
+                {
+                    _settings.ClipMarkers.TryGetValue(fullPath, out markers);
+                }
+            }
+        }
+
+        bool isStarred = _settings.StarredClips.Contains(relativePath)
+            || _settings.StarredClips.Contains(normalizedRel)
+            || _settings.StarredClips.Contains(fileName)
+            || _settings.StarredClips.Contains(fullPath);
+
+        return JsonSerializer.Serialize(new
+        {
+            success = true,
+            markers = markers ?? new List<double>(),
+            isStarred
+        });
     }
 
     public async Task<bool> SendPlayAudioCueAsync(string cue, int volume)

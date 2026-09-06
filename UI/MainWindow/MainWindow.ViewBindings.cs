@@ -146,6 +146,9 @@ public partial class MainWindow
     public TextBlock ClipsFolderText => SettingsView.ClipsFolderText;
     public Button DeauthorizeButton => SettingsView.DeauthorizeButton;
     public ComboBox DefaultAudioTrackSelector => SettingsView.DefaultAudioTrackSelector;
+    public TextBlock DriveAccountText => SettingsView.DriveAccountText;
+    public Button DriveAccountActionButton => SettingsView.DriveAccountActionButton;
+    public ToggleButton AlwaysRedactDriveEmailToggle => SettingsView.AlwaysRedactDriveEmailToggle;
     public StackPanel DestructiveContent => SettingsView.DestructiveContent;
     public Border DestructiveHeader => SettingsView.DestructiveHeader;
     public TextBlock DestructiveHeaderText => SettingsView.DestructiveHeaderText;

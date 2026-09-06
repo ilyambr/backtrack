@@ -11,6 +11,16 @@
         <Setter Property="Focusable" Value="False"/>
     </Style>
 
+    <Style TargetType="TextBox">
+        <Setter Property="CaretBrush" Value="{DynamicResource Text0}"/>
+        <Setter Property="SelectionBrush" Value="{DynamicResource Accent}"/>
+    </Style>
+
+    <Style TargetType="PasswordBox">
+        <Setter Property="CaretBrush" Value="{DynamicResource Text0}"/>
+        <Setter Property="SelectionBrush" Value="{DynamicResource Accent}"/>
+    </Style>
+
     <Style x:Key="ScreenTitle" TargetType="TextBlock">
         <Setter Property="FontWeight" Value="Bold"/>
         <Setter Property="FontSize" Value="13"/>

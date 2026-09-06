@@ -134,12 +134,21 @@ public partial class MainWindow : Window
         PlayerVolumePopup.IsOpen = false;
         PlayerActionFeedbackPopup.IsOpen = false;
 
-        if (PlayerPanel.Visibility == Visibility.Visible)
-            DisposeVlcPlayerAsync();
+        if (_activeDrivePicker != null)
+        {
+            _activeDrivePicker.Hide();
+            if (PlayerPanel.Visibility == Visibility.Visible)
+                DisposeVlcPlayerAsync();
+        }
+        else
+        {
+            if (PlayerPanel.Visibility == Visibility.Visible)
+                DisposeVlcPlayerAsync();
 
-        _lastScreen = Screen.Idle;
-        _currentPlayerFile = null;
-        _currentPlayerRemoteOrigin = null;
+            _currentPlayerFile = null;
+            _currentPlayerRemoteOrigin = null;
+            _lastScreen = Screen.Idle;
+        }
         GalleryGrid.Children.Clear();
         GalleryGrid.Visibility = Visibility.Hidden;
         GalleryScrollHost.Visibility = Visibility.Hidden;
@@ -182,7 +191,12 @@ public partial class MainWindow : Window
         if (e.Key == Key.Escape)
         {
             e.Handled = true;
-            if (_activeConfirmDialog != null && _activeConfirmDialog.IsLoaded)
+            if (_activeDrivePicker != null)
+            {
+                _activeDrivePicker.Close();
+                _activeDrivePicker = null;
+            }
+            else if (_activeConfirmDialog != null && _activeConfirmDialog.IsLoaded)
             {
                 _activeConfirmDialog.Close();
                 _activeConfirmDialog = null;

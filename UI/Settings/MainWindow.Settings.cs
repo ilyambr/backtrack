@@ -357,11 +357,77 @@ public partial class MainWindow : Window
         OverlayLogModeSelector.SelectedIndex = _settings.OverlayLogMode == "Backtrack" ? 1 : 0;
         OverlayLogModeSelector.SelectionChanged += OverlayLogModeSelector_SelectionChanged;
 
+        RefreshDriveAccountSettingsUi();
+
         }
         finally
         {
             _isSettingsUiLoading = false;
         }
+    }
+
+    private void RefreshDriveAccountSettingsUi()
+    {
+        bool hasCreds = GoogleDriveService.Instance.HasStoredCredentials();
+        AlwaysRedactDriveEmailToggle.IsChecked = _settings.AlwaysRedactDriveEmail;
+
+        if (!hasCreds)
+        {
+            DriveAccountText.Text = "Not connected";
+            DriveAccountActionButton.Content = "Connect";
+        }
+        else
+        {
+            DriveAccountActionButton.Content = "Sign out";
+            DriveAccountText.Text = "Connected";
+            _ = Task.Run(async () =>
+            {
+                string? email = await GoogleDriveService.Instance.GetCurrentUserEmailAsync();
+                bool isStreamingOrRecording = false;
+                if (_obs != null)
+                {
+                    try { isStreamingOrRecording = await _obs.IsRecordingOrStreamingAsync(); } catch { }
+                }
+
+                Dispatcher.Invoke(() =>
+                {
+                    if (string.IsNullOrEmpty(email))
+                    {
+                        DriveAccountText.Text = "Connected";
+                    }
+                    else
+                    {
+                        bool redact = _settings.AlwaysRedactDriveEmail || isStreamingOrRecording;
+                        string display = redact ? GoogleDriveService.MaskEmail(email) : email;
+                        DriveAccountText.Text = $"Signed in as {display}";
+                    }
+                });
+            });
+        }
+    }
+
+    internal async void DriveAccountActionButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (GoogleDriveService.Instance.HasStoredCredentials())
+        {
+            await GoogleDriveService.Instance.SignOutAsync();
+            RefreshDriveAccountSettingsUi();
+        }
+        else
+        {
+            DriveAccountText.Text = "Connecting... Check your browser";
+            DriveAccountActionButton.IsEnabled = false;
+            bool ok = await GoogleDriveService.Instance.AuthenticateAsync();
+            DriveAccountActionButton.IsEnabled = true;
+            RefreshDriveAccountSettingsUi();
+        }
+    }
+
+    internal void AlwaysRedactDriveEmailToggle_Click(object sender, RoutedEventArgs e)
+    {
+        _settings.AlwaysRedactDriveEmail = AlwaysRedactDriveEmailToggle.IsChecked == true;
+        _settings.Save();
+        RefreshDriveAccountSettingsUi();
     }
 
     private sealed record DisplayOption(string DeviceName, string Name);

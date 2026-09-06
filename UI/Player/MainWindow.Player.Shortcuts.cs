@@ -142,6 +142,11 @@ public partial class MainWindow : Window
 
     internal void BackToGallery_Click(object? sender = null, RoutedEventArgs? e = null)
     {
+        if (_activeDrivePicker != null)
+        {
+            _activeDrivePicker.Close();
+            _activeDrivePicker = null;
+        }
 
         _cancelPlayerRename?.Invoke();
 

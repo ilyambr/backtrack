@@ -35,6 +35,7 @@ public partial class PlayerView : UserControl
     private void PlayerTrim_Click(object sender, RoutedEventArgs e) => Main?.PlayerTrim_Click(sender, e);
     private void PlayerCompress_Click(object sender, RoutedEventArgs e) => Main?.PlayerCompress_Click(sender, e);
     private void PlayerBookmarks_Click(object sender, RoutedEventArgs e) => Main?.PlayerBookmarks_Click(sender, e);
+    private void PlayerDriveUpload_Click(object sender, RoutedEventArgs e) => Main?.PlayerDriveUpload_Click(sender, e);
     private void PlayerDelete_Click(object sender, RoutedEventArgs e) => Main?.PlayerDelete_Click(sender, e);
     private void TrimTimelineTrack_MouseDown(object sender, MouseButtonEventArgs e) => Main?.TrimTimelineTrack_MouseDown(sender, e);
     private void TrimTimelineTrack_MouseMove(object sender, MouseEventArgs e) => Main?.TrimTimelineTrack_MouseMove(sender, e);

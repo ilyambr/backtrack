@@ -43,7 +43,7 @@ public sealed partial class PairingService
     }
 
     public Func<string, double, double, bool, Task<(bool Success, string? Error, string? NewFileName, long Size)>>? TrimClipForRemote { get; set; }
-    public Func<string, double, Task<(bool Success, string? Error, string? NewFileName, long Size)>>? CompressClipForRemote { get; set; }
+    public Func<string, double, Action<double>?, Task<(bool Success, string? Error, string? NewFileName, long Size)>>? CompressClipForRemote { get; set; }
 
     private async Task<string> HandleTrimClipAsync(JsonElement request)
     {
@@ -94,12 +94,13 @@ public sealed partial class PairingService
         return JsonSerializer.Serialize(new { success = true, path = newRelativePath, size = fileSize });
     }
 
-    private async Task<string> HandleCompressClipAsync(JsonElement request)
+    private async Task HandleCompressClipAsync(JsonElement request, NetworkStream stream)
     {
         if (!IsAuthorizedClient(request))
         {
             AppLog.Write("[compress_clip] rejected: client is not authorized");
-            return JsonSerializer.Serialize(new { success = false, error = "Not authorized -- pair with this PC first." });
+            await WriteLineAsync(stream, JsonSerializer.Serialize(new { success = false, error = "Not authorized -- pair with this PC first." }));
+            return;
         }
 
         string relativePath = request.TryGetProperty("path", out JsonElement p) ? p.GetString() ?? "" : "";
@@ -110,39 +111,53 @@ public sealed partial class PairingService
         if (string.IsNullOrWhiteSpace(relativePath))
         {
             AppLog.Write("[compress_clip] rejected: missing or empty path");
-            return JsonSerializer.Serialize(new { success = false, error = "Missing clip path." });
+            await WriteLineAsync(stream, JsonSerializer.Serialize(new { success = false, error = "Missing clip path." }));
+            return;
         }
 
         if (!TryResolveGalleryPath(relativePath, out string fullPath, out string? pathError) ||
             !GalleryFormats.VideoExtensions.Contains(Path.GetExtension(fullPath).ToLowerInvariant()))
         {
             AppLog.Write($"[compress_clip] rejected: bad path -- {pathError ?? "not a clip file"} (resolved to '{fullPath}')");
-            return JsonSerializer.Serialize(new { success = false, error = pathError ?? "Not a clip file." });
+            await WriteLineAsync(stream, JsonSerializer.Serialize(new { success = false, error = pathError ?? "Not a clip file." }));
+            return;
         }
 
         if (!File.Exists(fullPath))
         {
             AppLog.Write($"[compress_clip] rejected: '{fullPath}' doesn't exist on this PC");
-            return JsonSerializer.Serialize(new { success = false, error = "That clip doesn't exist on this PC anymore." });
+            await WriteLineAsync(stream, JsonSerializer.Serialize(new { success = false, error = "That clip doesn't exist on this PC anymore." }));
+            return;
         }
 
         if (CompressClipForRemote is null)
         {
             AppLog.Write("[compress_clip] rejected: CompressClipForRemote delegate is null");
-            return JsonSerializer.Serialize(new { success = false, error = "This PC's Backtrack can't compress clips right now." });
+            await WriteLineAsync(stream, JsonSerializer.Serialize(new { success = false, error = "This PC's Backtrack can't compress clips right now." }));
+            return;
         }
 
+        Action<double> onProgress = prog =>
+        {
+            try
+            {
+                _ = WriteLineAsync(stream, JsonSerializer.Serialize(new { progress = prog, target = relativePath }));
+            }
+            catch { }
+        };
+
         AppLog.Write($"[compress_clip] resolved to '{fullPath}' -- starting compression");
-        (bool success, string? error, string? newFileName, long fileSize) = await CompressClipForRemote(fullPath, targetMb);
+        (bool success, string? error, string? newFileName, long fileSize) = await CompressClipForRemote(fullPath, targetMb, onProgress);
         if (!success || newFileName is null)
         {
             AppLog.Write($"[compress_clip] CompressClipForRemote FAILED: {error ?? "(no error message)"}");
-            return JsonSerializer.Serialize(new { success = false, error = error ?? "Compression failed." });
+            await WriteLineAsync(stream, JsonSerializer.Serialize(new { success = false, error = error ?? "Compression failed." }));
+            return;
         }
 
         string newRelativePath = WithNewFileName(relativePath, newFileName);
         AppLog.Write($"[compress_clip] success -- new relative path '{newRelativePath}', size {fileSize} bytes");
-        return JsonSerializer.Serialize(new { success = true, path = newRelativePath, size = fileSize });
+        await WriteLineAsync(stream, JsonSerializer.Serialize(new { success = true, path = newRelativePath, size = fileSize }));
     }
 
     public Func<string, string, Action<double>?, Task<(bool Success, string? Error, string? NewFileName, long Size)>>? MergeClipsForRemote { get; set; }

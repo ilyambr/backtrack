@@ -20,4 +20,6 @@ public partial class SettingsClipsSection : UserControl
     private void BufferDurationSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e) => Main?.BufferDurationSlider_ValueChanged(sender, e);
     private void ApplyBufferDuration_Click(object sender, RoutedEventArgs e) => Main?.ApplyBufferDuration_Click(sender, e);
     private void DefaultAudioTrackSelector_SelectionChanged(object sender, SelectionChangedEventArgs e) => Main?.DefaultAudioTrackSelector_SelectionChanged(sender, e);
+    private void DriveAccountActionButton_Click(object sender, RoutedEventArgs e) => Main?.DriveAccountActionButton_Click(sender, e);
+    private void AlwaysRedactDriveEmailToggle_Click(object sender, RoutedEventArgs e) => Main?.AlwaysRedactDriveEmailToggle_Click(sender, e);
 }

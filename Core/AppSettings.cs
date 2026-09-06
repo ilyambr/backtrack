@@ -68,6 +68,8 @@ public sealed class AppSettings
 
     public bool EnableAnimations { get; set; } = false;
 
+    public bool AlwaysRedactDriveEmail { get; set; } = false;
+
     public bool DiagnosticLogEnabled { get; set; } = false;
 
     public bool DeveloperModeEnabled { get; set; } = false;

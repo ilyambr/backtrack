@@ -57,6 +57,9 @@ public partial class SettingsView : UserControl
     public Slider BufferDurationSlider => ClipsSection.BufferDurationSlider;
     public TextBlock BufferDurationWarningText => ClipsSection.BufferDurationWarningText;
     public ComboBox DefaultAudioTrackSelector => ClipsSection.DefaultAudioTrackSelector;
+    public TextBlock DriveAccountText => ClipsSection.DriveAccountText;
+    public Button DriveAccountActionButton => ClipsSection.DriveAccountActionButton;
+    public ToggleButton AlwaysRedactDriveEmailToggle => ClipsSection.AlwaysRedactDriveEmailToggle;
 
     // --- Forwarded Overlay Section Controls ---
     public Button HotkeyCaptureButton => OverlaySection.HotkeyCaptureButton;

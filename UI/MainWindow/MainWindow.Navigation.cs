@@ -86,6 +86,11 @@ public partial class MainWindow : Window
         {
             PlayerVideoView.Visibility = Visibility.Collapsed;
             DetachPlayerVideo();
+            if (screen == Screen.Gallery && _activeDrivePicker != null)
+            {
+                _activeDrivePicker.Close();
+                _activeDrivePicker = null;
+            }
         }
 
         if (screen != Screen.Gallery)

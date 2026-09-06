@@ -40,6 +40,52 @@ public partial class MainWindow : Window
         _currentStreamToken = streamUrl[(streamUrl.LastIndexOf('/') + 1)..];
         var mediaUri = new Uri(streamUrl);
         Dispatcher.BeginInvoke(new Action(() => StartPlayerPlayback(mediaUri, myToken, hideFreezeFrameOnFirstPlay: true)), DispatcherPriority.Loaded);
+
+        _ = FetchAndSyncRemoteClipMetadataAsync(relativePath);
+    }
+
+    private async Task FetchAndSyncRemoteClipMetadataAsync(string relativePath)
+    {
+        if (_pairing is null) return;
+        var (success, markers, isStarred) = await _pairing.GetRemoteClipMetadataAsync(relativePath);
+        if (!success) return;
+
+        Dispatcher.Invoke(() =>
+        {
+            if (_currentPlayerRemoteOrigin?.RelativePath != relativePath)
+                return;
+
+            string fileName = Path.GetFileName(relativePath);
+            if (markers != null && markers.Count > 0)
+            {
+                _settings.ClipMarkers[relativePath] = markers;
+                _settings.ClipMarkers[fileName] = markers;
+            }
+            else
+            {
+                _settings.ClipMarkers.Remove(relativePath);
+                _settings.ClipMarkers.Remove(fileName);
+            }
+
+            if (isStarred)
+            {
+                _settings.StarredClips.Add(relativePath);
+                _settings.StarredClips.Add(fileName);
+            }
+            else
+            {
+                _settings.StarredClips.Remove(relativePath);
+                _settings.StarredClips.Remove(fileName);
+            }
+
+            UpdatePlayerStarUi();
+            _lastRenderedMarkerDurationMs = -1;
+            RenderPlayerMarkers();
+            if (BookmarkPopup?.IsOpen == true)
+            {
+                PopulateBookmarkList();
+            }
+        });
     }
 
     private void ShowPlayerLoadingUi(string title, string? thumbnailCachePath)
@@ -100,26 +146,40 @@ public partial class MainWindow : Window
         }), DispatcherPriority.Loaded);
     }
 
-    private async void ShowPlayerFreezeFrame(FileInfo file)
+    private async void ShowPlayerFreezeFrame(FileInfo file, bool autoHide = true, long token = 0)
     {
         PlayerFreezeFrame.Effect = null;
         if (PlayerFreezeFrameDimmer != null)
             PlayerFreezeFrameDimmer.Visibility = Visibility.Collapsed;
         await LoadThumbnailAsync(file, PlayerFreezeFrame);
+        if (token != 0 && token != _clipOpenToken)
+            return;
         PlayerFreezeFramePopup.IsOpen = false;
         _ = Dispatcher.BeginInvoke(new Action(() =>
         {
+            if (token != 0 && token != _clipOpenToken)
+                return;
+            UpdateLayout();
             PlayerFreezeFramePopup.IsOpen = true;
             _freezeFrameTimer?.Stop();
-            _freezeFrameTimer?.Start();
+            if (autoHide)
+            {
+                _freezeFrameTimer?.Start();
+            }
             ReopenPlayerOverlayPopup();
             IntPtr toastHwnd = new WindowInteropHelper(_toastOverlay).Handle;
             if (toastHwnd != IntPtr.Zero)
                 WindowZOrder.BringToFrontWithoutActivating(toastHwnd);
+            if (_activeDrivePicker != null && _activeDrivePicker.IsVisible)
+            {
+                IntPtr pickerHwnd = new WindowInteropHelper(_activeDrivePicker).Handle;
+                if (pickerHwnd != IntPtr.Zero)
+                    WindowZOrder.BringToFrontWithoutActivating(pickerHwnd);
+            }
         }), DispatcherPriority.Loaded);
     }
 
-    private void OpenInPlayer(FileInfo file, bool keepCurrentFreezeFrame = false)
+    private void OpenInPlayer(FileInfo file, bool keepCurrentFreezeFrame = false, bool suppressFreezeFrame = false, bool startPaused = false)
     {
         if (_libVlc is null)
         {
@@ -129,9 +189,15 @@ public partial class MainWindow : Window
 
         _playerBackTarget = Screen.Gallery;
 
-        _clipOpenToken++;
+        long myToken = ++_clipOpenToken;
 
         _currentPlayerRemoteOrigin = null;
+
+        if (_activeDrivePicker != null && _currentPlayerFile != null && !string.Equals(_currentPlayerFile.FullName, file.FullName, StringComparison.OrdinalIgnoreCase))
+        {
+            _activeDrivePicker.Close();
+            _activeDrivePicker = null;
+        }
 
         _currentPlayerFile = file;
         _trimStart = null;
@@ -142,6 +208,8 @@ public partial class MainWindow : Window
         StopPreviewLoop();
         ResetPlaybackSpeed();
 
+        StopPlayerPlayback(keepFreezeFrame: (keepCurrentFreezeFrame || startPaused) && !suppressFreezeFrame);
+
         PlayerVideoView.Visibility = Visibility.Visible;
 
         ShowScreen(Screen.Player);
@@ -150,9 +218,9 @@ public partial class MainWindow : Window
         RenderPlayerMarkers();
 
         ReopenPlayerOverlayPopup();
-        if (!keepCurrentFreezeFrame)
+        if (!keepCurrentFreezeFrame && !suppressFreezeFrame)
         {
-            ShowPlayerFreezeFrame(file);
+            ShowPlayerFreezeFrame(file, autoHide: !startPaused, token: myToken);
         }
 
         StatSize.Text = $"{file.Length / 1024.0 / 1024.0:0.#} MB";
@@ -161,14 +229,11 @@ public partial class MainWindow : Window
         StatFps.Text = "";
         StatBitrate.Text = "";
 
-        StopPlayerPlayback(keepFreezeFrame: keepCurrentFreezeFrame);
-
-        long myToken = _clipOpenToken;
         var mediaUri = new Uri(ResolveLocalClipPath(file));
-        Dispatcher.BeginInvoke(new Action(() => StartPlayerPlayback(mediaUri, myToken, hideFreezeFrameOnFirstPlay: keepCurrentFreezeFrame)), DispatcherPriority.Loaded);
+        Dispatcher.BeginInvoke(new Action(() => StartPlayerPlayback(mediaUri, myToken, hideFreezeFrameOnFirstPlay: keepCurrentFreezeFrame, startPaused: startPaused)), DispatcherPriority.Loaded);
     }
 
-    private async void StartPlayerPlayback(Uri mediaUri, long myToken, bool hideFreezeFrameOnFirstPlay = false)
+    private async void StartPlayerPlayback(Uri mediaUri, long myToken, bool hideFreezeFrameOnFirstPlay = false, bool startPaused = false)
     {
 
         if (_libVlc is null)
@@ -206,10 +271,28 @@ public partial class MainWindow : Window
 
         bool tracksLoaded = false;
         bool freezeFrameHidden = false;
+        bool initialPauseApplied = false;
         _vlcPlayer.Playing += (_, _) => Dispatcher.BeginInvoke(() =>
         {
+            if (startPaused && !initialPauseApplied)
+            {
+                initialPauseApplied = true;
+                _vlcPlayer.SetPause(true);
+                PlayIcon.Visibility = Visibility.Visible;
+                PauseIcon.Visibility = Visibility.Collapsed;
+                // Keep freeze frame visible while paused - do not hide or start hide timer
+                return;
+            }
+
             PlayIcon.Visibility = Visibility.Collapsed;
             PauseIcon.Visibility = Visibility.Visible;
+
+            if (!freezeFrameHidden)
+            {
+                freezeFrameHidden = true;
+                _freezeFrameTimer?.Stop();
+                _freezeFrameTimer?.Start();
+            }
 
             if (hideFreezeFrameOnFirstPlay && !freezeFrameHidden)
             {

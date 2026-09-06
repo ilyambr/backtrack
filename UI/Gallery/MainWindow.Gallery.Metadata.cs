@@ -42,10 +42,18 @@ public partial class MainWindow : Window
         if (string.IsNullOrWhiteSpace(clipKey)) return;
         string fileName = Path.GetFileName(clipKey);
         markers.Sort();
-        _settings.ClipMarkers[clipKey] = markers;
-        if (!string.Equals(fileName, clipKey, StringComparison.OrdinalIgnoreCase))
+        if (markers.Count > 0)
         {
-            _settings.ClipMarkers[fileName] = markers;
+            _settings.ClipMarkers[clipKey] = markers;
+            if (!string.Equals(fileName, clipKey, StringComparison.OrdinalIgnoreCase))
+            {
+                _settings.ClipMarkers[fileName] = markers;
+            }
+        }
+        else
+        {
+            _settings.ClipMarkers.Remove(clipKey);
+            _settings.ClipMarkers.Remove(fileName);
         }
         _settings.Save();
 
@@ -61,9 +69,17 @@ public partial class MainWindow : Window
         }
         else if (!string.IsNullOrEmpty(_settings.ClipsFolder))
         {
-            string candidate = Path.Combine(_settings.ClipsFolder, fileName);
+            string candidate = Path.Combine(_settings.ClipsFolder, clipKey);
             if (File.Exists(candidate))
+            {
                 fullPath = candidate;
+            }
+            else
+            {
+                candidate = Path.Combine(_settings.ClipsFolder, fileName);
+                if (File.Exists(candidate))
+                    fullPath = candidate;
+            }
         }
 
         if (fullPath != null)

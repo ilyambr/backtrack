@@ -58,7 +58,7 @@ public sealed partial class PairingService
         }
     }
 
-    public async Task<(bool Success, string? Error, string? NewPath, long Size)> CompressRemoteClipAsync(string relativePath, double targetMb)
+    public async Task<(bool Success, string? Error, string? NewPath, long Size)> CompressRemoteClipAsync(string relativePath, double targetMb, IProgress<double>? progress = null)
     {
         if (string.IsNullOrEmpty(_settings.PairedPeerHost) || string.IsNullOrEmpty(_settings.PairedPeerSecret))
             return (false, "Not paired with a transmitter PC.", null, 0);
@@ -75,16 +75,27 @@ public sealed partial class PairingService
                 ["targetMb"] = targetMb,
             };
             await WriteLineAsync(client.GetStream(), JsonSerializer.Serialize(fields)).WaitAsync(MutationRequestTimeout);
-            string? responseLine = await ReadLineAsync(client.GetStream()).WaitAsync(TrimRequestTimeout);
-            if (responseLine is null)
-                return (false, "No response from the transmitter PC.", null, 0);
 
-            using JsonDocument doc = JsonDocument.Parse(responseLine);
-            bool success = doc.RootElement.TryGetProperty("success", out JsonElement s) && s.GetBoolean();
-            string? error = doc.RootElement.TryGetProperty("error", out JsonElement er) ? er.GetString() : null;
-            string? path = doc.RootElement.TryGetProperty("path", out JsonElement pt) ? pt.GetString() : null;
-            long size = doc.RootElement.TryGetProperty("size", out JsonElement sz) ? sz.GetInt64() : 0;
-            return (success, success ? null : (error ?? "Compression failed."), path, size);
+            while (true)
+            {
+                string? responseLine = await ReadLineAsync(client.GetStream()).WaitAsync(TrimRequestTimeout);
+                if (responseLine is null)
+                    return (false, "No response from the transmitter PC.", null, 0);
+
+                using JsonDocument doc = JsonDocument.Parse(responseLine);
+                if (doc.RootElement.TryGetProperty("progress", out JsonElement progEl))
+                {
+                    double progVal = progEl.GetDouble();
+                    progress?.Report(progVal);
+                    continue;
+                }
+
+                bool success = doc.RootElement.TryGetProperty("success", out JsonElement s) && s.GetBoolean();
+                string? error = doc.RootElement.TryGetProperty("error", out JsonElement er) ? er.GetString() : null;
+                string? path = doc.RootElement.TryGetProperty("path", out JsonElement pt) ? pt.GetString() : null;
+                long size = doc.RootElement.TryGetProperty("size", out JsonElement sz) ? sz.GetInt64() : 0;
+                return (success, success ? null : (error ?? "Compression failed."), path, size);
+            }
         }
         catch (TimeoutException)
         {

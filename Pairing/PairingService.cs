@@ -132,6 +132,18 @@ public sealed partial class PairingService : IDisposable
                     return;
                 }
 
+                if (type == "compress_clip")
+                {
+                    await HandleCompressClipAsync(doc.RootElement, client.GetStream());
+                    return;
+                }
+
+                if (type == "drive_upload_clip")
+                {
+                    await HandleDriveUploadClipAsync(doc.RootElement, client.GetStream());
+                    return;
+                }
+
                 string response = type switch
                 {
                     "pair_request" => HandlePairRequest(doc.RootElement),
@@ -145,10 +157,12 @@ public sealed partial class PairingService : IDisposable
                     "rename_clip" => HandleRenameClip(doc.RootElement),
                     "move_clip" => HandleMoveClip(doc.RootElement),
                     "trim_clip" => await HandleTrimClipAsync(doc.RootElement),
-                    "compress_clip" => await HandleCompressClipAsync(doc.RootElement),
                     "play_audio_cue" => HandlePlayAudioCue(doc.RootElement),
                     "sync_clip_markers" => HandleSyncClipMarkers(doc.RootElement),
                     "sync_starred" => HandleSyncStarred(doc.RootElement),
+                    "get_clip_metadata" => HandleGetClipMetadata(doc.RootElement),
+                    "drive_list_folders" => await HandleDriveListFoldersAsync(doc.RootElement),
+                    "drive_create_folder" => await HandleDriveCreateFolderAsync(doc.RootElement),
                     _ => JsonSerializer.Serialize(new { error = "unknown request type" }),
                 };
 
