@@ -87,7 +87,7 @@ worth stating plainly instead of leaving it for you to find out:
   released from this same GitHub account, but "an app closes OBS and runs an
   installer without asking each time" is worth knowing before you install it,
   not after.
-- **It can install a RAM disk driver.** The optional RAM disk feature (faster
+- **It can install a RAM disk driver. (Experimental and Off by Default)** The optional RAM disk feature (faster
   replay-buffer writes) is backed by [ImDisk](https://ltr-data.se/opencode.html#ImDisk),
   a real open-source virtual disk driver, bundled unmodified under
   `ThirdParty/ImDisk` per its own license. It's signed by a certificate
