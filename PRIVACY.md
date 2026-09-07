@@ -28,8 +28,8 @@ All screen recordings, replay buffers, audio files, bookmarks, metadata, and vid
 ### 4. Google Drive Integration (Optional)
 Backtrack includes an optional feature allowing you to upload clips directly to your personal Google Drive account.
 
-- **Scopes Requested**: Backtrack requests the `https://www.googleapis.com/auth/drive.file` and `https://www.googleapis.com/auth/drive.metadata.readonly` scopes.
-- **Access & Data Usage**: Backtrack only accesses files and folders created by the app or explicitly selected by you. It reads folder metadata solely to let you navigate and select a destination folder in your Drive. Your email address is fetched once to display which account is signed in (and can be masked via Streamer Mode).
+- **Scopes Requested**: Backtrack requests only the `https://www.googleapis.com/auth/drive.file` scope.
+- **Access & Data Usage**: Backtrack only accesses files and folders created by the app (specifically, the dedicated `Backtrack` folder and subfolders you create for organizing your clips). Backtrack does not access or read any other files or personal documents in your Google Drive. Your email address is fetched once to display which account is signed in (and can be masked via Streamer Mode).
 - **Local Credential Storage**: OAuth 2.0 access and refresh tokens are stored exclusively on your local computer, encrypted with the Windows Data Protection API (DPAPI). Backtrack has no servers or telemetry; your credentials and videos never pass through any third-party or developer servers.
 - **Data Sharing & Sale**: Backtrack does not share, transfer, or sell your Google user data to any third party. Video uploads are sent directly from your computer to Google's official Drive API endpoints.
 - **Revocation**: You can disconnect your Google account at any time by clicking "Sign out" within Backtrack's Google Drive dialog, or by revoking access in your [Google Account Security Settings](https://myaccount.google.com/permissions).

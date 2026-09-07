@@ -12,6 +12,10 @@
         ResizeMode="NoResize"
         Topmost="True">
 
+    <Window.Resources>
+        <BooleanToVisibilityConverter x:Key="BoolToVis"/>
+    </Window.Resources>
+
     <Border Background="{DynamicResource PanelBgOpaque}" BorderBrush="{DynamicResource Hairline}" BorderThickness="1" CornerRadius="0"
             MouseLeftButtonDown="Header_MouseLeftButtonDown">
         <Border.Effect>
@@ -70,6 +74,13 @@
                                 <TextBlock Text="New" FontSize="11" Foreground="{DynamicResource Text1}"/>
                             </StackPanel>
                         </Button>
+                        <Button x:Name="LinkFolderButton" Style="{StaticResource PlayerTransportButton}" Click="LinkFolderButton_Click" Padding="6,3" Margin="4,0,0,0" ToolTip="Link existing Google Drive folder by URL or ID">
+                            <StackPanel Orientation="Horizontal">
+                                <Path Data="M3.9 12c0-1.71 1.39-3.1 3.1-3.1h4V7H7c-2.76 0-5 2.24-5 5s2.24 5 5 5h4v-1.9H7c-1.71 0-3.1-1.39-3.1-3.1zM8 13h8v-2H8v2zm9-6h-4v1.9h4c1.71 0 3.1 1.39 3.1 3.1s-1.39 3.1-3.1 3.1h-4V17h4c2.76 0 5-2.24 5-5s-2.24-5-5-5z"
+                                      Fill="{DynamicResource Text1}" Width="13" Height="13" Stretch="Uniform" Margin="0,0,4,0"/>
+                                <TextBlock Text="Link" FontSize="11" Foreground="{DynamicResource Text1}"/>
+                            </StackPanel>
+                        </Button>
                         <Button x:Name="RefreshButton" Style="{StaticResource PlayerTransportButton}" Click="RefreshButton_Click" Padding="6,3" Margin="4,0,0,0" ToolTip="Refresh">
                             <Path Data="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"
                                   Fill="{DynamicResource Text1}" Width="12" Height="12" Stretch="Uniform"/>
@@ -89,6 +100,20 @@
                     <TextBox x:Name="NewFolderInput" Background="Transparent" Foreground="{DynamicResource Text0}" BorderBrush="{DynamicResource BorderMedium}" BorderThickness="0,0,0,1" Padding="4,2" FontSize="12" VerticalAlignment="Center" KeyDown="NewFolderInput_KeyDown"/>
                     <Button Grid.Column="1" Content="Create" Style="{StaticResource PlayerTransportButton}" Click="CreateFolderCommit_Click" Margin="6,0,0,0" Foreground="{DynamicResource Green}"/>
                     <Button Grid.Column="2" Content="Cancel" Style="{StaticResource PlayerTransportButton}" Click="CreateFolderCancel_Click" Margin="4,0,0,0" Foreground="{DynamicResource Text2}"/>
+                </Grid>
+            </Grid>
+
+            <!-- Inline Link Folder Bar (Hidden by default) -->
+            <Grid Grid.Row="1" x:Name="LinkFolderRow" Background="{DynamicResource RowBg}" Margin="0,0,0,10" Visibility="Collapsed">
+                <Grid Margin="8,5">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <TextBox x:Name="LinkFolderInput" Background="Transparent" Foreground="{DynamicResource Text0}" BorderBrush="{DynamicResource BorderMedium}" BorderThickness="0,0,0,1" Padding="4,2" FontSize="12" VerticalAlignment="Center" KeyDown="LinkFolderInput_KeyDown" ToolTip="Paste Google Drive folder URL or ID"/>
+                    <Button Grid.Column="1" Content="Link" Style="{StaticResource PlayerTransportButton}" Click="LinkFolderCommit_Click" Margin="6,0,0,0" Foreground="{DynamicResource Accent}"/>
+                    <Button Grid.Column="2" Content="Cancel" Style="{StaticResource PlayerTransportButton}" Click="LinkFolderCancel_Click" Margin="4,0,0,0" Foreground="{DynamicResource Text2}"/>
                 </Grid>
             </Grid>
 
@@ -182,6 +207,7 @@
                                     <Border.ContextMenu>
                                         <ContextMenu Style="{DynamicResource DarkContextMenu}">
                                             <MenuItem Header="Open folder in browser" Style="{DynamicResource DarkMenuItem}" Click="OpenFolderInBrowser_Click"/>
+                                            <MenuItem Header="Unlink folder" Style="{DynamicResource DarkMenuItem}" Click="UnlinkFolder_Click" Visibility="{Binding IsLinked, Converter={StaticResource BoolToVis}}"/>
                                         </ContextMenu>
                                     </Border.ContextMenu>
                                     <Grid Background="Transparent">
@@ -189,11 +215,16 @@
                                             <ColumnDefinition Width="Auto"/>
                                             <ColumnDefinition Width="*"/>
                                             <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="Auto"/>
                                         </Grid.ColumnDefinitions>
                                         <Path Data="M10,4H4C2.89,4 2,4.89 2,6V18A2,2 0 0,0 4,20H20A2,2 0 0,0 22,18V8C22,6.89 21.1,6 20,6H12L10,4Z"
                                               Fill="{DynamicResource Text1}" Width="16" Height="14" Stretch="Uniform" Margin="0,0,10,0" VerticalAlignment="Center"/>
                                         <TextBlock Grid.Column="1" Text="{Binding Name}" FontSize="12.5" FontWeight="SemiBold" Foreground="{DynamicResource Text0}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
-                                        <Path Grid.Column="2" Data="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6-1.41-1.41z"
+                                        <Border Grid.Column="2" Background="{DynamicResource BorderMedium}" CornerRadius="3" Padding="4,1" Margin="6,0" VerticalAlignment="Center"
+                                                Visibility="{Binding IsLinked, Converter={StaticResource BoolToVis}}">
+                                            <TextBlock Text="LINKED" FontSize="9" FontWeight="Bold" Foreground="{DynamicResource Accent}"/>
+                                        </Border>
+                                        <Path Grid.Column="3" Data="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6-1.41-1.41z"
                                               Fill="{DynamicResource Text2}" Width="12" Height="12" Stretch="Uniform" Opacity="0.6" VerticalAlignment="Center"/>
                                     </Grid>
                                 </Border>

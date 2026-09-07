@@ -69,6 +69,7 @@ public partial class GoogleDrivePickerWindow : Window
         FolderListBox.ItemsSource = null;
 
         NewFolderButton.IsEnabled = false;
+        LinkFolderButton.IsEnabled = false;
         RefreshButton.IsEnabled = false;
         UploadButton.IsEnabled = false;
 
@@ -97,6 +98,17 @@ public partial class GoogleDrivePickerWindow : Window
             NewFolderButton.IsEnabled = true;
             RefreshButton.IsEnabled = true;
             _ = LoadUserInfoAsync();
+
+            if (_path.Count == 1 && _path[0].Id == "root")
+            {
+                var defaultFolder = await GoogleDriveService.Instance.GetOrCreateDefaultFolderAsync();
+                if (defaultFolder != null)
+                {
+                    _path.Add(new BreadcrumbItem(defaultFolder.Id, defaultFolder.Name));
+                    UpdateBreadcrumbsUI();
+                }
+            }
+
             await NavigateToCurrentAsync();
         }
         else

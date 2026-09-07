@@ -15,7 +15,7 @@ using IoFile = System.IO.File;
 
 namespace Backtrack.Core;
 
-public sealed record DriveFolderItem(string Id, string Name, string? ParentId);
+public sealed record DriveFolderItem(string Id, string Name, string? ParentId, bool IsLinked = false);
 
 public sealed record DriveUploadResult(bool Success, string? FileId, string? WebViewLink, string? ErrorMessage);
 
@@ -32,8 +32,7 @@ public sealed class GoogleDriveService
 
     private static readonly string[] Scopes =
     {
-        DriveService.Scope.DriveFile,
-        DriveService.Scope.DriveMetadataReadonly
+        DriveService.Scope.DriveFile
     };
 
     private DriveService? _driveService;
@@ -239,12 +238,68 @@ public sealed class GoogleDriveService
                 pageToken = fileList.NextPageToken;
             } while (!string.IsNullOrEmpty(pageToken));
 
+            // If we are at the root, ensure the dedicated "Backtrack" folder exists
+            if (targetParent == "root" && !result.Any(f => string.Equals(f.Name, "Backtrack", StringComparison.OrdinalIgnoreCase)))
+            {
+                var backtrackFolder = await CreateFolderAsync("Backtrack", "root", cancellationToken);
+                if (backtrackFolder != null)
+                {
+                    result.Insert(0, backtrackFolder);
+                }
+            }
+
             return result;
         }
         catch (Exception ex)
         {
             AppLog.Write($"[GoogleDrive] ListFoldersAsync failed: {ex.Message}");
             throw;
+        }
+    }
+
+    public async Task<DriveFolderItem?> GetOrCreateDefaultFolderAsync(string folderName = "Backtrack", CancellationToken cancellationToken = default)
+    {
+        if (!await AuthenticateAsync(cancellationToken))
+            return null;
+
+        try
+        {
+            var listReq = _driveService!.Files.List();
+            listReq.Q = $"'root' in parents and name = '{folderName.Replace("'", "\\'")}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false";
+            listReq.Fields = "files(id, name, parents)";
+            listReq.PageSize = 1;
+            var res = await listReq.ExecuteAsync(cancellationToken);
+            var existing = res.Files?.FirstOrDefault();
+            if (existing != null)
+            {
+                return new DriveFolderItem(existing.Id, existing.Name, existing.Parents?.FirstOrDefault());
+            }
+
+            return await CreateFolderAsync(folderName, "root", cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            AppLog.Write($"[GoogleDrive] GetOrCreateDefaultFolderAsync failed: {ex.Message}");
+            return null;
+        }
+    }
+
+    public async Task<string?> GetFolderNameAsync(string folderId, CancellationToken cancellationToken = default)
+    {
+        if (!await AuthenticateAsync(cancellationToken))
+            return null;
+
+        try
+        {
+            var req = _driveService!.Files.Get(folderId);
+            req.Fields = "id, name, mimeType";
+            var file = await req.ExecuteAsync(cancellationToken);
+            return file.Name;
+        }
+        catch (Exception ex)
+        {
+            AppLog.Write($"[GoogleDrive] GetFolderNameAsync failed for {folderId}: {ex.Message}");
+            return null;
         }
     }
 

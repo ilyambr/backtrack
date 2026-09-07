@@ -141,6 +141,8 @@ public sealed class AppSettings
     public string GallerySortMode { get; set; } = "DateDesc";
     public bool GalleryStarredOnly { get; set; } = false;
 
+    public List<PinnedDriveFolder> PinnedDriveFolders { get; set; } = new();
+
     private static string FilePath => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Backtrack", "settings.json");
 
@@ -260,3 +262,10 @@ public sealed class AppSettings
         catch { }
     }
 }
+
+public sealed class PinnedDriveFolder
+{
+    public string Id { get; set; } = "";
+    public string Name { get; set; } = "";
+}
+

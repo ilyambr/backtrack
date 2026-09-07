@@ -89,6 +89,18 @@ public partial class GoogleDrivePickerWindow : Window
                     return;
             }
 
+            if (current.Id == "root" && RemotePairing == null)
+            {
+                var settings = AppSettings.Load();
+                foreach (var pinned in settings.PinnedDriveFolders)
+                {
+                    if (!folders.Any(f => f.Id == pinned.Id))
+                    {
+                        folders.Add(new DriveFolderItem(pinned.Id, pinned.Name, "root", IsLinked: true));
+                    }
+                }
+            }
+
             _hasConnected = true;
             _currentFolders = folders;
             LoginPanel.Visibility = Visibility.Collapsed;
@@ -96,6 +108,7 @@ public partial class GoogleDrivePickerWindow : Window
             FolderListBox.Visibility = Visibility.Visible;
             FolderListBox.Opacity = 1.0;
             NewFolderButton.IsEnabled = true;
+            LinkFolderButton.IsEnabled = true;
             RefreshButton.IsEnabled = true;
 
             if (folders.Count == 0)
@@ -192,6 +205,7 @@ public partial class GoogleDrivePickerWindow : Window
     private void NewFolderButton_Click(object sender, RoutedEventArgs e)
     {
         NavigationBar.Visibility = Visibility.Collapsed;
+        LinkFolderRow.Visibility = Visibility.Collapsed;
         NewFolderRow.Visibility = Visibility.Visible;
         NewFolderInput.Text = "";
         NewFolderInput.Focus();
@@ -363,6 +377,131 @@ public partial class GoogleDrivePickerWindow : Window
         if (targetFolder != null)
         {
             OpenFolderUrlInBrowser(targetFolder.Id);
+        }
+    }
+
+    private void LinkFolderButton_Click(object sender, RoutedEventArgs e)
+    {
+        NavigationBar.Visibility = Visibility.Collapsed;
+        NewFolderRow.Visibility = Visibility.Collapsed;
+        LinkFolderRow.Visibility = Visibility.Visible;
+        LinkFolderInput.Text = "";
+        LinkFolderInput.Focus();
+    }
+
+    private void LinkFolderCancel_Click(object sender, RoutedEventArgs e)
+    {
+        LinkFolderRow.Visibility = Visibility.Collapsed;
+        NavigationBar.Visibility = Visibility.Visible;
+        LinkFolderInput.Text = "";
+    }
+
+    private async void LinkFolderCommit_Click(object sender, RoutedEventArgs e)
+    {
+        await CommitLinkFolderAsync();
+    }
+
+    private async void LinkFolderInput_KeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.Enter)
+        {
+            e.Handled = true;
+            await CommitLinkFolderAsync();
+        }
+        else if (e.Key == Key.Escape)
+        {
+            e.Handled = true;
+            LinkFolderCancel_Click(sender, e);
+        }
+    }
+
+    private async Task CommitLinkFolderAsync()
+    {
+        string input = LinkFolderInput.Text.Trim();
+        if (string.IsNullOrEmpty(input))
+        {
+            LinkFolderCancel_Click(this, new RoutedEventArgs());
+            return;
+        }
+
+        string? folderId = ExtractDriveFolderId(input);
+        if (string.IsNullOrEmpty(folderId))
+        {
+            MessageBox.Show(this, "Please enter a valid Google Drive folder URL or ID.", "Link Folder", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        LinkFolderRow.Visibility = Visibility.Collapsed;
+        NavigationBar.Visibility = Visibility.Visible;
+
+        string folderName = "Linked Folder";
+        try
+        {
+            var fetched = await GoogleDriveService.Instance.GetFolderNameAsync(folderId);
+            if (!string.IsNullOrWhiteSpace(fetched))
+            {
+                folderName = fetched;
+            }
+            else
+            {
+                string preview = folderId.Length > 8 ? folderId.Substring(0, 8) : folderId;
+                folderName = $"Linked Folder ({preview}...)";
+            }
+        }
+        catch
+        {
+            string preview = folderId.Length > 8 ? folderId.Substring(0, 8) : folderId;
+            folderName = $"Linked Folder ({preview}...)";
+        }
+
+        var settings = AppSettings.Load();
+        if (!settings.PinnedDriveFolders.Any(p => p.Id == folderId))
+        {
+            settings.PinnedDriveFolders.Add(new PinnedDriveFolder { Id = folderId, Name = folderName });
+            settings.Save();
+        }
+
+        await NavigateToCurrentAsync();
+    }
+
+    public static string? ExtractDriveFolderId(string input)
+    {
+        if (string.IsNullOrWhiteSpace(input)) return null;
+        input = input.Trim();
+        var m = System.Text.RegularExpressions.Regex.Match(input, @"/folders/([a-zA-Z0-9_-]+)");
+        if (m.Success) return m.Groups[1].Value;
+        m = System.Text.RegularExpressions.Regex.Match(input, @"[?&]id=([a-zA-Z0-9_-]+)");
+        if (m.Success) return m.Groups[1].Value;
+        if (System.Text.RegularExpressions.Regex.IsMatch(input, @"^[a-zA-Z0-9_-]{15,}$"))
+            return input;
+        return null;
+    }
+
+    private async void UnlinkFolder_Click(object sender, RoutedEventArgs e)
+    {
+        DriveFolderItem? targetFolder = null;
+
+        if (sender is MenuItem menuItem)
+        {
+            if (menuItem.DataContext is DriveFolderItem item)
+            {
+                targetFolder = item;
+            }
+            else if (menuItem.Parent is ContextMenu cm && cm.PlacementTarget is FrameworkElement fe && fe.DataContext is DriveFolderItem feItem)
+            {
+                targetFolder = feItem;
+            }
+        }
+
+        targetFolder ??= FolderListBox.SelectedItem as DriveFolderItem;
+
+        if (targetFolder != null && targetFolder.IsLinked)
+        {
+            var settings = AppSettings.Load();
+            settings.PinnedDriveFolders.RemoveAll(p => p.Id == targetFolder.Id);
+            settings.Save();
+
+            await NavigateToCurrentAsync();
         }
     }
 }
