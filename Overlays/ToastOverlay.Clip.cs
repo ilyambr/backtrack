@@ -317,7 +317,7 @@ public partial class ToastOverlay : Window
             Margin = new Thickness(0, 1, 10, 0),
             VerticalAlignment = VerticalAlignment.Top,
         };
-        Show(driveIcon, Warning, "Drive Upload Failed", error);
+        Show(driveIcon, Warning, "Drive Upload Failed", GoogleDriveService.SimplifyError(error));
     }
 
     public void ClearAllProcessingToasts()

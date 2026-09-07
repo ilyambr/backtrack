@@ -387,15 +387,73 @@ public sealed class GoogleDriveService
             }
             else
             {
-                string errMsg = uploadProgressResult.Exception?.Message ?? "Upload did not complete successfully.";
-                return new DriveUploadResult(false, null, null, errMsg);
+                string rawMsg = uploadProgressResult.Exception?.Message ?? "Upload did not complete successfully.";
+                return new DriveUploadResult(false, null, null, SimplifyError(rawMsg));
             }
         }
         catch (Exception ex)
         {
             AppLog.Write($"[GoogleDrive] UploadClipAsync failed: {ex.Message}");
-            return new DriveUploadResult(false, null, null, ex.Message);
+            return new DriveUploadResult(false, null, null, SimplifyError(ex.Message));
         }
+    }
+
+    public static string SimplifyError(string? rawError)
+    {
+        if (string.IsNullOrWhiteSpace(rawError))
+            return "Upload failed.";
+
+        string text = rawError.Trim();
+
+        // Insufficient permissions / Forbidden parent
+        if (text.Contains("Insufficient permissions", StringComparison.OrdinalIgnoreCase) ||
+            text.Contains("insufficientFilePermissions", StringComparison.OrdinalIgnoreCase) ||
+            (text.Contains("Forbidden", StringComparison.OrdinalIgnoreCase) && text.Contains("parent", StringComparison.OrdinalIgnoreCase)))
+        {
+            return "No write permission for destination folder.";
+        }
+
+        // Folder not found / inaccessible
+        if (text.Contains("NotFound", StringComparison.OrdinalIgnoreCase) ||
+            text.Contains("File not found", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Destination folder not found or inaccessible.";
+        }
+
+        // Quota
+        if (text.Contains("storageQuotaExceeded", StringComparison.OrdinalIgnoreCase) ||
+            text.Contains("quotaExceeded", StringComparison.OrdinalIgnoreCase) ||
+            text.Contains("quota", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Google Drive storage quota exceeded.";
+        }
+
+        // Auth
+        if (text.Contains("invalid_grant", StringComparison.OrdinalIgnoreCase) ||
+            text.Contains("Unauthorized", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Google session expired. Please sign in again.";
+        }
+
+        // Network
+        if (text.Contains("HttpRequestException", StringComparison.OrdinalIgnoreCase) ||
+            text.Contains("timeout", StringComparison.OrdinalIgnoreCase) ||
+            text.Contains("connection attempt failed", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Network connection issue. Please try again.";
+        }
+
+        // If it starts with verbose Google SDK exception preamble, extract the inner message
+        if (text.StartsWith("The service drive has thrown an exception", StringComparison.OrdinalIgnoreCase))
+        {
+            int lastDot = text.LastIndexOf(". ");
+            if (lastDot >= 0 && lastDot + 2 < text.Length)
+            {
+                return text.Substring(lastDot + 2).Trim();
+            }
+        }
+
+        return text;
     }
 
     private static string GetContentType(string filePath)
