@@ -90,7 +90,7 @@ public partial class GoogleDrivePickerWindow : Window
         if (RemotePairing != null)
         {
             // Remote mode: just navigate, credentials check happens inside NavigateToCurrentAsync
-            _ = LoadUserInfoAsync();
+            await LoadUserInfoAsync();
             await NavigateToCurrentAsync();
             return;
         }
@@ -101,7 +101,7 @@ public partial class GoogleDrivePickerWindow : Window
             return;
         }
 
-        _ = LoadUserInfoAsync();
+        await LoadUserInfoAsync();
         await NavigateToCurrentAsync();
     }
 

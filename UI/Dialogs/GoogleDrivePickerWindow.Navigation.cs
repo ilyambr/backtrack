@@ -92,7 +92,38 @@ public partial class GoogleDrivePickerWindow : Window
             if (current.Id == "root" && RemotePairing == null)
             {
                 var settings = AppSettings.Load();
-                foreach (var pinned in settings.PinnedDriveFolders)
+                string? activeEmail = _rawEmail;
+                if (string.IsNullOrEmpty(activeEmail))
+                {
+                    try { activeEmail = await GoogleDriveService.Instance.GetCurrentUserEmailAsync(ct); } catch { }
+                    _rawEmail = activeEmail;
+                }
+
+                // Associate legacy pinned folders with active account so they are not lost
+                if (!string.IsNullOrEmpty(activeEmail))
+                {
+                    bool migrated = false;
+                    foreach (var pinned in settings.PinnedDriveFolders)
+                    {
+                        if (string.IsNullOrEmpty(pinned.AccountEmail))
+                        {
+                            pinned.AccountEmail = activeEmail;
+                            migrated = true;
+                        }
+                    }
+                    if (migrated)
+                    {
+                        settings.Save();
+                    }
+                }
+
+                // Only show pinned folders belonging to the active account
+                var visiblePinned = settings.PinnedDriveFolders.Where(p =>
+                    string.IsNullOrEmpty(activeEmail) ||
+                    string.IsNullOrEmpty(p.AccountEmail) ||
+                    string.Equals(p.AccountEmail, activeEmail, StringComparison.OrdinalIgnoreCase));
+
+                foreach (var pinned in visiblePinned)
                 {
                     if (!folders.Any(f => f.Id == pinned.Id))
                     {
@@ -462,15 +493,32 @@ public partial class GoogleDrivePickerWindow : Window
             }
         }
 
+        string? activeEmail = _rawEmail;
+        if (string.IsNullOrEmpty(activeEmail) && RemotePairing == null)
+        {
+            try { activeEmail = await GoogleDriveService.Instance.GetCurrentUserEmailAsync(); } catch { }
+            _rawEmail = activeEmail;
+        }
+
         var settings = AppSettings.Load();
-        var existing = settings.PinnedDriveFolders.FirstOrDefault(p => p.Id == folderId);
+        var existing = settings.PinnedDriveFolders.FirstOrDefault(p =>
+            p.Id == folderId &&
+            (string.IsNullOrEmpty(p.AccountEmail) || string.IsNullOrEmpty(activeEmail) || string.Equals(p.AccountEmail, activeEmail, StringComparison.OrdinalIgnoreCase)));
+
         if (existing != null)
         {
             existing.Name = folderName;
+            if (!string.IsNullOrEmpty(activeEmail))
+                existing.AccountEmail = activeEmail;
         }
         else
         {
-            settings.PinnedDriveFolders.Add(new PinnedDriveFolder { Id = folderId, Name = folderName });
+            settings.PinnedDriveFolders.Add(new PinnedDriveFolder
+            {
+                Id = folderId,
+                Name = folderName,
+                AccountEmail = activeEmail
+            });
         }
         settings.Save();
 
@@ -541,7 +589,10 @@ public partial class GoogleDrivePickerWindow : Window
         }
 
         var settings = AppSettings.Load();
-        var target = settings.PinnedDriveFolders.FirstOrDefault(p => p.Id == _renamingFolderId);
+        var target = settings.PinnedDriveFolders.FirstOrDefault(p =>
+            p.Id == _renamingFolderId &&
+            (string.IsNullOrEmpty(p.AccountEmail) || string.IsNullOrEmpty(_rawEmail) || string.Equals(p.AccountEmail, _rawEmail, StringComparison.OrdinalIgnoreCase)));
+
         if (target != null)
         {
             target.Name = newName;
@@ -588,7 +639,9 @@ public partial class GoogleDrivePickerWindow : Window
         if (targetFolder != null && targetFolder.IsLinked)
         {
             var settings = AppSettings.Load();
-            settings.PinnedDriveFolders.RemoveAll(p => p.Id == targetFolder.Id);
+            settings.PinnedDriveFolders.RemoveAll(p =>
+                p.Id == targetFolder.Id &&
+                (string.IsNullOrEmpty(p.AccountEmail) || string.IsNullOrEmpty(_rawEmail) || string.Equals(p.AccountEmail, _rawEmail, StringComparison.OrdinalIgnoreCase)));
             settings.Save();
 
             await NavigateToCurrentAsync();

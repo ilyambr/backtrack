@@ -267,5 +267,6 @@ public sealed class PinnedDriveFolder
 {
     public string Id { get; set; } = "";
     public string Name { get; set; } = "";
+    public string? AccountEmail { get; set; }
 }
 

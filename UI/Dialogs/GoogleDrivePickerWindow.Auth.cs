@@ -97,7 +97,7 @@ public partial class GoogleDrivePickerWindow : Window
             FolderListBox.Visibility = Visibility.Visible;
             NewFolderButton.IsEnabled = true;
             RefreshButton.IsEnabled = true;
-            _ = LoadUserInfoAsync();
+            await LoadUserInfoAsync();
             await NavigateToCurrentAsync();
         }
         else
@@ -140,6 +140,9 @@ public partial class GoogleDrivePickerWindow : Window
     private async void ReauthButton_Click(object sender, RoutedEventArgs e)
     {
         await GoogleDriveService.Instance.SignOutAsync();
+        _rawEmail = null;
+        _currentFolders.Clear();
+        FolderListBox.ItemsSource = null;
         _path.Clear();
         _path.Add(new BreadcrumbItem("root", "My Drive"));
         UpdateBreadcrumbsUI();
@@ -164,6 +167,9 @@ public partial class GoogleDrivePickerWindow : Window
     private async void SignOutMenuItem_Click(object sender, RoutedEventArgs e)
     {
         await GoogleDriveService.Instance.SignOutAsync();
+        _rawEmail = null;
+        _currentFolders.Clear();
+        FolderListBox.ItemsSource = null;
         _path.Clear();
         _path.Add(new BreadcrumbItem("root", "My Drive"));
         UpdateBreadcrumbsUI();
