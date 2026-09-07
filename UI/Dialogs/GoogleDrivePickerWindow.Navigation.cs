@@ -206,6 +206,7 @@ public partial class GoogleDrivePickerWindow : Window
     {
         NavigationBar.Visibility = Visibility.Collapsed;
         LinkFolderRow.Visibility = Visibility.Collapsed;
+        RenameFolderRow.Visibility = Visibility.Collapsed;
         NewFolderRow.Visibility = Visibility.Visible;
         NewFolderInput.Text = "";
         NewFolderInput.Focus();
@@ -384,7 +385,9 @@ public partial class GoogleDrivePickerWindow : Window
     {
         NavigationBar.Visibility = Visibility.Collapsed;
         NewFolderRow.Visibility = Visibility.Collapsed;
+        RenameFolderRow.Visibility = Visibility.Collapsed;
         LinkFolderRow.Visibility = Visibility.Visible;
+        LinkFolderNameInput.Text = "";
         LinkFolderInput.Text = "";
         LinkFolderInput.Focus();
     }
@@ -393,6 +396,7 @@ public partial class GoogleDrivePickerWindow : Window
     {
         LinkFolderRow.Visibility = Visibility.Collapsed;
         NavigationBar.Visibility = Visibility.Visible;
+        LinkFolderNameInput.Text = "";
         LinkFolderInput.Text = "";
     }
 
@@ -417,6 +421,7 @@ public partial class GoogleDrivePickerWindow : Window
 
     private async Task CommitLinkFolderAsync()
     {
+        string customName = LinkFolderNameInput.Text.Trim();
         string input = LinkFolderInput.Text.Trim();
         if (string.IsNullOrEmpty(input))
         {
@@ -434,34 +439,119 @@ public partial class GoogleDrivePickerWindow : Window
         LinkFolderRow.Visibility = Visibility.Collapsed;
         NavigationBar.Visibility = Visibility.Visible;
 
-        string folderName = "Linked Folder";
-        try
+        string folderName = !string.IsNullOrEmpty(customName) ? customName : "Linked Folder";
+        if (string.IsNullOrEmpty(customName))
         {
-            var fetched = await GoogleDriveService.Instance.GetFolderNameAsync(folderId);
-            if (!string.IsNullOrWhiteSpace(fetched))
+            try
             {
-                folderName = fetched;
+                var fetched = await GoogleDriveService.Instance.GetFolderNameAsync(folderId);
+                if (!string.IsNullOrWhiteSpace(fetched))
+                {
+                    folderName = fetched;
+                }
+                else
+                {
+                    string preview = folderId.Length > 8 ? folderId.Substring(0, 8) : folderId;
+                    folderName = $"Linked Folder ({preview}...)";
+                }
             }
-            else
+            catch
             {
                 string preview = folderId.Length > 8 ? folderId.Substring(0, 8) : folderId;
                 folderName = $"Linked Folder ({preview}...)";
             }
         }
-        catch
+
+        var settings = AppSettings.Load();
+        var existing = settings.PinnedDriveFolders.FirstOrDefault(p => p.Id == folderId);
+        if (existing != null)
         {
-            string preview = folderId.Length > 8 ? folderId.Substring(0, 8) : folderId;
-            folderName = $"Linked Folder ({preview}...)";
+            existing.Name = folderName;
+        }
+        else
+        {
+            settings.PinnedDriveFolders.Add(new PinnedDriveFolder { Id = folderId, Name = folderName });
+        }
+        settings.Save();
+
+        await NavigateToCurrentAsync();
+    }
+
+    private string? _renamingFolderId;
+
+    private void RenameLinkedFolder_Click(object sender, RoutedEventArgs e)
+    {
+        DriveFolderItem? targetFolder = null;
+        if (sender is MenuItem menuItem)
+        {
+            if (menuItem.DataContext is DriveFolderItem item)
+                targetFolder = item;
+            else if (menuItem.Parent is ContextMenu cm && cm.PlacementTarget is FrameworkElement fe && fe.DataContext is DriveFolderItem feItem)
+                targetFolder = feItem;
+        }
+        targetFolder ??= FolderListBox.SelectedItem as DriveFolderItem;
+
+        if (targetFolder != null && targetFolder.IsLinked)
+        {
+            _renamingFolderId = targetFolder.Id;
+            NavigationBar.Visibility = Visibility.Collapsed;
+            NewFolderRow.Visibility = Visibility.Collapsed;
+            LinkFolderRow.Visibility = Visibility.Collapsed;
+            RenameFolderRow.Visibility = Visibility.Visible;
+            RenameFolderInput.Text = targetFolder.Name;
+            RenameFolderInput.Focus();
+            RenameFolderInput.SelectAll();
+        }
+    }
+
+    private void RenameFolderCancel_Click(object sender, RoutedEventArgs e)
+    {
+        RenameFolderRow.Visibility = Visibility.Collapsed;
+        NavigationBar.Visibility = Visibility.Visible;
+        _renamingFolderId = null;
+        RenameFolderInput.Text = "";
+    }
+
+    private void RenameFolderCommit_Click(object sender, RoutedEventArgs e)
+    {
+        CommitRenameFolder();
+    }
+
+    private void RenameFolderInput_KeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.Enter)
+        {
+            e.Handled = true;
+            CommitRenameFolder();
+        }
+        else if (e.Key == Key.Escape)
+        {
+            e.Handled = true;
+            RenameFolderCancel_Click(sender, e);
+        }
+    }
+
+    private void CommitRenameFolder()
+    {
+        string newName = RenameFolderInput.Text.Trim();
+        if (string.IsNullOrEmpty(newName) || string.IsNullOrEmpty(_renamingFolderId))
+        {
+            RenameFolderCancel_Click(this, new RoutedEventArgs());
+            return;
         }
 
         var settings = AppSettings.Load();
-        if (!settings.PinnedDriveFolders.Any(p => p.Id == folderId))
+        var target = settings.PinnedDriveFolders.FirstOrDefault(p => p.Id == _renamingFolderId);
+        if (target != null)
         {
-            settings.PinnedDriveFolders.Add(new PinnedDriveFolder { Id = folderId, Name = folderName });
+            target.Name = newName;
             settings.Save();
         }
 
-        await NavigateToCurrentAsync();
+        RenameFolderRow.Visibility = Visibility.Collapsed;
+        NavigationBar.Visibility = Visibility.Visible;
+        _renamingFolderId = null;
+        _ = NavigateToCurrentAsync();
     }
 
     public static string? ExtractDriveFolderId(string input)

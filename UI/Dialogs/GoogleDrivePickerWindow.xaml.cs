@@ -102,17 +102,6 @@ public partial class GoogleDrivePickerWindow : Window
         }
 
         _ = LoadUserInfoAsync();
-
-        if (_path.Count == 1 && _path[0].Id == "root")
-        {
-            var defaultFolder = await GoogleDriveService.Instance.GetOrCreateDefaultFolderAsync();
-            if (defaultFolder != null)
-            {
-                _path.Add(new BreadcrumbItem(defaultFolder.Id, defaultFolder.Name));
-                UpdateBreadcrumbsUI();
-            }
-        }
-
         await NavigateToCurrentAsync();
     }
 

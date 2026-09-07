@@ -107,13 +107,29 @@
             <Grid Grid.Row="1" x:Name="LinkFolderRow" Background="{DynamicResource RowBg}" Margin="0,0,0,10" Visibility="Collapsed">
                 <Grid Margin="8,5">
                     <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="130"/>
                         <ColumnDefinition Width="*"/>
                         <ColumnDefinition Width="Auto"/>
                         <ColumnDefinition Width="Auto"/>
                     </Grid.ColumnDefinitions>
-                    <TextBox x:Name="LinkFolderInput" Background="Transparent" Foreground="{DynamicResource Text0}" BorderBrush="{DynamicResource BorderMedium}" BorderThickness="0,0,0,1" Padding="4,2" FontSize="12" VerticalAlignment="Center" KeyDown="LinkFolderInput_KeyDown" ToolTip="Paste Google Drive folder URL or ID"/>
-                    <Button Grid.Column="1" Content="Link" Style="{StaticResource PlayerTransportButton}" Click="LinkFolderCommit_Click" Margin="6,0,0,0" Foreground="{DynamicResource Accent}"/>
-                    <Button Grid.Column="2" Content="Cancel" Style="{StaticResource PlayerTransportButton}" Click="LinkFolderCancel_Click" Margin="4,0,0,0" Foreground="{DynamicResource Text2}"/>
+                    <TextBox x:Name="LinkFolderNameInput" Background="Transparent" Foreground="{DynamicResource Text0}" BorderBrush="{DynamicResource BorderMedium}" BorderThickness="0,0,0,1" Padding="4,2" Margin="0,0,8,0" FontSize="12" VerticalAlignment="Center" KeyDown="LinkFolderInput_KeyDown" ToolTip="Display name (optional, e.g. bot comet)"/>
+                    <TextBox Grid.Column="1" x:Name="LinkFolderInput" Background="Transparent" Foreground="{DynamicResource Text0}" BorderBrush="{DynamicResource BorderMedium}" BorderThickness="0,0,0,1" Padding="4,2" FontSize="12" VerticalAlignment="Center" KeyDown="LinkFolderInput_KeyDown" ToolTip="Paste Google Drive folder URL or ID"/>
+                    <Button Grid.Column="2" Content="Link" Style="{StaticResource PlayerTransportButton}" Click="LinkFolderCommit_Click" Margin="6,0,0,0" Foreground="{DynamicResource Accent}"/>
+                    <Button Grid.Column="3" Content="Cancel" Style="{StaticResource PlayerTransportButton}" Click="LinkFolderCancel_Click" Margin="4,0,0,0" Foreground="{DynamicResource Text2}"/>
+                </Grid>
+            </Grid>
+
+            <!-- Inline Rename Folder Bar (Hidden by default) -->
+            <Grid Grid.Row="1" x:Name="RenameFolderRow" Background="{DynamicResource RowBg}" Margin="0,0,0,10" Visibility="Collapsed">
+                <Grid Margin="8,5">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <TextBox x:Name="RenameFolderInput" Background="Transparent" Foreground="{DynamicResource Text0}" BorderBrush="{DynamicResource BorderMedium}" BorderThickness="0,0,0,1" Padding="4,2" FontSize="12" VerticalAlignment="Center" KeyDown="RenameFolderInput_KeyDown" ToolTip="Enter new display name"/>
+                    <Button Grid.Column="1" Content="Save" Style="{StaticResource PlayerTransportButton}" Click="RenameFolderCommit_Click" Margin="6,0,0,0" Foreground="{DynamicResource Green}"/>
+                    <Button Grid.Column="2" Content="Cancel" Style="{StaticResource PlayerTransportButton}" Click="RenameFolderCancel_Click" Margin="4,0,0,0" Foreground="{DynamicResource Text2}"/>
                 </Grid>
             </Grid>
 
@@ -207,6 +223,7 @@
                                     <Border.ContextMenu>
                                         <ContextMenu Style="{DynamicResource DarkContextMenu}">
                                             <MenuItem Header="Open folder in browser" Style="{DynamicResource DarkMenuItem}" Click="OpenFolderInBrowser_Click"/>
+                                            <MenuItem Header="Rename / Set display name" Style="{DynamicResource DarkMenuItem}" Click="RenameLinkedFolder_Click" Visibility="{Binding IsLinked, Converter={StaticResource BoolToVis}}"/>
                                             <MenuItem Header="Unlink folder" Style="{DynamicResource DarkMenuItem}" Click="UnlinkFolder_Click" Visibility="{Binding IsLinked, Converter={StaticResource BoolToVis}}"/>
                                         </ContextMenu>
                                     </Border.ContextMenu>
