@@ -91,7 +91,6 @@ public sealed partial class StreamDeckIpcServer
             {
                 try { await _obs.SetReplayRowLengthAsync(r.Key, duration); } catch { }
             }
-            try { await _obs.SetReplayBufferDurationAsync(duration); } catch { }
         }
 
         _ = BroadcastStateSnapshotAsync();
