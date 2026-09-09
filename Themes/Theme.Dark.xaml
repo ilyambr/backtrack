@@ -14,6 +14,7 @@
     <SolidColorBrush x:Key="Text1" Color="#AEB4BD"/>
     <SolidColorBrush x:Key="Text2" Color="#767D87"/>
     <SolidColorBrush x:Key="Accent" Color="#F5F6F8"/>
+    <SolidColorBrush x:Key="AccentInverse" Color="#101113"/>
 
     <SolidColorBrush x:Key="Rec" Color="#FF5B52"/>
     <SolidColorBrush x:Key="RecDark" Color="#7A1F1F"/>

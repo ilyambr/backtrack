@@ -14,6 +14,7 @@ public static class ThemeManager
     private static readonly string[] RequiredKeys =
     {
         "PanelBg", "PanelBgOpaque", "ThumbnailBg", "Hairline", "Text0", "Text1", "Text2", "Accent",
+        "AccentInverse",
         "Rec", "RecDark", "Stream", "Green", "NewestClip",
         "RowBg", "RowHoverBg", "TileHoverBg", "BorderSubtle", "BorderMedium", "BorderStrong",
         "SeekTrackBg", "SeekTrackBuffer", "BadgeBg", "BadgeBorder",
