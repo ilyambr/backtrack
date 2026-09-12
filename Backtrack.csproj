@@ -29,6 +29,9 @@
     <Compile Remove="backup\**" />
     <EmbeddedResource Remove="backup\**" />
     <None Remove="backup\**" />
+    <Compile Remove="Backtrack.Tests\**" />
+    <EmbeddedResource Remove="Backtrack.Tests\**" />
+    <None Remove="Backtrack.Tests\**" />
     <Resource Include="Assets\logo.png" />
     <Resource Include="Assets\ilyambr.png" />
     <None Update="Assets\backtrack_tray.png">

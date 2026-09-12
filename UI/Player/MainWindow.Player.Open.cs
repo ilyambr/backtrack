@@ -36,6 +36,12 @@ public partial class MainWindow : Window
         StatDate.Text = $"{file.Modified.ToLocalTime():MMM d, yyyy h:mm tt}";
         StatBitrate.Text = "";
 
+        if (!string.IsNullOrEmpty(_currentStreamToken))
+        {
+            _remoteStreamServer.ReleaseSession(_currentStreamToken);
+            _currentStreamToken = null;
+        }
+
         string streamUrl = _remoteStreamServer.PrepareStream(relativePath);
         _currentStreamToken = streamUrl[(streamUrl.LastIndexOf('/') + 1)..];
         var mediaUri = new Uri(streamUrl);

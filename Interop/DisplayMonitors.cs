@@ -61,6 +61,30 @@ public static class DisplayMonitors
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]
     private static extern bool EnumDisplayDevices(string? lpDevice, uint iDevNum, ref DISPLAY_DEVICE lpDisplayDevice, uint dwFlags);
 
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern bool SetProcessDpiAwarenessContext(IntPtr dpiContext);
+
+    [DllImport("shcore.dll", SetLastError = true)]
+    private static extern int SetProcessDpiAwareness(int awareness);
+
+    private static readonly IntPtr DpiContextPerMonitorAwareV2 = new(-4);
+
+    public static void EnsureDpiAwareness()
+    {
+        try
+        {
+            if (!SetProcessDpiAwarenessContext(DpiContextPerMonitorAwareV2))
+            {
+                // Fallback to Per-Monitor V1 if V2 is unavailable
+                SetProcessDpiAwareness(2); // PROCESS_PER_MONITOR_DPI_AWARE
+            }
+        }
+        catch
+        {
+            try { SetProcessDpiAwareness(2); } catch { }
+        }
+    }
+
     public static List<DisplayInfo> GetAll()
     {
         var results = new List<DisplayInfo>();

@@ -15,13 +15,16 @@ public sealed class RemoteClipStreamServer : IDisposable
     private HttpListener? _listener;
     private int _port;
 
-    private readonly ConcurrentDictionary<string, string> _sessions = new();
+    private sealed record StreamSession(string RelativePath, DateTime CreatedUtc, DateTime LastAccessUtc);
+    private readonly ConcurrentDictionary<string, StreamSession> _sessions = new();
+    private Timer? _pruneTimer;
 
     public event Action<string, long>? StreamStarted;
 
     public RemoteClipStreamServer(PairingService pairing)
     {
         _pairing = pairing;
+        _pruneTimer = new Timer(_ => PruneExpiredSessions(TimeSpan.FromMinutes(15)), null, TimeSpan.FromMinutes(5), TimeSpan.FromMinutes(5));
     }
 
     public void EnsureStarted()
@@ -53,14 +56,30 @@ public sealed class RemoteClipStreamServer : IDisposable
     {
         EnsureStarted();
         string token = Guid.NewGuid().ToString("N");
-        _sessions[token] = relativePath;
+        _sessions[token] = new StreamSession(relativePath, DateTime.UtcNow, DateTime.UtcNow);
         return $"http://127.0.0.1:{_port}/stream/{token}";
+    }
+
+    public void ReleaseSession(string? token)
+    {
+        if (!string.IsNullOrEmpty(token))
+            _sessions.TryRemove(token, out _);
     }
 
     public void UpdateSessionPath(string token, string newRelativePath)
     {
-        if (_sessions.ContainsKey(token))
-            _sessions[token] = newRelativePath;
+        if (_sessions.TryGetValue(token, out var existing))
+            _sessions[token] = existing with { RelativePath = newRelativePath, LastAccessUtc = DateTime.UtcNow };
+    }
+
+    public void PruneExpiredSessions(TimeSpan maxAge)
+    {
+        DateTime cutoff = DateTime.UtcNow - maxAge;
+        foreach (var kv in _sessions)
+        {
+            if (kv.Value.LastAccessUtc < cutoff)
+                _sessions.TryRemove(kv.Key, out _);
+        }
     }
 
     private async Task AcceptLoopAsync(HttpListener listener)
@@ -94,13 +113,15 @@ public sealed class RemoteClipStreamServer : IDisposable
         try
         {
             Match match = TokenPattern.Match(context.Request.Url?.AbsolutePath ?? "");
-            if (!match.Success || !_sessions.TryGetValue(match.Groups[1].Value, out string? relativePath))
+            if (!match.Success || !_sessions.TryGetValue(match.Groups[1].Value, out StreamSession? session))
             {
                 context.Response.StatusCode = 404;
                 context.Response.Close();
                 return;
             }
             string token = match.Groups[1].Value;
+            string relativePath = session.RelativePath;
+            _sessions[token] = session with { LastAccessUtc = DateTime.UtcNow };
 
             long offset = 0;
             string? rangeHeader = context.Request.Headers["Range"];
@@ -117,7 +138,7 @@ public sealed class RemoteClipStreamServer : IDisposable
             if (!opened || sourceStream is null)
             {
                 Debug.WriteLine($"RemoteClipStreamServer: couldn't open '{relativePath}' from offset {offset}: {openError}");
-                context.Response.StatusCode = 502;
+                context.Response.StatusCode = 504; // Gateway Timeout / Upstream error
                 return;
             }
 
@@ -151,6 +172,8 @@ public sealed class RemoteClipStreamServer : IDisposable
 
     public void Stop()
     {
+        try { _pruneTimer?.Dispose(); } catch { }
+        _pruneTimer = null;
         try { _listener?.Stop(); _listener?.Close(); } catch { }
         _listener = null;
     }

@@ -116,6 +116,11 @@ public partial class MainWindow : Window
 
     private void StopPlayerPlayback(bool keepFreezeFrame = false)
     {
+        if (!string.IsNullOrEmpty(_currentStreamToken))
+        {
+            _remoteStreamServer?.ReleaseSession(_currentStreamToken);
+            _currentStreamToken = null;
+        }
         DetachPlayerVideo(keepFreezeFrame);
         DisposeVlcPlayerSync();
     }

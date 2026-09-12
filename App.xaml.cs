@@ -24,6 +24,8 @@ public partial class App : Application
 
     protected override void OnStartup(StartupEventArgs e)
     {
+        Backtrack.Interop.DisplayMonitors.EnsureDpiAwareness();
+
         base.OnStartup(e);
 
         AppSettings startupSettings = AppSettings.Load();
