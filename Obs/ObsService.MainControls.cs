@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Text.Json;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace Backtrack.Obs;
@@ -33,6 +34,7 @@ public partial class ObsService
 
     private async Task RetryLoopAsync(ObsClient client, int generation)
     {
+        int retryCount = 0;
         while (_running && generation == _generation)
         {
             if (!client.IsConnected)
@@ -40,6 +42,7 @@ public partial class ObsService
                 try
                 {
                     await client.ConnectAsync(_url, _password);
+                    retryCount = 0;
                     LastError = null;
                     StateChanged?.Invoke();
                     _ = DetectMicInputAsync();
@@ -53,13 +56,23 @@ public partial class ObsService
                     LastError = ex.Message;
                 }
             }
-            await Task.Delay(TimeSpan.FromSeconds(5));
+            int delay = Math.Min(5 * (1 << Math.Min(retryCount, 3)), 30);
+            retryCount++;
+            await Task.Delay(TimeSpan.FromSeconds(delay));
         }
+    }
+
+    private static CancellationTokenSource TimeoutCts(int ms = 10000)
+    {
+        var cts = new CancellationTokenSource();
+        cts.CancelAfter(TimeSpan.FromMilliseconds(ms));
+        return cts;
     }
 
     public async Task<RecordStatus> GetRecordStatusAsync()
     {
-        JsonElement d = await _client.RequestAsync("GetRecordStatus");
+        using var cts = TimeoutCts();
+        JsonElement d = await _client.RequestAsync("GetRecordStatus", ct: cts.Token);
         return new RecordStatus(
             d.GetProperty("outputActive").GetBoolean(),
             d.TryGetProperty("outputDuration", out JsonElement od) ? od.GetInt64() : 0,
@@ -95,7 +108,8 @@ public partial class ObsService
 
     public async Task<ObsStats> GetStatsAsync()
     {
-        JsonElement d = await _client.RequestAsync("GetStats");
+        using var cts = TimeoutCts();
+        JsonElement d = await _client.RequestAsync("GetStats", ct: cts.Token);
         return new ObsStats(
             d.GetProperty("renderTotalFrames").GetInt64(),
             d.GetProperty("renderSkippedFrames").GetInt64(),
@@ -105,7 +119,8 @@ public partial class ObsService
 
     public async Task<bool> GetReplayBufferActiveAsync()
     {
-        JsonElement d = await _client.RequestAsync("GetReplayBufferStatus");
+        using var cts = TimeoutCts();
+        JsonElement d = await _client.RequestAsync("GetReplayBufferStatus", ct: cts.Token);
         return d.GetProperty("outputActive").GetBoolean();
     }
 
@@ -113,7 +128,8 @@ public partial class ObsService
     {
         if (!IsConnected)
             return false;
-        JsonElement d = await _client.RequestAsync("GetStreamStatus");
+        using var cts = TimeoutCts();
+        JsonElement d = await _client.RequestAsync("GetStreamStatus", ct: cts.Token);
         return d.GetProperty("outputActive").GetBoolean();
     }
 
@@ -121,7 +137,8 @@ public partial class ObsService
     {
         if (!IsConnected)
             return false;
-        JsonElement d = await _client.RequestAsync("GetVirtualCamStatus");
+        using var cts = TimeoutCts();
+        JsonElement d = await _client.RequestAsync("GetVirtualCamStatus", ct: cts.Token);
         return d.GetProperty("outputActive").GetBoolean();
     }
 }

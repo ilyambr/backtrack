@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using Microsoft.Win32;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
@@ -123,6 +124,10 @@ public partial class MainWindow : Window
     {
         _currentPlayerMedia?.Dispose();
         _currentPlayerMedia = null;
+        if (_pendingVlcDisposeTask is { IsCompleted: false })
+        {
+            try { _pendingVlcDisposeTask.Wait(TimeSpan.FromSeconds(3)); } catch { }
+        }
         if (_vlcPlayer is not null)
         {
             _vlcPlayer.Stop();
@@ -203,6 +208,10 @@ public partial class MainWindow : Window
 
     protected override void OnClosed(EventArgs e)
     {
+        if (_displaySettingsHandler != null)
+            SystemEvents.DisplaySettingsChanged -= _displaySettingsHandler;
+        _obs?.Dispose();
+        _remoteStreamServer?.Dispose();
         _trayManager?.Dispose();
         StopPlayerPlayback();
         _libVlc?.Dispose();
@@ -214,6 +223,16 @@ public partial class MainWindow : Window
             try { hk.Dispose(); } catch { }
         }
         _remoteRowHotkeys.Clear();
+        _pollTimer?.Stop();
+        _micTimer?.Stop();
+        _remoteSyncTimer?.Stop();
+        _seekTimer?.Stop();
+        _seekDebounceTimer?.Stop();
+        _galleryFilterDebounceTimer?.Stop();
+        _freezeFrameTimer?.Stop();
+        _volumePopupCloseDebounce?.Stop();
+        _actionFeedbackHideTimer?.Stop();
+        _obsStatsTimer?.Stop();
 
         if (_settings.RamDiskEnabled)
             RamDisk.Unmount(_settings.RamDiskDriveLetter);

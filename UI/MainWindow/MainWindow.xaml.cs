@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
@@ -56,7 +57,7 @@ public partial class MainWindow : Window
 
     private bool _refreshStatusRunning;
 
-    private readonly Dictionary<string, DateTime> _recordRowActiveSinceUtc = new();
+    private readonly ConcurrentDictionary<string, DateTime> _recordRowActiveSinceUtc = new();
 
     private readonly Dictionary<string, (string Label, string SourceName, string FilterName)> _recordRowInfoByKey = new();
 
@@ -97,6 +98,8 @@ public partial class MainWindow : Window
     private readonly PairingRequestOverlay _pairingRequestOverlay;
 
     private readonly AppSettings _settings;
+
+    private EventHandler? _displaySettingsHandler;
 
     private readonly UpdateService _updates = new();
 
@@ -162,42 +165,49 @@ public partial class MainWindow : Window
 
     private async void OnBookmarkHotkeyPressed()
     {
-        if (PlayerPanel.Visibility == Visibility.Visible && (_currentPlayerFile is not null || _currentPlayerRemoteOrigin is not null))
-        {
-            AddPlayerBookmark();
-            return;
-        }
-
-        double? activeRecordSec = null;
         try
         {
-            var recStatus = await _obs.GetRecordStatusAsync();
-            if (recStatus.Active && recStatus.DurationMs > 0)
+            if (PlayerPanel.Visibility == Visibility.Visible && (_currentPlayerFile is not null || _currentPlayerRemoteOrigin is not null))
             {
-                activeRecordSec = recStatus.DurationMs / 1000.0;
+                AddPlayerBookmark();
+                return;
             }
-        }
-        catch { }
 
-        if (activeRecordSec is null && _recordRowActiveSinceUtc.Count > 0)
+            double? activeRecordSec = null;
+            try
+            {
+                var recStatus = await _obs.GetRecordStatusAsync();
+                if (recStatus.Active && recStatus.DurationMs > 0)
+                {
+                    activeRecordSec = recStatus.DurationMs / 1000.0;
+                }
+            }
+            catch { }
+
+            if (activeRecordSec is null && _recordRowActiveSinceUtc.Count > 0)
+            {
+                DateTime earliest = _recordRowActiveSinceUtc.Values.Min();
+                activeRecordSec = Math.Max(0, (DateTime.UtcNow - earliest).TotalSeconds);
+            }
+
+            if (activeRecordSec is not null)
+            {
+                double sec = activeRecordSec.Value;
+                _activeRecordingMarkers.Add(sec);
+                TimeSpan ts = TimeSpan.FromSeconds(sec);
+                _toastOverlay.ShowBookmarkAdded($"At {ts:mm\\:ss}");
+                return;
+            }
+
+            DateTime now = DateTime.UtcNow;
+            _pendingBookmarkUtcTimes.RemoveAll(t => (now - t).TotalMinutes > 5);
+            _pendingBookmarkUtcTimes.Add(now);
+            _toastOverlay.ShowBookmarkAdded("Bookmark set for replay");
+        }
+        catch (Exception ex)
         {
-            DateTime earliest = _recordRowActiveSinceUtc.Values.Min();
-            activeRecordSec = Math.Max(0, (DateTime.UtcNow - earliest).TotalSeconds);
+            AppLog.WriteError("[Hotkey] Bookmark hotkey handler failed", ex);
         }
-
-        if (activeRecordSec is not null)
-        {
-            double sec = activeRecordSec.Value;
-            _activeRecordingMarkers.Add(sec);
-            TimeSpan ts = TimeSpan.FromSeconds(sec);
-            _toastOverlay.ShowBookmarkAdded($"At {ts:mm\\:ss}");
-            return;
-        }
-
-        DateTime now = DateTime.UtcNow;
-        _pendingBookmarkUtcTimes.RemoveAll(t => (now - t).TotalMinutes > 5);
-        _pendingBookmarkUtcTimes.Add(now);
-        _toastOverlay.ShowBookmarkAdded("Bookmark set for replay");
     }
 
     private bool _isTrimming;

@@ -280,7 +280,10 @@ public sealed class DeduplicationService
                 }
             }
         }
-        catch { }
+        catch (Exception ex)
+        {
+            AppLog.WriteError("[Deduplication] Failed to load deduplication data", ex);
+        }
     }
 
     public void Save()
@@ -299,6 +302,9 @@ public sealed class DeduplicationService
             var opt = new JsonSerializerOptions { WriteIndented = true };
             File.WriteAllText(DeduplicatedFilePath, JsonSerializer.Serialize(copy, opt));
         }
-        catch { }
+        catch (Exception ex)
+        {
+            AppLog.WriteError("[Deduplication] Failed to save deduplication data", ex);
+        }
     }
 }

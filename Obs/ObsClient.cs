@@ -113,19 +113,25 @@ public sealed class ObsClient : IAsyncDisposable
 
     private async Task SendAsync(int op, object? data, CancellationToken ct)
     {
+        ClientWebSocket? ws = _ws;
+        if (ws is not { State: WebSocketState.Open })
+            throw new InvalidOperationException("Not connected to OBS");
         string json = JsonSerializer.Serialize(new Dictionary<string, object?> { ["op"] = op, ["d"] = data });
         byte[] bytes = Encoding.UTF8.GetBytes(json);
-        await _ws!.SendAsync(bytes, WebSocketMessageType.Text, true, ct);
+        await ws.SendAsync(bytes, WebSocketMessageType.Text, true, ct);
     }
 
     private async Task<JsonElement> ReceiveOneAsync(CancellationToken ct)
     {
+        ClientWebSocket? ws = _ws;
+        if (ws is not { State: WebSocketState.Open })
+            throw new WebSocketException("Not connected to OBS");
         var buffer = new byte[16 * 1024];
         using var stream = new MemoryStream();
         WebSocketReceiveResult result;
         do
         {
-            result = await _ws!.ReceiveAsync(buffer, ct);
+            result = await ws.ReceiveAsync(buffer, ct);
             if (result.MessageType == WebSocketMessageType.Close)
                 throw new WebSocketException("OBS closed the connection");
             stream.Write(buffer, 0, result.Count);
@@ -140,7 +146,7 @@ public sealed class ObsClient : IAsyncDisposable
     {
         try
         {
-            while (!ct.IsCancellationRequested && _ws!.State == WebSocketState.Open)
+            while (!ct.IsCancellationRequested && _ws is { State: WebSocketState.Open })
             {
                 JsonElement msg = await ReceiveOneAsync(ct);
                 int op = msg.GetProperty("op").GetInt32();

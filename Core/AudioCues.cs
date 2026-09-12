@@ -216,6 +216,7 @@ public static class AudioCues
                         {
                             var player = new System.Windows.Media.MediaPlayer();
                             player.Volume = volumeFraction;
+                            player.MediaEnded += (_, _) => { try { player.Close(); } catch { } };
                             player.Open(new Uri(diskPath, UriKind.Absolute));
                             player.Play();
                             AppLog.Write($"[AudioCues] Played custom disk audio cue ({candidate}) at {volume}% volume");

@@ -148,35 +148,42 @@ public partial class MainWindow : Window
 
     private async void ShowPlayerFreezeFrame(FileInfo file, bool autoHide = true, long token = 0)
     {
-        PlayerFreezeFrame.Effect = null;
-        if (PlayerFreezeFrameDimmer != null)
-            PlayerFreezeFrameDimmer.Visibility = Visibility.Collapsed;
-        await LoadThumbnailAsync(file, PlayerFreezeFrame);
-        if (token != 0 && token != _clipOpenToken)
-            return;
-        PlayerFreezeFramePopup.IsOpen = false;
-        _ = Dispatcher.BeginInvoke(new Action(() =>
+        try
         {
+            PlayerFreezeFrame.Effect = null;
+            if (PlayerFreezeFrameDimmer != null)
+                PlayerFreezeFrameDimmer.Visibility = Visibility.Collapsed;
+            await LoadThumbnailAsync(file, PlayerFreezeFrame);
             if (token != 0 && token != _clipOpenToken)
                 return;
-            UpdateLayout();
-            PlayerFreezeFramePopup.IsOpen = true;
-            _freezeFrameTimer?.Stop();
-            if (autoHide)
+            PlayerFreezeFramePopup.IsOpen = false;
+            _ = Dispatcher.BeginInvoke(new Action(() =>
             {
-                _freezeFrameTimer?.Start();
-            }
-            ReopenPlayerOverlayPopup();
-            IntPtr toastHwnd = new WindowInteropHelper(_toastOverlay).Handle;
-            if (toastHwnd != IntPtr.Zero)
-                WindowZOrder.BringToFrontWithoutActivating(toastHwnd);
-            if (_activeDrivePicker != null && _activeDrivePicker.IsVisible)
-            {
-                IntPtr pickerHwnd = new WindowInteropHelper(_activeDrivePicker).Handle;
-                if (pickerHwnd != IntPtr.Zero)
-                    WindowZOrder.BringToFrontWithoutActivating(pickerHwnd);
-            }
-        }), DispatcherPriority.Loaded);
+                if (token != 0 && token != _clipOpenToken)
+                    return;
+                UpdateLayout();
+                PlayerFreezeFramePopup.IsOpen = true;
+                _freezeFrameTimer?.Stop();
+                if (autoHide)
+                {
+                    _freezeFrameTimer?.Start();
+                }
+                ReopenPlayerOverlayPopup();
+                IntPtr toastHwnd = new WindowInteropHelper(_toastOverlay).Handle;
+                if (toastHwnd != IntPtr.Zero)
+                    WindowZOrder.BringToFrontWithoutActivating(toastHwnd);
+                if (_activeDrivePicker != null && _activeDrivePicker.IsVisible)
+                {
+                    IntPtr pickerHwnd = new WindowInteropHelper(_activeDrivePicker).Handle;
+                    if (pickerHwnd != IntPtr.Zero)
+                        WindowZOrder.BringToFrontWithoutActivating(pickerHwnd);
+                }
+            }), DispatcherPriority.Loaded);
+        }
+        catch (Exception ex)
+        {
+            AppLog.WriteError("[Player] ShowPlayerFreezeFrame failed", ex);
+        }
     }
 
     private void OpenInPlayer(FileInfo file, bool keepCurrentFreezeFrame = false, bool suppressFreezeFrame = false, bool startPaused = false)
@@ -235,113 +242,119 @@ public partial class MainWindow : Window
 
     private async void StartPlayerPlayback(Uri mediaUri, long myToken, bool hideFreezeFrameOnFirstPlay = false, bool startPaused = false)
     {
-
-        if (_libVlc is null)
-            return;
-
-        if (myToken != _clipOpenToken)
-            return;
-
-        if (_pendingVlcDisposeTask is Task pending)
+        try
         {
-            await pending;
-            _pendingVlcDisposeTask = null;
-        }
+            if (_libVlc is null)
+                return;
 
-        if (myToken != _clipOpenToken)
-            return;
+            if (myToken != _clipOpenToken)
+                return;
 
-        _vlcPlayer = new LibVlc.MediaPlayer(_libVlc);
-        PlayerVideoView.MediaPlayer = _vlcPlayer;
-        _playerHasEnded = false;
-
-        _currentPlayerMedia?.Dispose();
-        _currentPlayerMedia = new LibVlc.Media(_libVlc, mediaUri);
-        _vlcPlayer.Play(_currentPlayerMedia);
-
-        IntPtr toastHwnd = new WindowInteropHelper(_toastOverlay).Handle;
-        if (toastHwnd != IntPtr.Zero)
-            WindowZOrder.BringToFrontWithoutActivating(toastHwnd);
-
-        _isMuted = false;
-        _vlcPlayer.Volume = 100;
-        _vlcPlayer.Mute = false;
-        PlayerVolumeSlider.Value = 100;
-        UpdateVolumeIcon();
-
-        bool tracksLoaded = false;
-        bool freezeFrameHidden = false;
-        bool initialPauseApplied = false;
-        _vlcPlayer.Playing += (_, _) => Dispatcher.BeginInvoke(() =>
-        {
-            if (startPaused && !initialPauseApplied)
+            if (_pendingVlcDisposeTask is Task pending)
             {
-                initialPauseApplied = true;
-                _vlcPlayer.SetPause(true);
+                await pending;
+                _pendingVlcDisposeTask = null;
+            }
+
+            if (myToken != _clipOpenToken)
+                return;
+
+            _vlcPlayer = new LibVlc.MediaPlayer(_libVlc);
+            PlayerVideoView.MediaPlayer = _vlcPlayer;
+            _playerHasEnded = false;
+
+            _currentPlayerMedia?.Dispose();
+            _currentPlayerMedia = new LibVlc.Media(_libVlc, mediaUri);
+            _vlcPlayer.Play(_currentPlayerMedia);
+
+            IntPtr toastHwnd = new WindowInteropHelper(_toastOverlay).Handle;
+            if (toastHwnd != IntPtr.Zero)
+                WindowZOrder.BringToFrontWithoutActivating(toastHwnd);
+
+            _isMuted = false;
+            _vlcPlayer.Volume = 100;
+            _vlcPlayer.Mute = false;
+            PlayerVolumeSlider.Value = 100;
+            UpdateVolumeIcon();
+
+            bool tracksLoaded = false;
+            bool freezeFrameHidden = false;
+            bool initialPauseApplied = false;
+            _vlcPlayer.Playing += (_, _) => Dispatcher.BeginInvoke(() =>
+            {
+                if (startPaused && !initialPauseApplied)
+                {
+                    initialPauseApplied = true;
+                    _vlcPlayer.SetPause(true);
+                    PlayIcon.Visibility = Visibility.Visible;
+                    PauseIcon.Visibility = Visibility.Collapsed;
+                    // Keep freeze frame visible while paused - do not hide or start hide timer
+                    return;
+                }
+
+                PlayIcon.Visibility = Visibility.Collapsed;
+                PauseIcon.Visibility = Visibility.Visible;
+
+                if (!freezeFrameHidden)
+                {
+                    freezeFrameHidden = true;
+                    _freezeFrameTimer?.Stop();
+                    _freezeFrameTimer?.Start();
+                }
+
+                if (hideFreezeFrameOnFirstPlay && !freezeFrameHidden)
+                {
+                    freezeFrameHidden = true;
+                    _freezeFrameTimer?.Stop();
+                    _freezeFrameTimer?.Start();
+                }
+
+                if (_vlcPlayer.Media is not null)
+                {
+                    var videoTrack = _vlcPlayer.Media.Tracks.FirstOrDefault(t => t.TrackType == LibVlc.TrackType.Video).Data.Video;
+                    if (videoTrack.Width > 0 && videoTrack.Height > 0)
+                        StatResolution.Text = $"{videoTrack.Width} x {videoTrack.Height}";
+                    if (videoTrack.FrameRateDen > 0)
+                        StatFps.Text = $"{(double)videoTrack.FrameRateNum / videoTrack.FrameRateDen:0.##} fps";
+
+                    long durMs = _vlcPlayer.Length;
+                    long fileBytes = _currentPlayerFile?.Length ?? (_remoteStreamTotalBytes > 0 ? _remoteStreamTotalBytes : 0);
+                    if (durMs > 0 && fileBytes > 0)
+                    {
+                        long kbps = (long)((fileBytes * 8.0) / (durMs / 1000.0) / 1000.0);
+                        StatBitrate.Text = $"{kbps:N0} kbps";
+                    }
+                }
+
+                if (!tracksLoaded)
+                {
+                    tracksLoaded = true;
+                    LoadAudioTracks();
+                }
+            });
+            _vlcPlayer.Paused += (_, _) => Dispatcher.BeginInvoke(() =>
+            {
                 PlayIcon.Visibility = Visibility.Visible;
                 PauseIcon.Visibility = Visibility.Collapsed;
-                // Keep freeze frame visible while paused - do not hide or start hide timer
-                return;
-            }
-
-            PlayIcon.Visibility = Visibility.Collapsed;
-            PauseIcon.Visibility = Visibility.Visible;
-
-            if (!freezeFrameHidden)
+            });
+            _vlcPlayer.EndReached += (_, _) => Dispatcher.BeginInvoke(() =>
             {
-                freezeFrameHidden = true;
-                _freezeFrameTimer?.Stop();
-                _freezeFrameTimer?.Start();
-            }
+                PlayIcon.Visibility = Visibility.Visible;
+                PauseIcon.Visibility = Visibility.Collapsed;
+                _playerHasEnded = true;
 
-            if (hideFreezeFrameOnFirstPlay && !freezeFrameHidden)
-            {
-                freezeFrameHidden = true;
-                _freezeFrameTimer?.Stop();
-                _freezeFrameTimer?.Start();
-            }
+                _seekTimer?.Stop();
+                PlayerSeekFill.Width = PlayerSeekTrack.ActualWidth;
+                PlayerSeekThumb.Margin = new Thickness(PlayerSeekTrack.ActualWidth - 7, 0, 0, 0);
+                PlayerCurrentTime.Text = PlayerDurationText.Text;
+            });
 
-            if (_vlcPlayer.Media is not null)
-            {
-                var videoTrack = _vlcPlayer.Media.Tracks.FirstOrDefault(t => t.TrackType == LibVlc.TrackType.Video).Data.Video;
-                if (videoTrack.Width > 0 && videoTrack.Height > 0)
-                    StatResolution.Text = $"{videoTrack.Width} x {videoTrack.Height}";
-                if (videoTrack.FrameRateDen > 0)
-                    StatFps.Text = $"{(double)videoTrack.FrameRateNum / videoTrack.FrameRateDen:0.##} fps";
-
-                long durMs = _vlcPlayer.Length;
-                long fileBytes = _currentPlayerFile?.Length ?? (_remoteStreamTotalBytes > 0 ? _remoteStreamTotalBytes : 0);
-                if (durMs > 0 && fileBytes > 0)
-                {
-                    long kbps = (long)((fileBytes * 8.0) / (durMs / 1000.0) / 1000.0);
-                    StatBitrate.Text = $"{kbps:N0} kbps";
-                }
-            }
-
-            if (!tracksLoaded)
-            {
-                tracksLoaded = true;
-                LoadAudioTracks();
-            }
-        });
-        _vlcPlayer.Paused += (_, _) => Dispatcher.BeginInvoke(() =>
+            _seekTimer?.Start();
+        }
+        catch (Exception ex)
         {
-            PlayIcon.Visibility = Visibility.Visible;
-            PauseIcon.Visibility = Visibility.Collapsed;
-        });
-        _vlcPlayer.EndReached += (_, _) => Dispatcher.BeginInvoke(() =>
-        {
-            PlayIcon.Visibility = Visibility.Visible;
-            PauseIcon.Visibility = Visibility.Collapsed;
-            _playerHasEnded = true;
-
-            _seekTimer?.Stop();
-            PlayerSeekFill.Width = PlayerSeekTrack.ActualWidth;
-            PlayerSeekThumb.Margin = new Thickness(PlayerSeekTrack.ActualWidth - 7, 0, 0, 0);
-            PlayerCurrentTime.Text = PlayerDurationText.Text;
-        });
-
-        _seekTimer?.Start();
+            AppLog.WriteError("[Player] StartPlayerPlayback failed", ex);
+        }
     }
 
     private void TogglePlayerMenu() => PlayerMenuPopup.IsOpen = !PlayerMenuPopup.IsOpen;

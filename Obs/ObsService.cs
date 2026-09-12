@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace Backtrack.Obs;
@@ -17,13 +18,14 @@ public sealed record EncoderOverloadInfo(bool ThisFilter, bool MainRecording, bo
 
 public enum MicStatus { Hidden, Silent, MutedOrQuiet }
 
-public sealed partial class ObsService
+public sealed partial class ObsService : IDisposable
 {
     private ObsClient _client = new();
     private string _url;
     private string? _password;
     private bool _running;
     private int _generation;
+    private readonly object _micLock = new();
 
     public bool IsConnected => _client.IsConnected;
     public string? LastError { get; private set; }
@@ -52,7 +54,7 @@ public sealed partial class ObsService
     {
         client.Disconnected += () =>
         {
-            _micInputName = null;
+            lock (_micLock) { _micInputName = null; }
             StateChanged?.Invoke();
         };
         client.EventReceived += HandleEvent;
@@ -114,28 +116,40 @@ public sealed partial class ObsService
             string key = savingEd.TryGetProperty("key", out JsonElement k) ? k.GetString() ?? "" : "";
             ReplaySaving?.Invoke(key);
         }
-        else if (_micInputName is not null && eventType == "InputMuteStateChanged" &&
-                 data.TryGetProperty("inputName", out JsonElement muteName) && muteName.GetString() == _micInputName &&
+        else if (eventType == "InputMuteStateChanged" &&
+                 data.TryGetProperty("inputName", out JsonElement muteName) &&
                  data.TryGetProperty("inputMuted", out JsonElement mutedEl))
         {
-            _micMuted = mutedEl.GetBoolean();
+            lock (_micLock)
+            {
+                if (_micInputName is not null && muteName.GetString() == _micInputName)
+                    _micMuted = mutedEl.GetBoolean();
+            }
         }
-        else if (_micInputName is not null && eventType == "InputVolumeChanged" &&
-                 data.TryGetProperty("inputName", out JsonElement volName) && volName.GetString() == _micInputName &&
+        else if (eventType == "InputVolumeChanged" &&
+                 data.TryGetProperty("inputName", out JsonElement volName) &&
                  data.TryGetProperty("inputVolumeDb", out JsonElement volDbEl))
         {
-            _micVolumeDb = volDbEl.GetSingle();
+            lock (_micLock)
+            {
+                if (_micInputName is not null && volName.GetString() == _micInputName)
+                    _micVolumeDb = volDbEl.GetSingle();
+            }
         }
-        else if (_micInputName is not null && eventType == "InputVolumeMeters" &&
+        else if (eventType == "InputVolumeMeters" &&
                  data.TryGetProperty("inputs", out JsonElement meterInputs))
         {
-            foreach (JsonElement inp in meterInputs.EnumerateArray())
+            lock (_micLock)
             {
-                if (!inp.TryGetProperty("inputName", out JsonElement nameEl) || nameEl.GetString() != _micInputName)
-                    continue;
-                if (inp.TryGetProperty("inputLevelsMul", out JsonElement levels) && HasSignal(levels))
-                    _micLastAudioUtc = DateTime.UtcNow;
-                break;
+                if (_micInputName is null) return;
+                foreach (JsonElement inp in meterInputs.EnumerateArray())
+                {
+                    if (!inp.TryGetProperty("inputName", out JsonElement nameEl) || nameEl.GetString() != _micInputName)
+                        continue;
+                    if (inp.TryGetProperty("inputLevelsMul", out JsonElement levels) && HasSignal(levels))
+                        _micLastAudioUtc = DateTime.UtcNow;
+                    break;
+                }
             }
         }
     }
@@ -157,5 +171,11 @@ public sealed partial class ObsService
         {
             return true;
         }
+    }
+
+    public void Dispose()
+    {
+        _running = false;
+        _ = _client.DisposeAsync().AsTask();
     }
 }

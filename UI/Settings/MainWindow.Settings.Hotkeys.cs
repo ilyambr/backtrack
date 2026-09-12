@@ -51,7 +51,7 @@ public partial class MainWindow : Window
         try
         {
             _hotkey = new GlobalHotkey(this, (GlobalHotkey.Modifiers)_settings.HotkeyModifiers, (uint)_settings.HotkeyVirtualKey, id: OpenOverlayHotkeyId);
-            _hotkey.Pressed += () => Dispatcher.Invoke(ToggleVisible);
+            _hotkey.Pressed += () => Dispatcher.BeginInvoke(ToggleVisible);
         }
         catch (InvalidOperationException ex)
         {
@@ -63,7 +63,7 @@ public partial class MainWindow : Window
             try
             {
                 _cancelRecordHotkey = new GlobalHotkey(this, (GlobalHotkey.Modifiers)_settings.CancelRecordHotkeyModifiers, (uint)_settings.CancelRecordHotkeyVirtualKey, id: CancelRecordHotkeyId);
-                _cancelRecordHotkey.Pressed += () => Dispatcher.Invoke(async () =>
+                _cancelRecordHotkey.Pressed += () => Dispatcher.BeginInvoke(async () =>
                 {
                     await CancelActiveRecordingsAsync();
                     await RefreshStatusAsync();
@@ -80,7 +80,7 @@ public partial class MainWindow : Window
             try
             {
                 _bookmarkHotkey = new GlobalHotkey(this, (GlobalHotkey.Modifiers)_settings.BookmarkHotkeyModifiers, (uint)_settings.BookmarkHotkeyVirtualKey, id: BookmarkHotkeyId);
-                _bookmarkHotkey.Pressed += () => Dispatcher.Invoke(OnBookmarkHotkeyPressed);
+                _bookmarkHotkey.Pressed += () => Dispatcher.BeginInvoke(OnBookmarkHotkeyPressed);
             }
             catch (InvalidOperationException ex)
             {
@@ -163,7 +163,7 @@ public partial class MainWindow : Window
             if (_hotkey is null)
             {
                 _hotkey = new GlobalHotkey(this, modifiers, virtualKey, id: OpenOverlayHotkeyId);
-                _hotkey.Pressed += () => Dispatcher.Invoke(ToggleVisible);
+                _hotkey.Pressed += () => Dispatcher.BeginInvoke(ToggleVisible);
             }
             else
             {
@@ -240,7 +240,7 @@ public partial class MainWindow : Window
             if (_cancelRecordHotkey is null)
             {
                 _cancelRecordHotkey = new GlobalHotkey(this, modifiers, virtualKey, id: CancelRecordHotkeyId);
-                _cancelRecordHotkey.Pressed += () => Dispatcher.Invoke(async () =>
+                _cancelRecordHotkey.Pressed += () => Dispatcher.BeginInvoke(async () =>
                 {
                     await CancelActiveRecordingsAsync();
                     await RefreshStatusAsync();
@@ -321,7 +321,7 @@ public partial class MainWindow : Window
             if (_bookmarkHotkey is null)
             {
                 _bookmarkHotkey = new GlobalHotkey(this, modifiers, virtualKey, id: BookmarkHotkeyId);
-                _bookmarkHotkey.Pressed += () => Dispatcher.Invoke(OnBookmarkHotkeyPressed);
+                _bookmarkHotkey.Pressed += () => Dispatcher.BeginInvoke(OnBookmarkHotkeyPressed);
             }
             else
             {

@@ -51,6 +51,7 @@ public class SystemTrayManager : IDisposable
 
     private readonly Window _owner;
     private readonly IntPtr _hwnd;
+    private readonly HwndSource? _hwndSource;
     private NOTIFYICONDATA _nid;
     private System.Drawing.Bitmap? _baseBitmap;
     private bool _isSystemLightTheme;
@@ -69,8 +70,8 @@ public class SystemTrayManager : IDisposable
     {
         _owner = owner;
         _hwnd = new WindowInteropHelper(owner).EnsureHandle();
-        HwndSource source = HwndSource.FromHwnd(_hwnd);
-        source?.AddHook(WndProc);
+        _hwndSource = HwndSource.FromHwnd(_hwnd);
+        _hwndSource?.AddHook(WndProc);
 
         ReloadBaseBitmap();
 
@@ -292,6 +293,7 @@ public class SystemTrayManager : IDisposable
 
     public void Dispose()
     {
+        _hwndSource?.RemoveHook(WndProc);
         if (_added)
         {
             Shell_NotifyIcon(NIM_DELETE, ref _nid);

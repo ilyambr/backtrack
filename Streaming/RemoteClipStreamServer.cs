@@ -9,7 +9,7 @@ using Backtrack.Pairing;
 
 namespace Backtrack.Streaming;
 
-public sealed class RemoteClipStreamServer
+public sealed class RemoteClipStreamServer : IDisposable
 {
     private readonly PairingService _pairing;
     private HttpListener? _listener;
@@ -151,7 +151,12 @@ public sealed class RemoteClipStreamServer
 
     public void Stop()
     {
-        try { _listener?.Stop(); } catch { }
+        try { _listener?.Stop(); _listener?.Close(); } catch { }
         _listener = null;
+    }
+
+    public void Dispose()
+    {
+        Stop();
     }
 }

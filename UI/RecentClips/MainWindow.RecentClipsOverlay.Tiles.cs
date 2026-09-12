@@ -368,24 +368,32 @@ public partial class MainWindow : Window
 
         async void CommitRemoteRename()
         {
-            string newName = box.Text.Trim();
-            if (!string.IsNullOrEmpty(newName) && newName != Path.GetFileNameWithoutExtension(file.Name))
+            try
             {
-                (bool success, string? error, _) = await _pairing.RenameRemoteClipAsync(relativePath, newName);
-                if (success)
+                string newName = box.Text.Trim();
+                if (!string.IsNullOrEmpty(newName) && newName != Path.GetFileNameWithoutExtension(file.Name))
                 {
-                    title.Text = newName;
-                    _ = RefreshRecentClipsOverlayRemoteAsync();
-                    if (GalleryPanel.Visibility == Visibility.Visible)
-                        LoadGallery();
-                    return;
+                    (bool success, string? error, _) = await _pairing.RenameRemoteClipAsync(relativePath, newName);
+                    if (success)
+                    {
+                        title.Text = newName;
+                        _ = RefreshRecentClipsOverlayRemoteAsync();
+                        if (GalleryPanel.Visibility == Visibility.Visible)
+                            LoadGallery();
+                        return;
+                    }
+                    else
+                    {
+                        MessageBox.Show(this, $"Couldn't rename: {error}", "Backtrack");
+                    }
                 }
-                else
-                {
-                    MessageBox.Show(this, $"Couldn't rename: {error}", "Backtrack");
-                }
+                RestoreTitle();
             }
-            RestoreTitle();
+            catch (Exception ex)
+            {
+                AppLog.WriteError("[RecentClips] CommitRemoteRename failed", ex);
+                RestoreTitle();
+            }
         }
     }
 

@@ -271,7 +271,8 @@ public partial class MainWindow : Window
         });
         _trayManager.OnQuitRequested += () => Dispatcher.BeginInvoke(() => Application.Current.Shutdown());
 
-        SystemEvents.DisplaySettingsChanged += (_, _) => Dispatcher.BeginInvoke(RepositionAllForDisplayChange);
+        _displaySettingsHandler = (_, _) => Dispatcher.BeginInvoke(RepositionAllForDisplayChange);
+        SystemEvents.DisplaySettingsChanged += _displaySettingsHandler;
 
         try
         {

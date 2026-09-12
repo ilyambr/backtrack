@@ -296,7 +296,10 @@ public sealed partial class StreamDeckIpcServer : IDisposable
             string notFound = "HTTP/1.1 404 Not Found\r\n\r\n";
             await conn.Stream.WriteAsync(Encoding.UTF8.GetBytes(notFound), 0, notFound.Length, ct);
         }
-        catch { }
+        catch (Exception ex)
+        {
+            AppLog.Write($"[StreamDeck] Client handler error: {ex.Message}");
+        }
         finally
         {
             if (!conn.IsWebSocket)

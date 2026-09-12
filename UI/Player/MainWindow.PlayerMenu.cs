@@ -269,66 +269,74 @@ public partial class MainWindow : Window
 
         async void CommitRename()
         {
-            _isPlayerRenaming = false;
-            _cancelPlayerRename = null;
-            string newName = box.Text.Trim();
-            if (string.IsNullOrEmpty(newName) || newName == Path.GetFileNameWithoutExtension(currentName))
-            {
-                RevertBox();
-                return;
-            }
-
-            if (file is null)
-            {
-
-                (string relPath, string deviceId) = _currentPlayerRemoteOrigin!.Value;
-                stack.Children.Remove(box);
-                stack.Children.Insert(index, PlayerTitle);
-                (bool success, string? error, string? newRelPath) = await _pairing.RenameRemoteClipAsync(relPath, newName);
-                if (success)
-                {
-                    string finalRelPath = newRelPath ?? relPath;
-                    _currentPlayerRemoteOrigin = (finalRelPath, deviceId);
-                    PlayerTitle.Text = newName;
-                    if (_currentStreamToken is not null)
-                        _remoteStreamServer.UpdateSessionPath(_currentStreamToken, finalRelPath);
-                }
-                else
-                {
-                    MessageBox.Show(this, $"Couldn't rename on {_settings.PairedPeerName}'s PC: {error}", "Backtrack");
-                }
-                return;
-            }
-
-            (string RelativePath, string DeviceId)? remoteOrigin = _currentPlayerRemoteOrigin;
             try
             {
-                StopPlayerPlayback();
-                string newPath = Path.Combine(file.DirectoryName!, newName + file.Extension);
-                File.Move(file.FullName, newPath);
-                _currentPlayerFile = new FileInfo(newPath);
-                PlayerTitle.Text = Path.GetFileNameWithoutExtension(_currentPlayerFile.Name);
-                stack.Children.Remove(box);
-                stack.Children.Insert(index, PlayerTitle);
-                OpenInPlayer(_currentPlayerFile);
+                _isPlayerRenaming = false;
+                _cancelPlayerRename = null;
+                string newName = box.Text.Trim();
+                if (string.IsNullOrEmpty(newName) || newName == Path.GetFileNameWithoutExtension(currentName))
+                {
+                    RevertBox();
+                    return;
+                }
 
-                if (remoteOrigin is (string relPath2, string deviceId2))
+                if (file is null)
                 {
 
-                    _currentPlayerRemoteOrigin = remoteOrigin;
-                    (bool success, string? error, string? newRelPath) = await _pairing.RenameRemoteClipAsync(relPath2, newName);
+                    (string relPath, string deviceId) = _currentPlayerRemoteOrigin!.Value;
+                    stack.Children.Remove(box);
+                    stack.Children.Insert(index, PlayerTitle);
+                    (bool success, string? error, string? newRelPath) = await _pairing.RenameRemoteClipAsync(relPath, newName);
                     if (success)
-                        _currentPlayerRemoteOrigin = (newRelPath ?? relPath2, deviceId2);
+                    {
+                        string finalRelPath = newRelPath ?? relPath;
+                        _currentPlayerRemoteOrigin = (finalRelPath, deviceId);
+                        PlayerTitle.Text = newName;
+                        if (_currentStreamToken is not null)
+                            _remoteStreamServer.UpdateSessionPath(_currentStreamToken, finalRelPath);
+                    }
                     else
-                        MessageBox.Show(this, $"Renamed locally, but couldn't rename on {_settings.PairedPeerName}'s PC: {error}", "Backtrack");
+                    {
+                        MessageBox.Show(this, $"Couldn't rename on {_settings.PairedPeerName}'s PC: {error}", "Backtrack");
+                    }
+                    return;
                 }
-                return;
+
+                (string RelativePath, string DeviceId)? remoteOrigin = _currentPlayerRemoteOrigin;
+                try
+                {
+                    StopPlayerPlayback();
+                    string newPath = Path.Combine(file.DirectoryName!, newName + file.Extension);
+                    File.Move(file.FullName, newPath);
+                    _currentPlayerFile = new FileInfo(newPath);
+                    PlayerTitle.Text = Path.GetFileNameWithoutExtension(_currentPlayerFile.Name);
+                    stack.Children.Remove(box);
+                    stack.Children.Insert(index, PlayerTitle);
+                    OpenInPlayer(_currentPlayerFile);
+
+                    if (remoteOrigin is (string relPath2, string deviceId2))
+                    {
+
+                        _currentPlayerRemoteOrigin = remoteOrigin;
+                        (bool success, string? error, string? newRelPath) = await _pairing.RenameRemoteClipAsync(relPath2, newName);
+                        if (success)
+                            _currentPlayerRemoteOrigin = (newRelPath ?? relPath2, deviceId2);
+                        else
+                            MessageBox.Show(this, $"Renamed locally, but couldn't rename on {_settings.PairedPeerName}'s PC: {error}", "Backtrack");
+                    }
+                    return;
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show(this, $"Couldn't rename: {ex.Message}", "Backtrack");
+                }
+                RevertBox();
             }
             catch (Exception ex)
             {
-                MessageBox.Show(this, $"Couldn't rename: {ex.Message}", "Backtrack");
+                AppLog.WriteError("[Player] CommitRename failed", ex);
+                RevertBox();
             }
-            RevertBox();
         }
     }
 
