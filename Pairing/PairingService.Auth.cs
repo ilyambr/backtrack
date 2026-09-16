@@ -28,9 +28,19 @@ public sealed partial class PairingService
             });
         }
 
+        var now = DateTime.UtcNow;
+        // Purge expired requests (> 70s) or stale requests from this exact device
+        foreach (var kvp in _pendingRequests)
+        {
+            if (now - kvp.Value.CreatedAt > TimeSpan.FromSeconds(70) || kvp.Value.DeviceId == deviceId)
+            {
+                _pendingRequests.TryRemove(kvp.Key, out _);
+            }
+        }
+
         foreach (var p in _pendingRequests.Values)
         {
-            if (!p.Decided)
+            if (!p.Decided && (now - p.CreatedAt <= TimeSpan.FromSeconds(70)))
                 return JsonSerializer.Serialize(new { error = "busy" });
         }
 
@@ -129,8 +139,28 @@ public sealed partial class PairingService
             if (response is null)
                 return new PairingResult(PairingOutcome.Failed, Error: "Unexpected response from the other PC.");
 
+            // Host already authorized this device - immediate approval
+            if ((response.RequestId == "auto" || !string.IsNullOrEmpty(response.Secret)) && !string.IsNullOrEmpty(response.Secret))
+            {
+                _settings.PairedPeerDeviceId = peer.DeviceId;
+                _settings.PairedPeerName = peer.DeviceName;
+                _settings.PairedPeerHost = peer.Address;
+                _settings.PairedPeerPort = peer.PairingPort;
+                _settings.PairedPeerSecret = response.Secret;
+                _settings.Save();
+                return new PairingResult(PairingOutcome.Approved, response.Secret);
+            }
+
+            if (!string.IsNullOrEmpty(response.Error))
+            {
+                string errorMsg = response.Error == "busy"
+                    ? "That PC is already handling another pairing request -- try again in a moment."
+                    : $"Pairing rejected: {response.Error}";
+                return new PairingResult(PairingOutcome.Denied, Error: errorMsg);
+            }
+
             if (string.IsNullOrEmpty(response.Code))
-                return new PairingResult(PairingOutcome.Denied, Error: "That PC is already handling another pairing request -- try again in a moment.");
+                return new PairingResult(PairingOutcome.Denied, Error: "Unexpected empty code received from the other PC.");
 
             onCodeReceived(response.Code);
 

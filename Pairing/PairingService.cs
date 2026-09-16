@@ -48,6 +48,7 @@ public sealed partial class PairingService : IDisposable
         public volatile bool Decided;
         public bool Approved;
         public string? Secret;
+        public DateTime CreatedAt = DateTime.UtcNow;
     }
 
     public PairingService(AppSettings settings)
@@ -181,6 +182,6 @@ public sealed partial class PairingService : IDisposable
     }
 
     private sealed record AnnounceMessage(string Type, string DeviceId, string DeviceName, int PairingPort);
-    private sealed record PairRequestResponse(string RequestId, string Code);
+    private sealed record PairRequestResponse(string RequestId, string Code, string? Secret = null, string? Error = null);
     private sealed record PairStatusResponse(string Status, string? Secret);
 }
