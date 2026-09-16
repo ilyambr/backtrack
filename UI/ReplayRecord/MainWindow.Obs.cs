@@ -130,6 +130,18 @@ public partial class MainWindow : Window
                     }
                 }
 
+                if (snapshot.PreferredClipLengthSeconds > 0 && _settings.PreferredClipLengthSeconds != snapshot.PreferredClipLengthSeconds)
+                {
+                    _settings.PreferredClipLengthSeconds = snapshot.PreferredClipLengthSeconds;
+                    changed = true;
+                }
+
+                if (snapshot.ReplayBufferMinutes > 0 && _settings.ReplayBufferMinutes != snapshot.ReplayBufferMinutes)
+                {
+                    _settings.ReplayBufferMinutes = snapshot.ReplayBufferMinutes;
+                    changed = true;
+                }
+
                 if (changed)
                 {
                     _settings.Save();

@@ -150,6 +150,22 @@ public partial class MainWindow : Window
 
         _pairing.OnBufferPreferencesChangedFromRemote += () => Dispatcher.BeginInvoke(async () =>
         {
+            if (_obs.IsConnected && _settings.PreferredClipLengthSeconds > 0)
+            {
+                try
+                {
+                    var rows = await _obs.ListReplayRowsAsync();
+                    foreach (var r in rows)
+                    {
+                        if (r.LengthSeconds != _settings.PreferredClipLengthSeconds)
+                            await _obs.SetReplayRowLengthAsync(r.Key, _settings.PreferredClipLengthSeconds);
+                    }
+                }
+                catch { }
+            }
+
+            _streamDeckServer?.BroadcastStateSnapshotAsync();
+
             if (SettingsPanel.Visibility == Visibility.Visible)
             {
                 await LoadBufferVisibilityUi();

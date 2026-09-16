@@ -408,6 +408,20 @@ public partial class MainWindow : Window
                 anyRowError = rows.Any(r => r.Status == 2);
                 _lastKnownAnyRowActive = anyRowActive;
                 _lastKnownAnyRowError = anyRowError;
+
+                if (_settings.ObsIsRemote && rows.Count > 0 && rows[0].LengthSeconds > 0 && !_isClipLengthSliderDragging)
+                {
+                    int remoteObsLength = rows[0].LengthSeconds;
+                    if (_settings.PreferredClipLengthSeconds != remoteObsLength)
+                    {
+                        _settings.PreferredClipLengthSeconds = remoteObsLength;
+                        _settings.Save();
+                        if (SaveReplayPanel.Visibility == Visibility.Visible)
+                        {
+                            _ = LoadReplayRowsAsync();
+                        }
+                    }
+                }
             }
             catch
             {

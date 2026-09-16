@@ -215,6 +215,8 @@ public partial class MainWindow : Window
         await _obs.SaveReplayRowAsync(rowKey);
     }
 
+    private bool _isClipLengthSliderDragging;
+
     private Border BuildSharedClipLengthControl(List<ReplayRow> rows)
     {
         int maxSeconds = Math.Max(MinClipSeconds, _settings.ReplayBufferMinutes * 60);
@@ -240,6 +242,7 @@ public partial class MainWindow : Window
 
         slider.PreviewMouseLeftButtonDown += (_, e) =>
         {
+            _isClipLengthSliderDragging = true;
             slider.CaptureMouse();
             SetSliderValueFromMouse(slider, e.GetPosition(slider));
             e.Handled = true;
@@ -253,6 +256,7 @@ public partial class MainWindow : Window
         {
             e.Handled = true;
             slider.ReleaseMouseCapture();
+            _isClipLengthSliderDragging = false;
 
             int seconds = SliderPosToSeconds(slider.Value, maxSeconds);
             if (_settings.PreferredClipLengthSeconds != seconds)
@@ -278,6 +282,15 @@ public partial class MainWindow : Window
                 }
             }
             _ = _streamDeckServer?.BroadcastStateSnapshotAsync();
+
+            if (_settings.ObsIsRemote)
+            {
+                _ = _pairing.SendUpdateBufferPreferencesAsync(
+                    _settings.HiddenBufferLabels,
+                    _settings.LocalRowNameOverrides,
+                    _settings.PreferredClipLengthSeconds,
+                    _settings.ReplayBufferMinutes);
+            }
         };
 
         var row2 = new Grid { Margin = new Thickness(2, 12, 2, 0) };

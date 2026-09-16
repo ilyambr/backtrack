@@ -11,7 +11,11 @@ using Backtrack.Obs;
 
 namespace Backtrack.Pairing;
 
-public sealed record BufferPreferencesSnapshot(List<string> HiddenBuffers, Dictionary<string, string> NameOverrides);
+public sealed record BufferPreferencesSnapshot(
+    List<string> HiddenBuffers,
+    Dictionary<string, string> NameOverrides,
+    int PreferredClipLengthSeconds = 0,
+    int ReplayBufferMinutes = 0);
 
 public sealed partial class PairingService
 {
@@ -49,7 +53,9 @@ public sealed partial class PairingService
         {
             success = true,
             hiddenBuffers = _settings.HiddenBufferLabels.ToList(),
-            nameOverrides = _settings.LocalRowNameOverrides
+            nameOverrides = _settings.LocalRowNameOverrides,
+            preferredClipLengthSeconds = _settings.PreferredClipLengthSeconds,
+            replayBufferMinutes = _settings.ReplayBufferMinutes
         });
     }
 
@@ -86,6 +92,24 @@ public sealed partial class PairingService
             }
             _settings.LocalRowNameOverrides = dict;
             changed = true;
+        }
+
+        if (request.TryGetProperty("preferredClipLengthSeconds", out JsonElement cl) && cl.TryGetInt32(out int clipLen) && clipLen > 0)
+        {
+            if (_settings.PreferredClipLengthSeconds != clipLen)
+            {
+                _settings.PreferredClipLengthSeconds = clipLen;
+                changed = true;
+            }
+        }
+
+        if (request.TryGetProperty("replayBufferMinutes", out JsonElement rbm) && rbm.TryGetInt32(out int bufMin) && bufMin > 0)
+        {
+            if (_settings.ReplayBufferMinutes != bufMin)
+            {
+                _settings.ReplayBufferMinutes = bufMin;
+                changed = true;
+            }
         }
 
         if (changed)
@@ -151,7 +175,15 @@ public sealed partial class PairingService
                         }
                     }
 
-                    return new BufferPreferencesSnapshot(hidden, overrides);
+                    int preferredClipLength = 0;
+                    if (doc.RootElement.TryGetProperty("preferredClipLengthSeconds", out JsonElement cl) && cl.TryGetInt32(out int cVal))
+                        preferredClipLength = cVal;
+
+                    int replayBufferMin = 0;
+                    if (doc.RootElement.TryGetProperty("replayBufferMinutes", out JsonElement rbm) && rbm.TryGetInt32(out int bVal))
+                        replayBufferMin = bVal;
+
+                    return new BufferPreferencesSnapshot(hidden, overrides, preferredClipLength, replayBufferMin);
                 }
             }
         }
@@ -162,7 +194,11 @@ public sealed partial class PairingService
         return null;
     }
 
-    public async Task<bool> SendUpdateBufferPreferencesAsync(IEnumerable<string> hiddenBuffers, IDictionary<string, string> nameOverrides)
+    public async Task<bool> SendUpdateBufferPreferencesAsync(
+        IEnumerable<string> hiddenBuffers,
+        IDictionary<string, string> nameOverrides,
+        int preferredClipLengthSeconds = 0,
+        int replayBufferMinutes = 0)
     {
         string host = !string.IsNullOrEmpty(_settings.PairedPeerHost)
             ? _settings.PairedPeerHost
@@ -187,7 +223,9 @@ public sealed partial class PairingService
                 type = "set_buffer_preferences",
                 secret,
                 hiddenBuffers = hiddenBuffers.ToList(),
-                nameOverrides
+                nameOverrides,
+                preferredClipLengthSeconds = preferredClipLengthSeconds > 0 ? preferredClipLengthSeconds : _settings.PreferredClipLengthSeconds,
+                replayBufferMinutes = replayBufferMinutes > 0 ? replayBufferMinutes : _settings.ReplayBufferMinutes
             });
             await WriteLineAsync(client.GetStream(), request).WaitAsync(TimeSpan.FromSeconds(2));
             string? responseLine = await ReadLineAsync(client.GetStream()).WaitAsync(TimeSpan.FromSeconds(2));

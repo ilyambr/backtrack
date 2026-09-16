@@ -19,12 +19,14 @@ public class BufferRpcTests
             ["ELGATO - Source Record"] = "Game Capture"
         };
 
-        var snapshot = new BufferPreferencesSnapshot(hidden, overrides);
+        var snapshot = new BufferPreferencesSnapshot(hidden, overrides, PreferredClipLengthSeconds: 120, ReplayBufferMinutes: 10);
 
         Assert.Equal(2, snapshot.HiddenBuffers.Count);
         Assert.Contains("SCREEN - Source Record", snapshot.HiddenBuffers);
         Assert.Equal("Monitor Display", snapshot.NameOverrides["SCREEN - Source Record"]);
         Assert.Equal("Game Capture", snapshot.NameOverrides["ELGATO - Source Record"]);
+        Assert.Equal(120, snapshot.PreferredClipLengthSeconds);
+        Assert.Equal(10, snapshot.ReplayBufferMinutes);
     }
 
     [Fact]
@@ -39,7 +41,9 @@ public class BufferRpcTests
             {
                 ["Buffer1"] = "Custom Name 1",
                 ["Buffer2"] = "Custom Name 2"
-            }
+            },
+            preferredClipLengthSeconds = 45,
+            replayBufferMinutes = 5
         };
 
         string json = JsonSerializer.Serialize(requestObj);
@@ -59,6 +63,12 @@ public class BufferRpcTests
         Assert.Equal(JsonValueKind.Object, no.ValueKind);
         Assert.Equal("Custom Name 1", no.GetProperty("Buffer1").GetString());
         Assert.Equal("Custom Name 2", no.GetProperty("Buffer2").GetString());
+
+        Assert.True(doc.RootElement.TryGetProperty("preferredClipLengthSeconds", out var cl));
+        Assert.Equal(45, cl.GetInt32());
+
+        Assert.True(doc.RootElement.TryGetProperty("replayBufferMinutes", out var rbm));
+        Assert.Equal(5, rbm.GetInt32());
     }
 
     [Fact]
