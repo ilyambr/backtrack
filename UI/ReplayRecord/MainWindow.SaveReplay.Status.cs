@@ -68,6 +68,9 @@ public partial class MainWindow : Window
             return;
         try
         {
+            if (_settings.ObsIsRemote)
+                await SyncBufferPreferencesFromHostAsync();
+
             foreach (ReplayRow row in await _obs.ListReplayRowsAsync())
                 _rowLabels[row.Key] = row.Label;
 

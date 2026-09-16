@@ -148,6 +148,22 @@ public partial class MainWindow : Window
             return new PluginVersionsSnapshot(replaySlider, sourceRecord);
         };
 
+        _pairing.OnBufferPreferencesChangedFromRemote += () => Dispatcher.BeginInvoke(async () =>
+        {
+            if (SettingsPanel.Visibility == Visibility.Visible)
+            {
+                await LoadBufferVisibilityUi();
+                await LoadRecordFolderUi();
+            }
+            if (SaveReplayPanel.Visibility == Visibility.Visible)
+            {
+                await LoadReplayRowsAsync();
+            }
+            if (StartRecordPanel.Visibility == Visibility.Visible)
+            {
+                await LoadRecordRowsAsync();
+            }
+        });
     }
 
     private void SetupTimersAndWindow()

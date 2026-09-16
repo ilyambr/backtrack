@@ -32,6 +32,9 @@ public partial class MainWindow : Window
     {
         BufRowsPanel.Children.Clear();
 
+        if (_settings.ObsIsRemote)
+            await SyncBufferPreferencesFromHostAsync();
+
         if (!_obs.IsConnected)
         {
             AddInfoLine(BufRowsPanel, !_serverEnabledAtStartup

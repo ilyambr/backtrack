@@ -274,8 +274,8 @@ public partial class MainWindow : Window
         BufferDurationSlider.Value = _settings.ReplayBufferMinutes;
         RefreshBufferDurationUi();
 
-        BuffersSection.Visibility = _settings.ObsIsRemote ? Visibility.Collapsed : Visibility.Visible;
-        RecordingsSection.Visibility = _settings.ObsIsRemote ? Visibility.Collapsed : Visibility.Visible;
+        BuffersSection.Visibility = Visibility.Visible;
+        RecordingsSection.Visibility = Visibility.Visible;
 
         ObsRemoteToggle.IsChecked = _settings.ObsIsRemote;
         ObsRemoteFields.Visibility = _settings.ObsIsRemote ? Visibility.Visible : Visibility.Collapsed;

@@ -65,13 +65,10 @@ public partial class MainWindow : Window
             _settings.ObsRemotePassword = ObsPasswordBox.Password;
             _settings.Save();
 
-            BuffersSection.Visibility = remote ? Visibility.Collapsed : Visibility.Visible;
-            RecordingsSection.Visibility = remote ? Visibility.Collapsed : Visibility.Visible;
-            if (!remote)
-            {
-                _ = LoadBufferVisibilityUi();
-                _ = LoadRecordFolderUi();
-            }
+            BuffersSection.Visibility = Visibility.Visible;
+            RecordingsSection.Visibility = Visibility.Visible;
+            _ = LoadBufferVisibilityUi();
+            _ = LoadRecordFolderUi();
 
             (string url, string? password, _serverEnabledAtStartup) = ResolveObsConnection();
             _obs.Reconfigure(url, password);

@@ -97,6 +97,51 @@ public partial class MainWindow : Window
         return ("ws://127.0.0.1:4455", password, enabled);
     }
 
+    private async Task SyncBufferPreferencesFromHostAsync()
+    {
+        if (!_settings.ObsIsRemote)
+            return;
+
+        try
+        {
+            BufferPreferencesSnapshot? snapshot = await _pairing.GetRemoteBufferPreferencesAsync();
+            if (snapshot != null)
+            {
+                bool changed = false;
+                if (snapshot.HiddenBuffers != null)
+                {
+                    var remoteHidden = new HashSet<string>(snapshot.HiddenBuffers, StringComparer.OrdinalIgnoreCase);
+                    if (!_settings.HiddenBufferLabels.SetEquals(remoteHidden))
+                    {
+                        _settings.HiddenBufferLabels = remoteHidden;
+                        changed = true;
+                    }
+                }
+
+                if (snapshot.NameOverrides != null)
+                {
+                    bool overridesMatch = _settings.LocalRowNameOverrides.Count == snapshot.NameOverrides.Count &&
+                        _settings.LocalRowNameOverrides.All(kvp => snapshot.NameOverrides.TryGetValue(kvp.Key, out var v) && v == kvp.Value);
+
+                    if (!overridesMatch)
+                    {
+                        _settings.LocalRowNameOverrides = new Dictionary<string, string>(snapshot.NameOverrides, StringComparer.OrdinalIgnoreCase);
+                        changed = true;
+                    }
+                }
+
+                if (changed)
+                {
+                    _settings.Save();
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            AppLog.Write($"[SyncBufferPreferencesFromHost] Error: {ex.Message}");
+        }
+    }
+
     private async Task CancelActiveRecordingsAsync()
     {
         if (!_obs.IsConnected)
@@ -152,10 +197,10 @@ public partial class MainWindow : Window
 
     private async Task LoadRecordFolderUi()
     {
-        if (_settings.ObsIsRemote)
-            return;
-
         RecordFolderPanel.Children.Clear();
+
+        if (_settings.ObsIsRemote)
+            await SyncBufferPreferencesFromHostAsync();
 
         if (!_obs.IsConnected)
         {

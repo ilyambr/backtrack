@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
@@ -73,6 +73,9 @@ public partial class MainWindow : Window
     private async Task LoadRecordRowsAsync()
     {
         RecRowsPanel.Children.Clear();
+
+        if (_settings.ObsIsRemote)
+            await SyncBufferPreferencesFromHostAsync();
 
         if (!_obs.IsConnected)
         {

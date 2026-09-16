@@ -149,6 +149,8 @@ public sealed partial class PairingService : IDisposable
                 {
                     "pair_request" => HandlePairRequest(doc.RootElement),
                     "pair_status" => HandlePairStatus(doc.RootElement),
+                    "get_buffer_preferences" => HandleGetBufferPreferences(doc.RootElement),
+                    "set_buffer_preferences" => HandleSetBufferPreferences(doc.RootElement),
                     "get_ramdisk_settings" => HandleGetRamDiskSettings(doc.RootElement),
                     "set_ramdisk_settings" => await HandleSetRamDiskSettingsAsync(doc.RootElement),
                     "check_plugin_updates" => await HandleCheckPluginUpdatesAsync(doc.RootElement),

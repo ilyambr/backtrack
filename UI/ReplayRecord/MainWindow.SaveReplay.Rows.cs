@@ -24,10 +24,10 @@ public partial class MainWindow : Window
 {
     private async Task LoadBufferVisibilityUi()
     {
-        if (_settings.ObsIsRemote)
-            return;
-
         BufferVisibilityPanel.Children.Clear();
+
+        if (_settings.ObsIsRemote)
+            await SyncBufferPreferencesFromHostAsync();
 
         if (!_obs.IsConnected)
         {
@@ -81,6 +81,8 @@ public partial class MainWindow : Window
             TextTrimming = TextTrimming.CharacterEllipsis,
         };
         var folderButton = BuildFolderIconButton(async (_, _) => await PickBufferDestFolderAsync(row.Key, folderLabel));
+        if (_settings.ObsIsRemote)
+            folderButton.Visibility = Visibility.Collapsed;
 
         var bottomGrid = new Grid
         {
@@ -103,6 +105,8 @@ public partial class MainWindow : Window
                 _settings.HiddenBufferLabels.Add(label);
             _settings.Save();
             bottomGrid.Visibility = toggle.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
+            if (_settings.ObsIsRemote)
+                _ = _pairing.SendUpdateBufferPreferencesAsync(_settings.HiddenBufferLabels, _settings.LocalRowNameOverrides);
         };
 
         var container = new StackPanel();
@@ -305,6 +309,8 @@ public partial class MainWindow : Window
             TextTrimming = TextTrimming.CharacterEllipsis,
         };
         var folderButton = BuildFolderIconButton(async (_, _) => await PickMainRecordFolderAsync(folderLabel));
+        if (_settings.ObsIsRemote)
+            folderButton.Visibility = Visibility.Collapsed;
 
         var bottomGrid = new Grid { Margin = new Thickness(0, 8, 0, 0) };
         bottomGrid.ColumnDefinitions.Add(new ColumnDefinition());
@@ -349,6 +355,8 @@ public partial class MainWindow : Window
             TextTrimming = TextTrimming.CharacterEllipsis,
         };
         var folderButton = BuildFolderIconButton(async (_, _) => await PickRecordRowFolderAsync(row.SourceName, row.FilterName, folderLabel));
+        if (_settings.ObsIsRemote)
+            folderButton.Visibility = Visibility.Collapsed;
 
         var bottomGrid = new Grid
         {
@@ -370,6 +378,8 @@ public partial class MainWindow : Window
                 _settings.HiddenBufferLabels.Add(label);
             _settings.Save();
             bottomGrid.Visibility = toggle.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
+            if (_settings.ObsIsRemote)
+                _ = _pairing.SendUpdateBufferPreferencesAsync(_settings.HiddenBufferLabels, _settings.LocalRowNameOverrides);
         };
 
         var container = new StackPanel();
@@ -387,5 +397,7 @@ public partial class MainWindow : Window
         else
             _settings.LocalRowNameOverrides[originalLabel] = newName;
         _settings.Save();
+        if (_settings.ObsIsRemote)
+            _ = _pairing.SendUpdateBufferPreferencesAsync(_settings.HiddenBufferLabels, _settings.LocalRowNameOverrides);
     }
 }
