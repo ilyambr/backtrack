@@ -181,7 +181,15 @@ public sealed partial class PairingService : IDisposable
         _pairingServer?.Stop();
     }
 
+    private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = true };
+
     private sealed record AnnounceMessage(string Type, string DeviceId, string DeviceName, int PairingPort);
-    private sealed record PairRequestResponse(string RequestId, string Code, string? Secret = null, string? Error = null);
-    private sealed record PairStatusResponse(string Status, string? Secret);
+    private sealed record PairRequestResponse(
+        [property: System.Text.Json.Serialization.JsonPropertyName("requestId")] string? RequestId = null,
+        [property: System.Text.Json.Serialization.JsonPropertyName("code")] string? Code = null,
+        [property: System.Text.Json.Serialization.JsonPropertyName("secret")] string? Secret = null,
+        [property: System.Text.Json.Serialization.JsonPropertyName("error")] string? Error = null);
+    private sealed record PairStatusResponse(
+        [property: System.Text.Json.Serialization.JsonPropertyName("status")] string? Status = null,
+        [property: System.Text.Json.Serialization.JsonPropertyName("secret")] string? Secret = null);
 }

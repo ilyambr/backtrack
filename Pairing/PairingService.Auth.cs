@@ -135,12 +135,12 @@ public sealed partial class PairingService
             if (responseLine is null)
                 return new PairingResult(PairingOutcome.Failed, Error: "No response from the other PC.");
 
-            var response = JsonSerializer.Deserialize<PairRequestResponse>(responseLine);
+            var response = JsonSerializer.Deserialize<PairRequestResponse>(responseLine, JsonOptions);
             if (response is null)
                 return new PairingResult(PairingOutcome.Failed, Error: "Unexpected response from the other PC.");
 
             // Host already authorized this device - immediate approval
-            if ((response.RequestId == "auto" || !string.IsNullOrEmpty(response.Secret)) && !string.IsNullOrEmpty(response.Secret))
+            if (!string.IsNullOrEmpty(response.Secret))
             {
                 _settings.PairedPeerDeviceId = peer.DeviceId;
                 _settings.PairedPeerName = peer.DeviceName;
@@ -159,10 +159,13 @@ public sealed partial class PairingService
                 return new PairingResult(PairingOutcome.Denied, Error: errorMsg);
             }
 
-            if (string.IsNullOrEmpty(response.Code))
+            if (string.IsNullOrEmpty(response.Code) && !string.Equals(response.RequestId, "auto", StringComparison.OrdinalIgnoreCase))
                 return new PairingResult(PairingOutcome.Denied, Error: "Unexpected empty code received from the other PC.");
 
-            onCodeReceived(response.Code);
+            if (!string.IsNullOrEmpty(response.Code))
+            {
+                onCodeReceived(response.Code);
+            }
 
             var deadline = DateTime.UtcNow.AddSeconds(65);
             while (DateTime.UtcNow < deadline)
@@ -177,7 +180,7 @@ public sealed partial class PairingService
                 if (statusLine is null)
                     continue;
 
-                var status = JsonSerializer.Deserialize<PairStatusResponse>(statusLine);
+                var status = JsonSerializer.Deserialize<PairStatusResponse>(statusLine, JsonOptions);
                 if (status?.Status == "approved")
                 {
                     _settings.PairedPeerDeviceId = peer.DeviceId;
