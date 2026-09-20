@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Interop;
@@ -50,8 +50,8 @@ public partial class StatusOverlay : Window
         AppSettings settings = AppSettings.Load();
         ApplyLayout(settings.StatusIndicatorOrientation, settings.StatusIndicatorLocation);
 
-        bool dropToEdge = IsHudOpen ||
-            (!FullscreenDetector.IsShellSurfaceActive() && FullscreenDetector.IsFullscreenAppOnMonitor(settings.DisplayDeviceName));
+        bool isFullscreen = FullscreenDetector.IsFullscreenAppOnMonitor(settings.DisplayDeviceName);
+        bool dropToEdge = IsHudOpen || (isFullscreen && !FullscreenDetector.IsShellSurfaceActive());
         bool autoHide = !dropToEdge && FullscreenDetector.IsTaskbarAutoHideEnabled();
         Rect boundsDiu = DisplayMonitors.ResolveBoundsDiu(settings.DisplayDeviceName);
         Rect workAreaDiu = DisplayMonitors.ResolveWorkAreaDiu(settings.DisplayDeviceName);

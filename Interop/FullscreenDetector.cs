@@ -40,7 +40,12 @@ public static class FullscreenDetector
     private const int ABS_AUTOHIDE = 0x1;
     private const uint GW_OWNER = 4;
     private const int GWL_EXSTYLE = -20;
+    private const int GWL_STYLE = -16;
     private const int WS_EX_TRANSPARENT = 0x00000020;
+    private const int WS_EX_TOOLWINDOW = 0x00000080;
+    private const int WS_POPUP = unchecked((int)0x80000000);
+    private const int DWMWA_EXTENDED_FRAME_BOUNDS = 9;
+    private const int BoundsTolerancePixels = 8;
 
     private delegate bool EnumWindowsProc(nint hWnd, nint lParam);
 
@@ -68,8 +73,6 @@ public static class FullscreenDetector
     [DllImport("dwmapi.dll")]
     private static extern int DwmGetWindowAttribute(nint hwnd, int dwAttribute, out RECT pvAttribute, int cbAttribute);
 
-    private const int DWMWA_EXTENDED_FRAME_BOUNDS = 9;
-
     [DllImport("user32.dll")]
     private static extern uint GetWindowThreadProcessId(nint hWnd, out uint lpdwProcessId);
 
@@ -96,6 +99,13 @@ public static class FullscreenDetector
         "WorkerW",
         "Shell_TrayWnd",
         "Shell_SecondaryTrayWnd",
+    };
+
+    private static readonly HashSet<string> InteractiveShellProcessNames = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "explorer",
+        "ShellExperienceHost",
+        "StartMenuExperienceHost",
     };
 
     private static readonly HashSet<string> ShellInfrastructureProcessNames = new(StringComparer.OrdinalIgnoreCase)
@@ -136,13 +146,13 @@ public static class FullscreenDetector
 
             GetWindowThreadProcessId(fg, out uint pid);
             string processName = TryGetProcessName(pid);
-            bool isShell = ShellInfrastructureProcessNames.Contains(processName);
-            if (!isShell)
+            if (!InteractiveShellProcessNames.Contains(processName))
                 return false;
 
             var classNameBuffer = new StringBuilder(64);
             GetClassName(fg, classNameBuffer, classNameBuffer.Capacity);
             string className = classNameBuffer.ToString();
+
             var titleBuffer = new StringBuilder(128);
             GetWindowText(fg, titleBuffer, titleBuffer.Capacity);
             string title = titleBuffer.ToString();
@@ -168,12 +178,41 @@ public static class FullscreenDetector
         }
     }
 
-    public static bool IsFullscreenAppOnMonitor(string? deviceName)
+    public static bool IsFullscreenAppOnMonitor(string? targetDeviceName)
     {
         try
         {
             int currentProcessId = Environment.ProcessId;
-            bool? coversMonitor = null;
+
+            // Fallback: If deviceName is missing or invalid in current topology (e.g. mirrored mode),
+            // resolve against DisplayMonitors.Resolve
+            string? effectiveDevice = DisplayMonitors.Resolve(targetDeviceName).DeviceName;
+
+            // STEP 1: Fast-path for the active foreground window
+            nint fg = GetForegroundWindow();
+            if (fg != 0)
+            {
+                GetWindowThreadProcessId(fg, out uint fgPid);
+                if (fgPid != (uint)currentProcessId)
+                {
+                    string fgProc = TryGetProcessName(fgPid);
+                    if (!ShellInfrastructureProcessNames.Contains(fgProc))
+                    {
+                        if (CheckWindowCoversMonitor(fg, effectiveDevice, out bool covers, out string dev, out string cls, out string tit))
+                        {
+                            if (covers)
+                            {
+                                LogFullscreenStateIfChanged($"foreground fullscreen on {dev}: class=\"{cls}\" title=\"{tit}\" process={fgProc} coversMonitor=True");
+                                return true;
+                            }
+                        }
+                    }
+                }
+            }
+
+            // STEP 2: Z-order scan with overlay tolerance
+            bool foundFullscreen = false;
+            string? firstCandidateLog = null;
 
             EnumWindows((hWnd, _) =>
             {
@@ -187,53 +226,95 @@ public static class FullscreenDetector
                 if (pid == currentProcessId)
                     return true;
 
-                nint hMonitor = MonitorFromWindow(hWnd, MONITOR_DEFAULTTONEAREST);
-                var monitorInfo = new MONITORINFOEX { cbSize = Marshal.SizeOf<MONITORINFOEX>() };
-                if (!GetMonitorInfo(hMonitor, ref monitorInfo))
-                    return true;
-
-                if (!string.IsNullOrEmpty(deviceName) && monitorInfo.szDevice != deviceName)
-                    return true;
-
                 string processName = TryGetProcessName(pid);
                 if (ShellInfrastructureProcessNames.Contains(processName))
                     return true;
 
-                var classNameBuffer = new StringBuilder(64);
-                GetClassName(hWnd, classNameBuffer, classNameBuffer.Capacity);
-                string className = classNameBuffer.ToString();
-                if (className is "Progman" or "WorkerW")
+                int exStyle = GetWindowLong(hWnd, GWL_EXSTYLE);
+                if ((exStyle & WS_EX_TRANSPARENT) != 0)
                     return true;
 
-                if ((GetWindowLong(hWnd, GWL_EXSTYLE) & WS_EX_TRANSPARENT) != 0)
+                if (!CheckWindowCoversMonitor(hWnd, effectiveDevice, out bool covers, out string dev, out string cls, out string tit))
+                    return true; // Not on target monitor
+
+                if (cls is "Progman" or "WorkerW")
                     return true;
 
-                bool gotDwmBounds = DwmGetWindowAttribute(hWnd, DWMWA_EXTENDED_FRAME_BOUNDS, out RECT windowRect, Marshal.SizeOf<RECT>()) == 0;
-                if (!gotDwmBounds && !GetWindowRect(hWnd, out windowRect))
+                if (covers)
                 {
-                    coversMonitor = false;
-                    return false;
+                    LogFullscreenStateIfChanged($"topmost fullscreen on {dev}: class=\"{cls}\" title=\"{tit}\" process={processName} coversMonitor=True");
+                    foundFullscreen = true;
+                    return false; // Found a fullscreen window, terminate scan
                 }
 
-                RECT m = monitorInfo.rcMonitor;
-                coversMonitor = windowRect.Left <= m.Left && windowRect.Top <= m.Top
-                                 && windowRect.Right >= m.Right && windowRect.Bottom >= m.Bottom;
+                // If this window does not cover the monitor, check if it is just a small tool/overlay window
+                // (e.g., Discord overlay, RTSS OSD, small utility). If so, do NOT abort the scan yet!
+                firstCandidateLog ??= $"topmost non-fullscreen on {dev}: class=\"{cls}\" title=\"{tit}\" process={processName} coversMonitor=False";
 
-                var titleBuffer = new StringBuilder(128);
-                GetWindowText(hWnd, titleBuffer, titleBuffer.Capacity);
-                LogFullscreenStateIfChanged($"topmost on monitor {monitorInfo.szDevice}: class=\"{className}\" title=\"{titleBuffer}\" process={processName} coversMonitor={coversMonitor}");
+                bool isToolOrPopup = (exStyle & WS_EX_TOOLWINDOW) != 0 || (GetWindowLong(hWnd, GWL_STYLE) & WS_POPUP) != 0;
+                if (isToolOrPopup)
+                {
+                    return true; // Continue searching down Z-order past the overlay!
+                }
+
+                // Standard top-level application window found that isn't fullscreen
                 return false;
             }, 0);
 
-            if (coversMonitor is null)
-                LogFullscreenStateIfChanged($"nothing real found on monitor {deviceName}");
+            if (!foundFullscreen && firstCandidateLog is not null)
+            {
+                LogFullscreenStateIfChanged(firstCandidateLog);
+            }
+            else if (!foundFullscreen && firstCandidateLog is null)
+            {
+                LogFullscreenStateIfChanged($"nothing real found on monitor {effectiveDevice ?? targetDeviceName}");
+            }
 
-            return coversMonitor ?? false;
+            return foundFullscreen;
         }
         catch
         {
             return false;
         }
+    }
+
+    private static bool CheckWindowCoversMonitor(nint hWnd, string? targetDevice, out bool covers, out string device, out string className, out string title)
+    {
+        covers = false;
+        device = string.Empty;
+        className = string.Empty;
+        title = string.Empty;
+
+        nint hMonitor = MonitorFromWindow(hWnd, MONITOR_DEFAULTTONEAREST);
+        var monitorInfo = new MONITORINFOEX { cbSize = Marshal.SizeOf<MONITORINFOEX>() };
+        if (!GetMonitorInfo(hMonitor, ref monitorInfo))
+            return false;
+
+        device = monitorInfo.szDevice;
+        if (!string.IsNullOrEmpty(targetDevice) && !string.Equals(device, targetDevice, StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        var clsBuf = new StringBuilder(64);
+        GetClassName(hWnd, clsBuf, clsBuf.Capacity);
+        className = clsBuf.ToString();
+
+        var titBuf = new StringBuilder(128);
+        GetWindowText(hWnd, titBuf, titBuf.Capacity);
+        title = titBuf.ToString();
+
+        bool gotDwmBounds = DwmGetWindowAttribute(hWnd, DWMWA_EXTENDED_FRAME_BOUNDS, out RECT windowRect, Marshal.SizeOf<RECT>()) == 0;
+        if (!gotDwmBounds && !GetWindowRect(hWnd, out windowRect))
+            return false;
+
+        RECT m = monitorInfo.rcMonitor;
+
+        // Apply tolerance (BoundsTolerancePixels) to absorb DWM invisible margins & clone scaling offsets
+        covers = (windowRect.Left <= m.Left + BoundsTolerancePixels)
+              && (windowRect.Top <= m.Top + BoundsTolerancePixels)
+              && (windowRect.Right >= m.Right - BoundsTolerancePixels)
+              && (windowRect.Bottom >= m.Bottom - BoundsTolerancePixels);
+
+        return true;
     }
 
     private static void LogShellStateIfChanged(string state)
