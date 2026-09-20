@@ -5,9 +5,11 @@ using System.Runtime.InteropServices;
 using System.Windows;
 using Microsoft.Win32;
 
+using Backtrack.Core;
+
 namespace Backtrack.Interop;
 
-public readonly record struct DisplayInfo(string DeviceName, bool IsPrimary, Rect BoundsDiu, Rect WorkAreaDiu, string? FriendlyName);
+public readonly record struct DisplayInfo(string DeviceName, string? DeviceId, bool IsPrimary, Rect BoundsDiu, Rect WorkAreaDiu, string? FriendlyName);
 
 public static class DisplayMonitors
 {
@@ -108,34 +110,50 @@ public static class DisplayMonitors
                 (info.rcWork.Right - info.rcWork.Left) / scale,
                 (info.rcWork.Bottom - info.rcWork.Top) / scale);
 
-            results.Add(new DisplayInfo(info.szDevice, (info.dwFlags & MONITORINFOF_PRIMARY) != 0, bounds, workArea, TryGetMonitorFriendlyName(info.szDevice)));
+            (string? deviceId, string? friendlyName) = QueryMonitorDetails(info.szDevice);
+
+            results.Add(new DisplayInfo(
+                info.szDevice,
+                deviceId,
+                (info.dwFlags & MONITORINFOF_PRIMARY) != 0,
+                bounds,
+                workArea,
+                friendlyName));
             return true;
         }, IntPtr.Zero);
         return results;
     }
 
-    private static string? TryGetMonitorFriendlyName(string gdiDeviceName)
+    private static (string? DeviceId, string? FriendlyName) QueryMonitorDetails(string gdiDeviceName)
     {
         try
         {
             var monitorDevice = new DISPLAY_DEVICE { cb = Marshal.SizeOf<DISPLAY_DEVICE>() };
             if (!EnumDisplayDevices(gdiDeviceName, 0, ref monitorDevice, EDD_GET_DEVICE_INTERFACE_NAME))
-                return null;
+                return (null, null);
 
-            string[] parts = monitorDevice.DeviceID.Split('#');
-            if (parts.Length < 3)
-                return null;
+            string? deviceId = string.IsNullOrWhiteSpace(monitorDevice.DeviceID) ? null : monitorDevice.DeviceID.Trim();
+            string? friendlyName = null;
 
-            using RegistryKey? key = Registry.LocalMachine.OpenSubKey(
-                $@"SYSTEM\CurrentControlSet\Enum\DISPLAY\{parts[1]}\{parts[2]}\Device Parameters");
-            if (key?.GetValue("EDID") is not byte[] edid)
-                return null;
+            if (!string.IsNullOrEmpty(deviceId))
+            {
+                string[] parts = deviceId.Split('#');
+                if (parts.Length >= 3)
+                {
+                    using RegistryKey? key = Registry.LocalMachine.OpenSubKey(
+                        $@"SYSTEM\CurrentControlSet\Enum\DISPLAY\{parts[1]}\{parts[2]}\Device Parameters");
+                    if (key?.GetValue("EDID") is byte[] edid)
+                    {
+                        friendlyName = ParseEdidMonitorName(edid);
+                    }
+                }
+            }
 
-            return ParseEdidMonitorName(edid);
+            return (deviceId, friendlyName);
         }
         catch
         {
-            return null;
+            return (null, null);
         }
     }
 
@@ -161,26 +179,79 @@ public static class DisplayMonitors
         return null;
     }
 
-    public static DisplayInfo Resolve(string? deviceName)
+    public static DisplayInfo Resolve(string? deviceName, string? deviceId = null, string? friendlyName = null)
     {
         List<DisplayInfo> all = GetAll();
         if (all.Count == 0)
             return default;
 
+        // 1. Try hardware DeviceId match (strongest persistent identity across GDI renumbering/unplugs)
+        if (!string.IsNullOrWhiteSpace(deviceId))
+        {
+            string targetId = deviceId.Trim();
+            DisplayInfo matchById = all.FirstOrDefault(d =>
+                !string.IsNullOrWhiteSpace(d.DeviceId) &&
+                (string.Equals(d.DeviceId.Trim(), targetId, StringComparison.OrdinalIgnoreCase) ||
+                 IsDeviceIdMatch(d.DeviceId, targetId)));
+
+            if (!string.IsNullOrEmpty(matchById.DeviceName))
+                return matchById;
+        }
+
+        // 2. Try FriendlyName match (e.g. "VG2248")
+        if (!string.IsNullOrWhiteSpace(friendlyName))
+        {
+            string targetName = friendlyName.Trim();
+            DisplayInfo matchByName = all.FirstOrDefault(d =>
+                !string.IsNullOrWhiteSpace(d.FriendlyName) &&
+                string.Equals(d.FriendlyName.Trim(), targetName, StringComparison.OrdinalIgnoreCase));
+
+            if (!string.IsNullOrEmpty(matchByName.DeviceName))
+                return matchByName;
+        }
+
+        // 3. Try GDI DeviceName / identifier match
         if (!string.IsNullOrWhiteSpace(deviceName))
         {
             string cleanTarget = deviceName.Trim().TrimEnd('\0', ' ');
-            DisplayInfo match = all.FirstOrDefault(d => 
+            DisplayInfo match = all.FirstOrDefault(d =>
                 string.Equals(d.DeviceName.Trim().TrimEnd('\0', ' '), cleanTarget, StringComparison.OrdinalIgnoreCase) ||
-                (!string.IsNullOrWhiteSpace(d.FriendlyName) && string.Equals(d.FriendlyName.Trim(), cleanTarget, StringComparison.OrdinalIgnoreCase)));
+                (!string.IsNullOrWhiteSpace(d.FriendlyName) && string.Equals(d.FriendlyName.Trim(), cleanTarget, StringComparison.OrdinalIgnoreCase)) ||
+                (!string.IsNullOrWhiteSpace(d.DeviceId) && string.Equals(d.DeviceId.Trim(), cleanTarget, StringComparison.OrdinalIgnoreCase)));
 
             if (!string.IsNullOrEmpty(match.DeviceName))
                 return match;
         }
 
+        // 4. Fallback: Preferred display is physically unplugged; fall back to Primary or first available display
         return all.FirstOrDefault(d => d.IsPrimary, all.FirstOrDefault());
     }
 
-    public static Rect ResolveBoundsDiu(string? deviceName) => Resolve(deviceName).BoundsDiu;
-    public static Rect ResolveWorkAreaDiu(string? deviceName) => Resolve(deviceName).WorkAreaDiu;
+    public static DisplayInfo Resolve(AppSettings? settings)
+    {
+        if (settings is null)
+            return Resolve((string?)null);
+        return Resolve(settings.DisplayDeviceName, settings.DisplayDeviceId, settings.DisplayFriendlyName);
+    }
+
+    private static bool IsDeviceIdMatch(string id1, string id2)
+    {
+        string[] p1 = id1.Split('#');
+        string[] p2 = id2.Split('#');
+        if (p1.Length >= 2 && p2.Length >= 2)
+        {
+            if (string.Equals(p1[1], p2[1], StringComparison.OrdinalIgnoreCase))
+            {
+                if (p1.Length >= 3 && p2.Length >= 3)
+                    return string.Equals(p1[2], p2[2], StringComparison.OrdinalIgnoreCase);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    public static Rect ResolveBoundsDiu(string? deviceName) => Resolve(deviceName, null, null).BoundsDiu;
+    public static Rect ResolveBoundsDiu(AppSettings? settings) => Resolve(settings).BoundsDiu;
+    public static Rect ResolveWorkAreaDiu(string? deviceName) => Resolve(deviceName, null, null).WorkAreaDiu;
+    public static Rect ResolveWorkAreaDiu(AppSettings? settings) => Resolve(settings).WorkAreaDiu;
 }

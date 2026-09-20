@@ -223,8 +223,19 @@ public partial class MainWindow : Window
         if (DisplaySelector.SelectedValue is not string deviceName)
             return;
 
+        if (deviceName.StartsWith("disconnected", StringComparison.OrdinalIgnoreCase))
+            return;
+
         string? previousDeviceName = _settings.DisplayDeviceName;
         _settings.DisplayDeviceName = deviceName;
+
+        DisplayInfo info = DisplayMonitors.GetAll().FirstOrDefault(d => d.DeviceName == deviceName);
+        if (!string.IsNullOrEmpty(info.DeviceName))
+        {
+            _settings.DisplayDeviceId = info.DeviceId;
+            _settings.DisplayFriendlyName = info.FriendlyName;
+        }
+
         _settings.Save();
 
         ShowScreen(Screen.Settings);
@@ -306,12 +317,6 @@ public partial class MainWindow : Window
 
         _recentClipsOverlay.Left = clampedX;
         _recentClipsOverlay.Top = clampedY;
-        if (clampedX != x || clampedY != y)
-        {
-            _settings.RecentClipsOverlayX = clampedX;
-            _settings.RecentClipsOverlayY = clampedY;
-            _settings.Save();
-        }
     }
 
     internal void ShowRecentClipsToggle_Click(object sender, RoutedEventArgs e)

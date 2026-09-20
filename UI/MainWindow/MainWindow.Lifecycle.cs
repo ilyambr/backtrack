@@ -303,7 +303,12 @@ public partial class MainWindow : Window
         });
         _trayManager.OnQuitRequested += () => Dispatcher.BeginInvoke(() => Application.Current.Shutdown());
 
-        _displaySettingsHandler = (_, _) => Dispatcher.BeginInvoke(RepositionAllForDisplayChange);
+        _displaySettingsHandler = (_, _) =>
+        {
+            Dispatcher.BeginInvoke(RepositionAllForDisplayChange);
+            Task.Delay(600).ContinueWith(_ => Dispatcher.BeginInvoke(RepositionAllForDisplayChange));
+            Task.Delay(1500).ContinueWith(_ => Dispatcher.BeginInvoke(RepositionAllForDisplayChange));
+        };
         SystemEvents.DisplaySettingsChanged += _displaySettingsHandler;
 
         try

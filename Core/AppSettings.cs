@@ -83,6 +83,8 @@ public sealed class AppSettings
     public double? RecentClipsOverlayY { get; set; }
 
     public string? DisplayDeviceName { get; set; }
+    public string? DisplayDeviceId { get; set; }
+    public string? DisplayFriendlyName { get; set; }
 
     public string DeviceId { get; set; } = Guid.NewGuid().ToString();
 

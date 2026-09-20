@@ -50,11 +50,12 @@ public partial class StatusOverlay : Window
         AppSettings settings = AppSettings.Load();
         ApplyLayout(settings.StatusIndicatorOrientation, settings.StatusIndicatorLocation);
 
-        bool isFullscreen = FullscreenDetector.IsFullscreenAppOnMonitor(settings.DisplayDeviceName);
+        DisplayInfo targetDisplay = DisplayMonitors.Resolve(settings);
+        bool isFullscreen = FullscreenDetector.IsFullscreenAppOnMonitor(targetDisplay.DeviceName);
         bool dropToEdge = IsHudOpen || (isFullscreen && !FullscreenDetector.IsShellSurfaceActive());
         bool autoHide = !dropToEdge && FullscreenDetector.IsTaskbarAutoHideEnabled();
-        Rect boundsDiu = DisplayMonitors.ResolveBoundsDiu(settings.DisplayDeviceName);
-        Rect workAreaDiu = DisplayMonitors.ResolveWorkAreaDiu(settings.DisplayDeviceName);
+        Rect boundsDiu = targetDisplay.BoundsDiu;
+        Rect workAreaDiu = targetDisplay.WorkAreaDiu;
         Rect screenBounds = dropToEdge || autoHide ? boundsDiu : workAreaDiu;
         if (screenBounds != _lastLoggedScreenBounds)
         {

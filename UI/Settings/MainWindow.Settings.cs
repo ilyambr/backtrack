@@ -60,13 +60,38 @@ public partial class MainWindow : Window
             d.DeviceName,
             $"{d.FriendlyName ?? $"Display {i + 1}"}{(d.IsPrimary ? " (Primary)" : "")} - {(int)d.BoundsDiu.Width}x{(int)d.BoundsDiu.Height}")).ToList();
 
+        DisplayInfo resolved = DisplayMonitors.Resolve(_settings);
+        bool hasPreferred = !string.IsNullOrWhiteSpace(_settings.DisplayDeviceName) ||
+                            !string.IsNullOrWhiteSpace(_settings.DisplayDeviceId) ||
+                            !string.IsNullOrWhiteSpace(_settings.DisplayFriendlyName);
+
+        bool preferredConnected = hasPreferred && displays.Any(d =>
+            (!string.IsNullOrWhiteSpace(_settings.DisplayDeviceId) && !string.IsNullOrWhiteSpace(d.DeviceId) &&
+             (string.Equals(d.DeviceId, _settings.DisplayDeviceId, StringComparison.OrdinalIgnoreCase) ||
+              d.DeviceId.Split('#').Length >= 2 && _settings.DisplayDeviceId.Split('#').Length >= 2 &&
+              string.Equals(d.DeviceId.Split('#')[1], _settings.DisplayDeviceId.Split('#')[1], StringComparison.OrdinalIgnoreCase))) ||
+            (!string.IsNullOrWhiteSpace(_settings.DisplayFriendlyName) && string.Equals(d.FriendlyName, _settings.DisplayFriendlyName, StringComparison.OrdinalIgnoreCase)) ||
+            (!string.IsNullOrWhiteSpace(_settings.DisplayDeviceName) && string.Equals(d.DeviceName, _settings.DisplayDeviceName, StringComparison.OrdinalIgnoreCase)));
+
+        if (hasPreferred && !preferredConnected)
+        {
+            string disconnectedKey = "disconnected:" + (_settings.DisplayDeviceName ?? "preferred");
+            string disconnectedLabel = $"{_settings.DisplayFriendlyName ?? _settings.DisplayDeviceName ?? "Configured Display"} (Disconnected)";
+            options.Add(new DisplayOption(disconnectedKey, disconnectedLabel));
+        }
+
         DisplaySelector.SelectionChanged -= DisplaySelector_SelectionChanged;
         DisplaySelector.ItemsSource = options;
-        DisplaySelector.SelectedValue = string.IsNullOrEmpty(_settings.DisplayDeviceName)
-            ? options.FirstOrDefault(o => displays.First(d => d.DeviceName == o.DeviceName).IsPrimary)?.DeviceName
-            : _settings.DisplayDeviceName;
-        if (DisplaySelector.SelectedItem is null && options.Count > 0)
-            DisplaySelector.SelectedIndex = 0;
+
+        if (hasPreferred && !preferredConnected)
+        {
+            DisplaySelector.SelectedValue = "disconnected:" + (_settings.DisplayDeviceName ?? "preferred");
+        }
+        else if (!string.IsNullOrEmpty(resolved.DeviceName))
+        {
+            DisplaySelector.SelectedValue = resolved.DeviceName;
+        }
+
         DisplaySelector.SelectionChanged += DisplaySelector_SelectionChanged;
     }
 
