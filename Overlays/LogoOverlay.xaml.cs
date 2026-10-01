@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Windows;
 using System.Windows.Interop;
 using System.Windows.Media;
@@ -26,7 +26,7 @@ public partial class LogoOverlay : Window
 
     public void Reposition()
     {
-        Rect bounds = DisplayMonitors.ResolveBoundsDiu(AppSettings.Load().DisplayDeviceName);
+        Rect bounds = DisplayMonitors.ResolveBoundsDiu(AppSettings.Load());
         Left = bounds.X + (bounds.Width - Width) / 2;
         Top = bounds.Y + 20;
     }

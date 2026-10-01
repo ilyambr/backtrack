@@ -55,7 +55,7 @@ public partial class ScrimOverlay : Window
 
     public void Reposition()
     {
-        Rect bounds = DisplayMonitors.ResolveBoundsDiu(AppSettings.Load().DisplayDeviceName);
+        Rect bounds = DisplayMonitors.ResolveBoundsDiu(AppSettings.Load());
         Left = bounds.X;
         Top = bounds.Y;
         Width = bounds.Width;

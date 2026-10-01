@@ -24,7 +24,7 @@ public partial class OverlayLogWindow : Window
 
     public void Reposition()
     {
-        Rect bounds = DisplayMonitors.ResolveBoundsDiu(AppSettings.Load().DisplayDeviceName);
+        Rect bounds = DisplayMonitors.ResolveBoundsDiu(AppSettings.Load());
         Left = bounds.X + bounds.Width - Width - 12;
         Top = bounds.Y + bounds.Height - ActualHeight - 12;
     }

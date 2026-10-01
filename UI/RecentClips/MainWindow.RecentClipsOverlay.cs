@@ -220,10 +220,10 @@ public partial class MainWindow : Window
 
     internal void DisplaySelector_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (DisplaySelector.SelectedValue is not string deviceName)
+        if (_isSettingsUiLoading)
             return;
 
-        if (deviceName.StartsWith("disconnected", StringComparison.OrdinalIgnoreCase))
+        if (DisplaySelector.SelectedValue is not string deviceName)
             return;
 
         string? previousDeviceName = _settings.DisplayDeviceName;
@@ -285,9 +285,27 @@ public partial class MainWindow : Window
     {
         try
         {
+            DisplayInfo resolved = DisplayMonitors.Resolve(_settings);
+            if (!string.IsNullOrEmpty(resolved.DeviceName) &&
+                !string.IsNullOrEmpty(_settings.DisplayDeviceId) &&
+                !string.IsNullOrEmpty(resolved.DeviceId) &&
+                (string.Equals(resolved.DeviceId, _settings.DisplayDeviceId, StringComparison.OrdinalIgnoreCase) ||
+                 (resolved.DeviceId.Split('#').Length >= 2 && _settings.DisplayDeviceId.Split('#').Length >= 2 &&
+                  string.Equals(resolved.DeviceId.Split('#')[1], _settings.DisplayDeviceId.Split('#')[1], StringComparison.OrdinalIgnoreCase))) &&
+                resolved.DeviceName != _settings.DisplayDeviceName)
+            {
+                _settings.DisplayDeviceName = resolved.DeviceName;
+                _settings.Save();
+            }
 
             if (IsVisible)
+            {
                 ShowScreen(_lastScreen, skipEntranceAnimation: true);
+                if (_lastScreen == Screen.Settings)
+                {
+                    LoadDisplaySelector();
+                }
+            }
 
             _statusOverlay.Reposition();
             _scrim.Reposition();
@@ -299,7 +317,6 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-
             AppLog.WriteError("Reposition after display settings changed", ex);
         }
     }

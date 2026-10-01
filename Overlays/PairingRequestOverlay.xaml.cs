@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Windows;
 using System.Windows.Interop;
 using System.Windows.Threading;
@@ -28,7 +28,7 @@ public partial class PairingRequestOverlay : Window
         CodeText.Text = string.Join(" ", code.ToCharArray());
 
         Show();
-        Rect bounds = DisplayMonitors.ResolveBoundsDiu(AppSettings.Load().DisplayDeviceName);
+        Rect bounds = DisplayMonitors.ResolveBoundsDiu(AppSettings.Load());
         Left = bounds.X + (bounds.Width - ActualWidth) / 2;
         Top = bounds.Y + (bounds.Height - ActualHeight) / 2;
         Activate();

@@ -18,7 +18,7 @@ public partial class UpdatePromptOverlay : Window
 
     private void Reposition()
     {
-        Rect bounds = DisplayMonitors.ResolveBoundsDiu(AppSettings.Load().DisplayDeviceName);
+        Rect bounds = DisplayMonitors.ResolveBoundsDiu(AppSettings.Load());
         Left = bounds.X + 12;
         Top = bounds.Y + bounds.Height - ActualHeight - 12;
     }

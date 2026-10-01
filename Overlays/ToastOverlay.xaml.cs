@@ -47,7 +47,7 @@ public partial class ToastOverlay : Window
     public void UpdatePosition(bool overlayActive)
     {
         _overlayActive = overlayActive;
-        Rect bounds = DisplayMonitors.ResolveBoundsDiu(AppSettings.Load().DisplayDeviceName);
+        Rect bounds = DisplayMonitors.ResolveBoundsDiu(AppSettings.Load());
         Left = bounds.X + 12;
         Top = bounds.Y + (overlayActive ? 58 : 14);
         IntPtr hwnd = new WindowInteropHelper(this).Handle;

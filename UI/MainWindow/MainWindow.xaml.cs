@@ -43,7 +43,7 @@ public partial class MainWindow : Window
 
     private const string ScheduledTaskName = "BacktrackAutostart";
 
-    private Rect TargetScreenBounds => DisplayMonitors.ResolveBoundsDiu(_settings.DisplayDeviceName);
+    private Rect TargetScreenBounds => DisplayMonitors.ResolveBoundsDiu(_settings);
 
     private ObsService _obs = null!;
 
