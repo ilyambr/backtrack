@@ -204,6 +204,65 @@ public partial class MainWindow : Window
                 _ = _obs.RevertSourceRecordFilterPathsAsync(_settings.RamDiskDriveLetter, _settings.ClipsFolder);
         });
 
+        _obs.SourceRenamed += (oldSource, newSource) => Dispatcher.BeginInvoke(async () =>
+        {
+            AppLog.Write($"OBS source renamed: '{oldSource}' -> '{newSource}'");
+            MigrateObsRowKeys(key =>
+            {
+                string prefix = $"{oldSource} - ";
+                return key.StartsWith(prefix, StringComparison.Ordinal)
+                    ? $"{newSource} - {key.Substring(prefix.Length)}"
+                    : null;
+            });
+            _rowLabels.Clear();
+            await PrefetchRowLabelsAsync();
+            await LoadBufferVisibilityUi();
+            await LoadRecordFolderUi();
+            if (StartRecordPanel.Visibility == Visibility.Visible)
+                await LoadRecordRowsAsync();
+        });
+
+        _obs.FilterRenamed += (source, oldFilter, newFilter) => Dispatcher.BeginInvoke(async () =>
+        {
+            AppLog.Write($"OBS filter renamed on '{source}': '{oldFilter}' -> '{newFilter}'");
+            string oldKey = $"{source} - {oldFilter}";
+            string newKey = $"{source} - {newFilter}";
+            MigrateObsRowKeys(key => string.Equals(key, oldKey, StringComparison.Ordinal) ? newKey : null);
+            _rowLabels.Clear();
+            await PrefetchRowLabelsAsync();
+            await LoadBufferVisibilityUi();
+            await LoadRecordFolderUi();
+            if (StartRecordPanel.Visibility == Visibility.Visible)
+                await LoadRecordRowsAsync();
+        });
     }
 
+    private void MigrateObsRowKeys(Func<string, string?> transform)
+    {
+        bool changed = false;
+        var overrides = new List<KeyValuePair<string, string>>(_settings.LocalRowNameOverrides);
+        foreach (var kvp in overrides)
+        {
+            string? newKey = transform(kvp.Key);
+            if (newKey is not null)
+            {
+                _settings.LocalRowNameOverrides.Remove(kvp.Key);
+                _settings.LocalRowNameOverrides[newKey] = kvp.Value;
+                changed = true;
+            }
+        }
+
+        for (int i = 0; i < _settings.HiddenBufferLabels.Count; i++)
+        {
+            string? newKey = transform(_settings.HiddenBufferLabels[i]);
+            if (newKey is not null)
+            {
+                _settings.HiddenBufferLabels[i] = newKey;
+                changed = true;
+            }
+        }
+
+        if (changed)
+            _settings.Save();
+    }
 }
