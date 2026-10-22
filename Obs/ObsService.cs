@@ -43,6 +43,10 @@ public sealed partial class ObsService : IDisposable
 
     public event Action<EncoderOverloadInfo>? EncoderOverloadDetected;
 
+    public event Action<string, string>? SourceRenamed;
+
+    public event Action<string, string, string>? FilterRenamed;
+
     public ObsService(string url, string? password)
     {
         _url = url;
@@ -115,6 +119,25 @@ public sealed partial class ObsService : IDisposable
         {
             string key = savingEd.TryGetProperty("key", out JsonElement k) ? k.GetString() ?? "" : "";
             ReplaySaving?.Invoke(key);
+        }
+        else if (eventType == "InputNameChanged" &&
+                 data.TryGetProperty("oldInputName", out JsonElement oldInp) &&
+                 data.TryGetProperty("inputName", out JsonElement newInp))
+        {
+            SourceRenamed?.Invoke(oldInp.GetString() ?? "", newInp.GetString() ?? "");
+        }
+        else if (eventType == "SceneNameChanged" &&
+                 data.TryGetProperty("oldSceneName", out JsonElement oldScn) &&
+                 data.TryGetProperty("sceneName", out JsonElement newScn))
+        {
+            SourceRenamed?.Invoke(oldScn.GetString() ?? "", newScn.GetString() ?? "");
+        }
+        else if (eventType == "SourceFilterNameChanged" &&
+                 data.TryGetProperty("sourceName", out JsonElement sNameEl) &&
+                 data.TryGetProperty("oldFilterName", out JsonElement oldFlt) &&
+                 data.TryGetProperty("filterName", out JsonElement newFlt))
+        {
+            FilterRenamed?.Invoke(sNameEl.GetString() ?? "", oldFlt.GetString() ?? "", newFlt.GetString() ?? "");
         }
         else if (eventType == "InputMuteStateChanged" &&
                  data.TryGetProperty("inputName", out JsonElement muteName) &&
