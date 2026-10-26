@@ -4,6 +4,20 @@ All notable changes to Backtrack are documented in this file.
 
 ---
 
+## [v0.4.2] - 2026-10-25
+
+### Video Player Multi-Video Track Selector & Adaptive Split Track Layout
+
+- **Multi-Video Track Selection (PlayerView.xaml, MainWindow.Player.AudioVolume.cs)**:
+  - Added video track selector (VideoTrackCombo) in the player transport bar for clips with multiple video streams (e.g., dual-feed gameplay + facecam).
+  - Dynamically cuts the 120px track selector in half (57px each) when multiple video tracks are present.
+  - Video selector labels tracks as 1, 2, etc.
+  - Audio selector shortens labels to 1, 2, etc. to cleanly fit side-by-side.
+  - Switches active LibVLC video decoder output on-the-fly and updates resolution/FPS info pills.
+  - Automatically moves both selectors together when entering Trim Mode (TrackSelectorsPanel).
+  - Restores full-width audio selector (Track 1, etc.) when only one video track is present.
+
+---
 ## [v0.4.1] - 2026-10-25
 
 ### Stuck Processing Fixes, Peer Restart Auto-Sync & Multi-Monitor Resilience
