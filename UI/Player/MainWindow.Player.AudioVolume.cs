@@ -75,7 +75,7 @@ public partial class MainWindow : Window
                 var validVideo = videoDescriptions.Where(t => t.Id != -1).ToList();
                 for (int i = 0; i < validVideo.Count; i++)
                 {
-                    videoOptions.Add(new VideoTrackOption(validVideo[i].Id, $"v{i + 1}"));
+                    videoOptions.Add(new VideoTrackOption(validVideo[i].Id, $"V{i + 1}"));
                 }
             }
             else if (_vlcPlayer.Media is not null)
@@ -83,7 +83,7 @@ public partial class MainWindow : Window
                 var mediaVideo = _vlcPlayer.Media.Tracks.Where(t => t.TrackType == LibVlc.TrackType.Video).ToList();
                 for (int i = 0; i < mediaVideo.Count; i++)
                 {
-                    videoOptions.Add(new VideoTrackOption(i + 1, $"v{i + 1}"));
+                    videoOptions.Add(new VideoTrackOption(i + 1, $"V{i + 1}"));
                 }
             }
         }
@@ -109,7 +109,7 @@ public partial class MainWindow : Window
                 var validTracks = trackDescriptions.Where(t => t.Id != -1).ToList();
                 for (int i = 0; i < validTracks.Count; i++)
                 {
-                    string label = hasMultipleVideoTracks ? $"a{i + 1}" : $"Track {i + 1}";
+                    string label = hasMultipleVideoTracks ? $"A{i + 1}" : $"Track {i + 1}";
                     audioOptions.Add(new AudioTrackOption(validTracks[i].Id, label));
                 }
             }
@@ -118,7 +118,7 @@ public partial class MainWindow : Window
                 var mediaTracks = _vlcPlayer.Media.Tracks.Where(t => t.TrackType == LibVlc.TrackType.Audio).ToList();
                 for (int i = 0; i < mediaTracks.Count; i++)
                 {
-                    string label = hasMultipleVideoTracks ? $"a{i + 1}" : $"Track {i + 1}";
+                    string label = hasMultipleVideoTracks ? $"A{i + 1}" : $"Track {i + 1}";
                     audioOptions.Add(new AudioTrackOption(i + 1, label));
                 }
             }
@@ -140,7 +140,8 @@ public partial class MainWindow : Window
             try
             {
                 VideoTrackCombo.ItemsSource = videoOptions;
-                VideoTrackCombo.Width = 57;
+                VideoTrackCombo.Height = 34;
+                VideoTrackCombo.Width = 64;
                 VideoTrackCombo.Margin = new Thickness(0, 0, 6, 0);
 
                 int currentVideoId = _vlcPlayer.VideoTrack;
@@ -153,7 +154,8 @@ public partial class MainWindow : Window
                 _isUpdatingVideoTracks = false;
             }
 
-            AudioTrackCombo.Width = 57;
+            AudioTrackCombo.Height = 34;
+            AudioTrackCombo.Width = 64;
             AudioTrackCombo.Margin = new Thickness(0);
         }
         else
@@ -161,6 +163,7 @@ public partial class MainWindow : Window
             VideoTrackCombo.Visibility = Visibility.Collapsed;
             VideoTrackCombo.ItemsSource = null;
 
+            AudioTrackCombo.Height = 34;
             AudioTrackCombo.Width = 120;
             AudioTrackCombo.Margin = new Thickness(0);
         }

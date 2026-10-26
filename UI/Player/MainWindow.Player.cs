@@ -136,6 +136,7 @@ public partial class MainWindow : Window
                 AudioTrackCombo.Visibility = Visibility.Collapsed;
                 AudioTrackCombo.ItemsSource = null;
                 AudioTrackCombo.Width = 120;
+                AudioTrackCombo.Height = 34;
             }
             if (TrackSelectorsPanel != null)
             {

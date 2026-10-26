@@ -123,9 +123,9 @@
                             <TextBlock x:Name="PlayerDurationText" Grid.Column="3" Text="0:00" FontSize="11.5" FontWeight="Bold"
                                        Foreground="{DynamicResource Text1}" VerticalAlignment="Center" Margin="10,0,14,0"/>
                             <StackPanel x:Name="TrackSelectorsPanel" Grid.Column="4" Orientation="Horizontal" Margin="0,0,10,0" VerticalAlignment="Center" Visibility="Collapsed">
-                                <ComboBox x:Name="VideoTrackCombo" Width="57" Style="{StaticResource ModernComboBox}" Padding="8,6" Margin="0,0,6,0" Visibility="Collapsed"
+                                <ComboBox x:Name="VideoTrackCombo" Height="34" Width="64" Style="{StaticResource ModernComboBox}" Margin="0,0,6,0" Visibility="Collapsed"
                                           DisplayMemberPath="Name" SelectedValuePath="Id" SelectionChanged="VideoTrackCombo_SelectionChanged" ToolTip="Video track"/>
-                                <ComboBox x:Name="AudioTrackCombo" Width="120" Style="{StaticResource ModernComboBox}" Padding="8,6" Visibility="Collapsed"
+                                <ComboBox x:Name="AudioTrackCombo" Height="34" Width="120" Style="{StaticResource ModernComboBox}" Visibility="Collapsed"
                                           DisplayMemberPath="Name" SelectedValuePath="Id" SelectionChanged="AudioTrackCombo_SelectionChanged" ToolTip="Audio track"/>
                             </StackPanel>
                             <Button x:Name="PlayerSpeedButton" Grid.Column="5" Style="{StaticResource TileButton}" Padding="10,10"
