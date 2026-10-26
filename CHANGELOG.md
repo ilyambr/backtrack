@@ -4,6 +4,31 @@ All notable changes to Backtrack are documented in this file.
 
 ---
 
+## [v0.4.1] - 2026-10-25
+
+### Stuck Processing Fixes, Peer Restart Auto-Sync & Multi-Monitor Resilience
+
+- **Stuck Processing Toast Auto-Dismissal & Recovery (ToastOverlay.Clip.cs)**:
+  - Added a 20-second safety timeout on "Processing clip..." toasts so hung OBS operations, remux deadlocks, or socket drops never leave permanent toasts on secondary/paired screens.
+  - Re-triggering a clip hotkey for a row already in-flight now immediately cancels the stale attempt and begins a fresh save.
+  - Automatic purging of all in-flight toasts when OBS drops or reconnects.
+- **Cross-PC Restart Detection & Session Reset (PairingService.cs)**:
+  - Added TCP peer_reset message sent on startup to paired remote machines to clear any orphaned toasts immediately.
+  - Broadcasts unique ProcessInstanceId in UDP announces; remote PCs automatically detect host restarts and flush stale states.
+- **OBS Rename Synchronization (MainWindow.Lifecycle.Obs.cs)**:
+  - Automatically migrates local row name overrides and hidden buffer labels when OBS sources or filters are renamed.
+- **Remote PC Preferences Synchronization**:
+  - Synchronizes PreferredClipLengthSeconds, ReplayBufferMinutes, custom row names, and row visibility between paired PCs.
+- **Display Reconnection & Fullscreen Robustness**:
+  - Active display resolution and dropdown selection in Settings.
+  - Automatic restoration on monitor disconnect/reconnect and hotplug events.
+  - Robust fullscreen detection for focused games and cloned displays.
+- **Google Drive Enhancements**:
+  - Account binding for linked folders, streamlined permission error feedback, and upgraded drive.file scope.
+- **Per-Monitor V2 DPI Awareness & Automated Tests**:
+  - Full automated test suite and high-DPI scaling across multi-monitor setups.
+
+---
 ## [v0.4.0] - 2026-09-06
 
 ### Direct Google Drive Cloud Integration, Adaptive Tray Theming & Full Architecture Modularization
