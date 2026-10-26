@@ -197,6 +197,7 @@ public partial class MainWindow : Window
         _obs.StateChanged += () => Dispatcher.BeginInvoke(() =>
         {
             AppLog.Write(_obs.IsConnected ? "Connected to OBS" : "Disconnected from OBS");
+            _toastOverlay.ClearAllProcessingToasts();
             _ = PrefetchRowLabelsAsync();
             if (_settings.RamDiskEnabled && RamDisk.IsMounted(_settings.RamDiskDriveLetter))
                 _ = PushRamDiskDestDirAsync();
@@ -252,12 +253,14 @@ public partial class MainWindow : Window
             }
         }
 
-        for (int i = 0; i < _settings.HiddenBufferLabels.Count; i++)
+        var hiddenList = new List<string>(_settings.HiddenBufferLabels);
+        foreach (var key in hiddenList)
         {
-            string? newKey = transform(_settings.HiddenBufferLabels[i]);
+            string? newKey = transform(key);
             if (newKey is not null)
             {
-                _settings.HiddenBufferLabels[i] = newKey;
+                _settings.HiddenBufferLabels.Remove(key);
+                _settings.HiddenBufferLabels.Add(newKey);
                 changed = true;
             }
         }

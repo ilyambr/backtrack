@@ -44,13 +44,28 @@ public sealed partial class PairingService
 
             try
             {
-                var msg = JsonSerializer.Deserialize<AnnounceMessage>(result.Buffer);
+                var msg = JsonSerializer.Deserialize<AnnounceMessage>(result.Buffer, JsonOptions);
                 if (msg is null || msg.Type != AnnounceType || msg.DeviceId == _settings.DeviceId)
                     continue;
 
                 var peer = new DiscoveredPeer(msg.DeviceId, msg.DeviceName, result.RemoteEndPoint.Address.ToString(), msg.PairingPort, DateTime.UtcNow);
                 _discovered[msg.DeviceId] = peer;
                 DiscoveredPeersChanged?.Invoke();
+                if (!string.IsNullOrEmpty(msg.InstanceId))
+                {
+                    string senderIp = result.RemoteEndPoint.Address.ToString();
+                    bool isPaired = (!string.IsNullOrEmpty(_settings.PairedPeerDeviceId) && msg.DeviceId == _settings.PairedPeerDeviceId) ||
+                                    (!string.IsNullOrEmpty(_settings.PairedPeerHost) && (senderIp == _settings.PairedPeerHost || msg.DeviceId == _settings.PairedPeerHost));
+                    if (isPaired)
+                    {
+                        if (_peerInstanceIds.TryGetValue(msg.DeviceId, out string? lastInst) && lastInst != msg.InstanceId)
+                        {
+                            AppLog.Write($"[pairing] Paired peer '{msg.DeviceName}' restart detected (instance: {msg.InstanceId})");
+                            PairedPeerRestarted?.Invoke();
+                        }
+                        _peerInstanceIds[msg.DeviceId] = msg.InstanceId;
+                    }
+                }
             }
             catch
             {
@@ -70,7 +85,7 @@ public sealed partial class PairingService
 
     private async Task AnnounceLoopAsync(CancellationToken ct)
     {
-        var msg = new AnnounceMessage(AnnounceType, _settings.DeviceId, Environment.MachineName, DefaultPairingPort);
+        var msg = new AnnounceMessage(AnnounceType, _settings.DeviceId, Environment.MachineName, DefaultPairingPort, ProcessInstanceId);
         byte[] payload = JsonSerializer.SerializeToUtf8Bytes(msg);
         var endpoint = new IPEndPoint(IPAddress.Broadcast, BroadcastPort);
 
@@ -79,6 +94,11 @@ public sealed partial class PairingService
             try
             {
                 await _announceSender!.SendAsync(payload, payload.Length, endpoint);
+            if (!string.IsNullOrEmpty(_settings.PairedPeerHost) && IPAddress.TryParse(_settings.PairedPeerHost, out var directIp))
+            {
+                try { await _announceSender!.SendAsync(payload, payload.Length, new IPEndPoint(directIp, BroadcastPort)); }
+                catch { }
+            }
             }
             catch
             {

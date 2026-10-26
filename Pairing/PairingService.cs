@@ -23,6 +23,9 @@ public sealed record RemoteGalleryListing(IReadOnlyList<string> Folders, IReadOn
 
 public sealed partial class PairingService : IDisposable
 {
+    public static readonly string ProcessInstanceId = Guid.NewGuid().ToString("N");
+    public event Action? PairedPeerRestarted;
+    private readonly ConcurrentDictionary<string, string> _peerInstanceIds = new();
     public const int BroadcastPort = 47811;
     public const int DefaultPairingPort = 47812;
     private const string AnnounceType = "backtrack-announce";
@@ -145,6 +148,14 @@ public sealed partial class PairingService : IDisposable
                     return;
                 }
 
+                if (type == "peer_reset")
+                {
+                    AppLog.Write("[pairing] Received peer_reset request from remote peer");
+                    PairedPeerRestarted?.Invoke();
+                    await WriteLineAsync(client.GetStream(), JsonSerializer.Serialize(new { ok = true }));
+                    return;
+                }
+
                 string response = type switch
                 {
                     "pair_request" => HandlePairRequest(doc.RootElement),
@@ -185,7 +196,7 @@ public sealed partial class PairingService : IDisposable
 
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = true };
 
-    private sealed record AnnounceMessage(string Type, string DeviceId, string DeviceName, int PairingPort);
+    private sealed record AnnounceMessage(string Type, string DeviceId, string DeviceName, int PairingPort, string? InstanceId = null);
     private sealed record PairRequestResponse(
         [property: System.Text.Json.Serialization.JsonPropertyName("requestId")] string? RequestId = null,
         [property: System.Text.Json.Serialization.JsonPropertyName("code")] string? Code = null,

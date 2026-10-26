@@ -124,7 +124,15 @@ public partial class MainWindow : Window
                             _toastOverlay.ShowStorageLimitWarning(blockMessage);
                             return;
                         }
-                        await ExecuteSaveReplayRowCoreAsync(rowKey, match?.Label);
+                        try
+                        {
+                            await ExecuteSaveReplayRowCoreAsync(rowKey, match?.Label);
+                        }
+                        catch (Exception ex)
+                        {
+                            AppLog.Write($"[hotkey] Save replay error for '{rowKey}': {ex.Message}");
+                            _toastOverlay.CancelProcessingClip(rowKey);
+                        }
                     });
                 }
             }

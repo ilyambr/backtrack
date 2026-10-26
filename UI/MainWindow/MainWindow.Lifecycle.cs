@@ -69,6 +69,12 @@ public partial class MainWindow : Window
                 RenderDiscoveredDevices();
         });
 
+        _pairing.PairedPeerRestarted += () => Dispatcher.BeginInvoke(() =>
+        {
+            AppLog.Write("[pairing] Paired peer restart detected -- clearing all in-flight toasts.");
+            _toastOverlay.ClearAllProcessingToasts();
+        });
+
     }
 
     private void WireVlcAndPairingDelegates()

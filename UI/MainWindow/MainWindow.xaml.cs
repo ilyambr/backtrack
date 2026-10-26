@@ -343,6 +343,11 @@ public partial class MainWindow : Window
         _ = PrewarmGalleryThumbnailsAsync();
         _ = InitializeRamDiskAsync();
 
+if (!string.IsNullOrEmpty(_settings.PairedPeerHost))
+        {
+            _ = Task.Run(() => _pairing.NotifyPeerResetAsync());
+        }
+
         if (_settings.LaunchWithWindows)
         {
             try { CreateOrUpdateStartupTask(); }

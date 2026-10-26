@@ -6,6 +6,7 @@ using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Shapes;
+using System.Windows.Threading;
 using Backtrack.Core;
 using Backtrack.Interop;
 
@@ -83,16 +84,17 @@ public partial class ToastOverlay : Window
     public void ShowMergeFailed(string error) =>
         Show(GlyphIcon("⚠", Warning), Warning, "Merge Failed", error);
 
-    private readonly Dictionary<string, (Border Toast, ScaleTransform Scale)> _processingToasts = new();
+    private readonly Dictionary<string, (Border Toast, ScaleTransform Scale, DispatcherTimer? TimeoutTimer)> _processingToasts = new();
     private readonly Dictionary<string, DateTime> _recentlyCompletedProcessing = new();
 
     public void ShowProcessingClip(string key, string label)
     {
+        // Cancel any previous stuck/in-flight toast for this row so a retry starts fresh
         if (_processingToasts.ContainsKey(key))
-            return;
+            CancelProcessingClip(key);
 
         if (_recentlyCompletedProcessing.TryGetValue(key, out DateTime completedAt) &&
-            (DateTime.UtcNow - completedAt).TotalSeconds < 3.0)
+            (DateTime.UtcNow - completedAt).TotalSeconds < 1.0)
         {
             return;
         }
@@ -163,7 +165,22 @@ public partial class ToastOverlay : Window
         };
         scale.BeginAnimation(ScaleTransform.ScaleXProperty, anim);
 
-        _processingToasts[key] = (toast, scale);
+        // Auto-dismiss safety timeout: 20 seconds max. If OBS, remux, or network hangs or drops,
+        // this guarantees the "Processing clip..." toast will not stay on screen forever.
+        var timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(20) };
+        timer.Tick += (_, _) =>
+        {
+            timer.Stop();
+            if (_processingToasts.Remove(key, out var entry))
+            {
+                entry.Scale.BeginAnimation(ScaleTransform.ScaleXProperty, null);
+                ToastStack.Children.Remove(entry.Toast);
+                AppLog.Write($"[toast] Processing clip '{key}' timed out after 20s and was auto-dismissed.");
+            }
+        };
+        timer.Start();
+
+        _processingToasts[key] = (toast, scale, timer);
     }
 
     public void CompleteProcessingClip(string key, string label, string resolvedPath, string? customSubMessage = null)
@@ -175,6 +192,8 @@ public partial class ToastOverlay : Window
             ShowReplaySaved(label, resolvedPath, customSubMessage);
             return;
         }
+
+        entry.TimeoutTimer?.Stop();
 
         const double finishSec = 0.25;
         var finishAnim = new DoubleAnimation
@@ -195,6 +214,7 @@ public partial class ToastOverlay : Window
     {
         if (!_processingToasts.Remove(key, out var entry))
             return;
+        entry.TimeoutTimer?.Stop();
         entry.Scale.BeginAnimation(ScaleTransform.ScaleXProperty, null);
         ToastStack.Children.Remove(entry.Toast);
     }
@@ -267,7 +287,7 @@ public partial class ToastOverlay : Window
         };
 
         ToastStack.Children.Insert(0, toast);
-        _processingToasts[key] = (toast, scale);
+        _processingToasts[key] = (toast, scale, null);
     }
 
     public void UpdateDriveUploadProgress(string key, double percent)
@@ -282,6 +302,7 @@ public partial class ToastOverlay : Window
     {
         if (key != null && _processingToasts.Remove(key, out var entry))
         {
+            entry.TimeoutTimer?.Stop();
             ToastStack.Children.Remove(entry.Toast);
         }
 
@@ -304,6 +325,7 @@ public partial class ToastOverlay : Window
     {
         if (key != null && _processingToasts.Remove(key, out var entry))
         {
+            entry.TimeoutTimer?.Stop();
             ToastStack.Children.Remove(entry.Toast);
         }
 
@@ -324,6 +346,7 @@ public partial class ToastOverlay : Window
     {
         foreach (var entry in _processingToasts.Values)
         {
+            entry.TimeoutTimer?.Stop();
             entry.Scale.BeginAnimation(ScaleTransform.ScaleXProperty, null);
             ToastStack.Children.Remove(entry.Toast);
         }

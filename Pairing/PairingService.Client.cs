@@ -135,6 +135,28 @@ public sealed partial class PairingService
         catch { return null; }
     }
 
+    public async Task NotifyPeerResetAsync()
+    {
+        if (string.IsNullOrEmpty(_settings.PairedPeerHost))
+            return;
+
+        try
+        {
+            using var client = new TcpClient();
+            await client.ConnectAsync(_settings.PairedPeerHost, _settings.PairedPeerPort).WaitAsync(TimeSpan.FromSeconds(2));
+            string request = JsonSerializer.Serialize(new
+            {
+                type = "peer_reset",
+                secret = _settings.PairedPeerSecret ?? "",
+                instanceId = ProcessInstanceId
+            });
+            await WriteLineAsync(client.GetStream(), request).WaitAsync(TimeSpan.FromSeconds(2));
+            AppLog.Write($"[pairing] Sent peer_reset to {_settings.PairedPeerHost}:{_settings.PairedPeerPort}");
+        }
+        catch
+        {
+        }
+    }
     private static async Task WriteLineAsync(NetworkStream stream, string line)
     {
         byte[] bytes = Encoding.UTF8.GetBytes(line + "\n");
