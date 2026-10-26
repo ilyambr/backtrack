@@ -22,6 +22,7 @@ public partial class PlayerView : UserControl
     private void PlayerSeekTrack_MouseMove(object sender, MouseEventArgs e) => Main?.PlayerSeekTrack_MouseMove(sender, e);
     private void PlayerSeekTrack_MouseEnter(object sender, MouseEventArgs e) => Main?.PlayerSeekTrack_MouseEnter(sender, e);
     private void PlayerSeekTrack_MouseLeave(object sender, MouseEventArgs e) => Main?.PlayerSeekTrack_MouseLeave(sender, e);
+    private void VideoTrackCombo_SelectionChanged(object sender, SelectionChangedEventArgs e) => Main?.VideoTrackCombo_SelectionChanged(sender, e);
     private void AudioTrackCombo_SelectionChanged(object sender, SelectionChangedEventArgs e) => Main?.AudioTrackCombo_SelectionChanged(sender, e);
     private void PlayerSpeedButton_Click(object sender, RoutedEventArgs e) => Main?.PlayerSpeedButton_Click(sender, e);
     private void PlayerVolumeButton_Click(object sender, RoutedEventArgs e) => Main?.PlayerVolumeButton_Click(sender, e);

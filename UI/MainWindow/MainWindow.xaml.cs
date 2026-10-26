@@ -223,6 +223,7 @@ public partial class MainWindow : Window
     private bool _playerHasEnded;
 
     private bool _isMuted;
+    private bool _isUpdatingVideoTracks;
     private bool _isUpdatingAudioTracks;
 
     private Task? _pendingVlcDisposeTask;

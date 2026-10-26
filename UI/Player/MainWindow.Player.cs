@@ -122,6 +122,31 @@ public partial class MainWindow : Window
             _currentStreamToken = null;
         }
         DetachPlayerVideo(keepFreezeFrame);
+        _isUpdatingVideoTracks = true;
+        _isUpdatingAudioTracks = true;
+        try
+        {
+            if (VideoTrackCombo != null)
+            {
+                VideoTrackCombo.Visibility = Visibility.Collapsed;
+                VideoTrackCombo.ItemsSource = null;
+            }
+            if (AudioTrackCombo != null)
+            {
+                AudioTrackCombo.Visibility = Visibility.Collapsed;
+                AudioTrackCombo.ItemsSource = null;
+                AudioTrackCombo.Width = 120;
+            }
+            if (TrackSelectorsPanel != null)
+            {
+                TrackSelectorsPanel.Visibility = Visibility.Collapsed;
+            }
+        }
+        finally
+        {
+            _isUpdatingVideoTracks = false;
+            _isUpdatingAudioTracks = false;
+        }
         DisposeVlcPlayerSync();
     }
 
@@ -273,7 +298,7 @@ public partial class MainWindow : Window
 
         PlayPauseButton.Margin = intoTrimRow ? new Thickness(0, 0, 10, 0) : default;
         Reparent(PlayPauseButton, intoTrimRow ? TrimActionButtons : PlayerTransportRow, intoTrimRow ? null : PlayPauseButtonHomeColumn, insertAtFront: intoTrimRow);
-        Reparent(AudioTrackCombo, intoTrimRow ? TrimTransportExtras : PlayerTransportRow, intoTrimRow ? null : AudioTrackComboHomeColumn);
+        Reparent(TrackSelectorsPanel, intoTrimRow ? TrimTransportExtras : PlayerTransportRow, intoTrimRow ? null : TrackSelectorsPanelHomeColumn);
         Reparent(PlayerSpeedButton, intoTrimRow ? TrimTransportExtras : PlayerTransportRow, intoTrimRow ? null : PlayerSpeedButtonHomeColumn);
         Reparent(PlayerVolumeButton, intoTrimRow ? TrimTransportExtras : PlayerTransportRow, intoTrimRow ? null : PlayerVolumeButtonHomeColumn);
         Reparent(PlayerFullscreenButton, intoTrimRow ? TrimTransportExtras : PlayerTransportRow, intoTrimRow ? null : PlayerFullscreenButtonHomeColumn);
@@ -294,7 +319,9 @@ public partial class MainWindow : Window
         }
     }
 
-    private sealed record AudioTrackOption(int Id, string Name);
+        public sealed record AudioTrackOption(int Id, string Name);
+    public sealed record VideoTrackOption(int Id, string Name);
+    private const int TrackSelectorsPanelHomeColumn = 4;
 
     private const int PlayPauseButtonHomeColumn = 0;
     private const int AudioTrackComboHomeColumn = 4;

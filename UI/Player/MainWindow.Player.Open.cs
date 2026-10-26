@@ -295,6 +295,11 @@ public partial class MainWindow : Window
                     PlayIcon.Visibility = Visibility.Visible;
                     PauseIcon.Visibility = Visibility.Collapsed;
                     // Keep freeze frame visible while paused - do not hide or start hide timer
+                    if (!tracksLoaded)
+                    {
+                        tracksLoaded = true;
+                        LoadTracks();
+                    }
                     return;
                 }
 
@@ -335,7 +340,7 @@ public partial class MainWindow : Window
                 if (!tracksLoaded)
                 {
                     tracksLoaded = true;
-                    LoadAudioTracks();
+                    LoadTracks();
                 }
             });
             _vlcPlayer.Paused += (_, _) => Dispatcher.BeginInvoke(() =>

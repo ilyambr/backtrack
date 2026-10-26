@@ -3,6 +3,8 @@ param (
 )
 
 $ErrorActionPreference = "Stop"
+Set-Location $PSScriptRoot
+[System.IO.Directory]::SetCurrentDirectory($PSScriptRoot)
 
 if ([string]::IsNullOrWhiteSpace($Version)) {
     [xml]$proj = Get-Content "./Backtrack.csproj"

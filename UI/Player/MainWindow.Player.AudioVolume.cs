@@ -57,23 +57,60 @@ public partial class MainWindow : Window
         _actionFeedbackHideTimer?.Start();
     }
 
-    private void LoadAudioTracks()
+    private void LoadAudioTracks() => LoadTracks();
+
+    private void LoadTracks()
     {
         if (_vlcPlayer is null)
             return;
 
+        // 1. Load Video Tracks
+        _isUpdatingVideoTracks = true;
+        List<VideoTrackOption> videoOptions = new();
+        try
+        {
+            var videoDescriptions = _vlcPlayer.VideoTrackDescription;
+            if (videoDescriptions != null && videoDescriptions.Length > 0)
+            {
+                var validVideo = videoDescriptions.Where(t => t.Id != -1).ToList();
+                for (int i = 0; i < validVideo.Count; i++)
+                {
+                    videoOptions.Add(new VideoTrackOption(validVideo[i].Id, $"v{i + 1}"));
+                }
+            }
+            else if (_vlcPlayer.Media is not null)
+            {
+                var mediaVideo = _vlcPlayer.Media.Tracks.Where(t => t.TrackType == LibVlc.TrackType.Video).ToList();
+                for (int i = 0; i < mediaVideo.Count; i++)
+                {
+                    videoOptions.Add(new VideoTrackOption(i + 1, $"v{i + 1}"));
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            AppLog.Write($"[player] Error querying video tracks: {ex.Message}");
+        }
+        finally
+        {
+            _isUpdatingVideoTracks = false;
+        }
+
+        bool hasMultipleVideoTracks = videoOptions.Count > 1;
+
+        // 2. Load Audio Tracks
         _isUpdatingAudioTracks = true;
+        List<AudioTrackOption> audioOptions = new();
         try
         {
             var trackDescriptions = _vlcPlayer.AudioTrackDescription;
-            List<AudioTrackOption> options = new();
-
             if (trackDescriptions != null && trackDescriptions.Length > 0)
             {
                 var validTracks = trackDescriptions.Where(t => t.Id != -1).ToList();
                 for (int i = 0; i < validTracks.Count; i++)
                 {
-                    options.Add(new AudioTrackOption(validTracks[i].Id, $"Track {i + 1}"));
+                    string label = hasMultipleVideoTracks ? $"a{i + 1}" : $"Track {i + 1}";
+                    audioOptions.Add(new AudioTrackOption(validTracks[i].Id, label));
                 }
             }
             else if (_vlcPlayer.Media is not null)
@@ -81,37 +118,115 @@ public partial class MainWindow : Window
                 var mediaTracks = _vlcPlayer.Media.Tracks.Where(t => t.TrackType == LibVlc.TrackType.Audio).ToList();
                 for (int i = 0; i < mediaTracks.Count; i++)
                 {
-                    options.Add(new AudioTrackOption(i + 1, $"Track {i + 1}"));
+                    string label = hasMultipleVideoTracks ? $"a{i + 1}" : $"Track {i + 1}";
+                    audioOptions.Add(new AudioTrackOption(i + 1, label));
                 }
             }
-
-            if (options.Count == 0)
-            {
-                AudioTrackCombo.Visibility = Visibility.Collapsed;
-                return;
-            }
-
-            AudioTrackCombo.Visibility = Visibility.Visible;
-            AudioTrackCombo.ItemsSource = options;
-
-            int currentVlcTrackId = _vlcPlayer.AudioTrack;
-            int selectedIdx = options.FindIndex(o => o.Id == currentVlcTrackId);
-            if (selectedIdx < 0)
-            {
-                int preferredIndex = _settings.DefaultPlayerAudioTrackIndex - 1;
-                selectedIdx = preferredIndex >= 0 && preferredIndex < options.Count ? preferredIndex : 0;
-            }
-
-            AudioTrackCombo.SelectedIndex = selectedIdx;
-
-            if (selectedIdx > 0 && selectedIdx < options.Count && _vlcPlayer.AudioTrack != options[selectedIdx].Id)
-            {
-                _vlcPlayer.SetAudioTrack(options[selectedIdx].Id);
-            }
+        }
+        catch (Exception ex)
+        {
+            AppLog.Write($"[player] Error querying audio tracks: {ex.Message}");
         }
         finally
         {
             _isUpdatingAudioTracks = false;
+        }
+
+        // 3. Configure Video Track Selector UI
+        if (hasMultipleVideoTracks)
+        {
+            VideoTrackCombo.Visibility = Visibility.Visible;
+            _isUpdatingVideoTracks = true;
+            try
+            {
+                VideoTrackCombo.ItemsSource = videoOptions;
+                VideoTrackCombo.Width = 57;
+                VideoTrackCombo.Margin = new Thickness(0, 0, 6, 0);
+
+                int currentVideoId = _vlcPlayer.VideoTrack;
+                int selVideoIdx = videoOptions.FindIndex(o => o.Id == currentVideoId);
+                if (selVideoIdx < 0) selVideoIdx = 0;
+                VideoTrackCombo.SelectedIndex = selVideoIdx;
+            }
+            finally
+            {
+                _isUpdatingVideoTracks = false;
+            }
+
+            AudioTrackCombo.Width = 57;
+            AudioTrackCombo.Margin = new Thickness(0);
+        }
+        else
+        {
+            VideoTrackCombo.Visibility = Visibility.Collapsed;
+            VideoTrackCombo.ItemsSource = null;
+
+            AudioTrackCombo.Width = 120;
+            AudioTrackCombo.Margin = new Thickness(0);
+        }
+
+        // 4. Configure Audio Track Selector UI
+        if (audioOptions.Count == 0)
+        {
+            AudioTrackCombo.Visibility = Visibility.Collapsed;
+            AudioTrackCombo.ItemsSource = null;
+        }
+        else
+        {
+            AudioTrackCombo.Visibility = Visibility.Visible;
+            _isUpdatingAudioTracks = true;
+            try
+            {
+                AudioTrackCombo.ItemsSource = audioOptions;
+
+                int currentVlcTrackId = _vlcPlayer.AudioTrack;
+                int selectedIdx = audioOptions.FindIndex(o => o.Id == currentVlcTrackId);
+                if (selectedIdx < 0)
+                {
+                    int preferredIndex = _settings.DefaultPlayerAudioTrackIndex - 1;
+                    selectedIdx = preferredIndex >= 0 && preferredIndex < audioOptions.Count ? preferredIndex : 0;
+                }
+
+                AudioTrackCombo.SelectedIndex = selectedIdx;
+
+                if (selectedIdx > 0 && selectedIdx < audioOptions.Count && _vlcPlayer.AudioTrack != audioOptions[selectedIdx].Id)
+                {
+                    _vlcPlayer.SetAudioTrack(audioOptions[selectedIdx].Id);
+                }
+            }
+            finally
+            {
+                _isUpdatingAudioTracks = false;
+            }
+        }
+
+        TrackSelectorsPanel.Visibility = (VideoTrackCombo.Visibility == Visibility.Visible || AudioTrackCombo.Visibility == Visibility.Visible)
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+    }
+
+    internal void VideoTrackCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_isUpdatingVideoTracks || _vlcPlayer is null || VideoTrackCombo.SelectedItem is not VideoTrackOption opt)
+            return;
+
+        if (_vlcPlayer.VideoTrack == opt.Id)
+            return;
+
+        _vlcPlayer.SetVideoTrack(opt.Id);
+
+        if (_vlcPlayer.Media is not null)
+        {
+            var videoTracks = _vlcPlayer.Media.Tracks.Where(t => t.TrackType == LibVlc.TrackType.Video).ToList();
+            int idx = VideoTrackCombo.SelectedIndex;
+            if (idx >= 0 && idx < videoTracks.Count)
+            {
+                var vData = videoTracks[idx].Data.Video;
+                if (vData.Width > 0 && vData.Height > 0)
+                    StatResolution.Text = $"{vData.Width} x {vData.Height}";
+                if (vData.FrameRateDen > 0)
+                    StatFps.Text = $"{(double)vData.FrameRateNum / vData.FrameRateDen:0.##} fps";
+            }
         }
     }
 

@@ -33,7 +33,9 @@ public partial class MainWindow
     public TextBlock GalleryTotalStatsText => GalleryView.GalleryTotalStatsText;
 
     public Button AddBookmarkDialogButton => PlayerView.AddBookmarkDialogButton;
+    public ComboBox VideoTrackCombo => PlayerView.VideoTrackCombo;
     public ComboBox AudioTrackCombo => PlayerView.AudioTrackCombo;
+    public StackPanel TrackSelectorsPanel => PlayerView.TrackSelectorsPanel;
     public StackPanel BookmarkListContainer => PlayerView.BookmarkListContainer;
     public Popup BookmarkPopup => PlayerView.BookmarkPopup;
     public Button CompressCustomButton => PlayerView.CompressCustomButton;
